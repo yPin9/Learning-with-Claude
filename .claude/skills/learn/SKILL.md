@@ -1,6 +1,6 @@
 ---
 name: learn
-description: Use this skill when the user wants to learn a new technical topic together by producing a structured tutorial course under <category>/<topic>/ in this repo. Triggers include phrases like "我想學 X", "來學 X 吧", "幫我規劃學 X 的課程", "start learning X", "let's learn X", or requests to fill out / continue an existing empty course folder. Produces Traditional Chinese (zh-TW) tutorial chapters, practice exercises, and a final project that match the repo's established style (see sifive_prepare/compiler_frontend/).
+description: Use this skill when the user wants to learn a new technical topic together by producing a structured tutorial course under <category>/<topic>/ in this repo. Triggers include phrases like "我想學 X", "來學 X 吧", "幫我規劃學 X 的課程", "start learning X", "let's learn X", or requests to fill out / continue an existing empty course folder. Produces Traditional Chinese (zh-TW) tutorial chapters, practice exercises, and a final project that match the repo's established style (see compilers/compiler_frontend/).
 ---
 
 # 通用學習 skill
@@ -31,7 +31,7 @@ description: Use this skill when the user wants to learn a new technical topic t
 
 ### Step 2 — 提出課綱草稿
 
-依 `sifive_prepare/compiler_frontend/README.md` 的格式，在對話裡提出「課程地圖」草稿。至少包含：
+依 `compilers/compiler_frontend/README.md` 的格式，在對話裡提出「課程地圖」草稿。至少包含：
 
 - 課程簡介（一句為什麼學這個）
 - 分 Part 的章節大綱（每章一句話說明它在整體中的位置）
@@ -219,7 +219,7 @@ description: Use this skill when the user wants to learn a new technical topic t
 
 ## 風格指南（很重要，不要偏離）
 
-寫作風格以 `sifive_prepare/compiler_frontend/` 為標準。具體要求：
+寫作風格以 `compilers/compiler_frontend/` 為標準。具體要求：
 
 ### 語言
 
@@ -265,9 +265,9 @@ description: Use this skill when the user wants to learn a new technical topic t
 
 當不確定寫法時，直接打開這兩個檔案抄格式：
 
-- 章節範本：`sifive_prepare/compiler_frontend/01-frontend-overview.md`
-- 練習範本：`sifive_prepare/compiler_frontend/practice-a-c-tokenizer.md`
-- README 範本：`sifive_prepare/compiler_frontend/README.md`
+- 章節範本：`compilers/compiler_frontend/01-frontend-overview.md`
+- 練習範本：`compilers/compiler_frontend/practice-a-c-tokenizer.md`
+- README 範本：`compilers/compiler_frontend/README.md`
 
 ## 常見狀況處理
 

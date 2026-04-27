@@ -10,11 +10,23 @@
 - [ai_applications](./ai/ai_applications/README.md)
   - Claude 深度應用 + 用 Claude 生態做產品 + 通用 LLM 工程（RAG / eval / observability）
 
+### architecture/
+- [riscv](./architecture/riscv/README.md)
+  - 從 RV32I 到 V/B 擴充、custom extension，自寫 RV32I emulator
+
+### compilers/
+- [compiler_frontend](./compilers/compiler_frontend/README.md)
+  - flex + bison 寫 MiniC frontend
+- [compiler_backend](./compilers/compiler_backend/README.md)
+  - LLVM RISC-V backend：SelectionDAG / TableGen / Scheduler / MC
+- [elf_linking](./compilers/elf_linking/README.md)
+  - relocation / linker script / RISC-V relaxation
+
 ### dev_tools/
 - [git](./dev_tools/git/README.md)
   - 給已經會 add/commit/push、想真正熟練的人，hooks + worktree + 真實踩坑
 - [cicd](./dev_tools/cicd/README.md)
-  - Docker + GitHub Actions,把 FastAPI + Postgres 服務做成可交付 pipeline
+  - Docker + GitHub Actions，把 FastAPI + Postgres 服務做成可交付 pipeline
 
 ### programming/
 - [algorithms](./programming/algorithms/README.md)
@@ -38,20 +50,6 @@
 - [kernel_pwn](./security/kernel_pwn/README.md)
   - Linux kernel pwn，目標 Google kernelCTF（含現代 heap / 隨機 kmalloc cache）
 
-### sifive_prepare/
-- [riscv](./sifive_prepare/riscv/README.md)
-  - 從 RV32I 到 V/B 擴充、custom extension，自寫 RV32I emulator
-- [elf_linking](./sifive_prepare/elf_linking/README.md)
-  - relocation / linker script / RISC-V relaxation
-- [compiler_frontend](./sifive_prepare/compiler_frontend/README.md)
-  - flex + bison 寫 MiniC frontend
-- [compiler_backend](./sifive_prepare/compiler_backend/README.md)
-  - LLVM RISC-V backend：SelectionDAG / TableGen / Scheduler / MC
-- [perf_bench](./sifive_prepare/perf_bench/README.md)
-  - perf + benchmark + compiler optimization 連動
-- [yocto](./sifive_prepare/yocto/README.md)
-  - toolchain 工程師速通：把 patched GCC 進 BSP
-
 ### soft_skills/
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
   - meta-learning，所有系列的前置課程
@@ -69,3 +67,7 @@
   - x86_64 開機流程，BIOS + UEFI 雙線，自製 bootloader / initramfs / minimal Linux
 - [observability_tools](./systems/observability_tools/README.md)
   - strace/perf/valgrind 全套，自寫 mini-strace + LD_PRELOAD interceptor，5-bug 偵探破案 final
+- [perf_bench](./systems/perf_bench/README.md)
+  - perf + benchmark + compiler optimization 連動
+- [yocto](./systems/yocto/README.md)
+  - toolchain 工程師速通：把 patched GCC 進 BSP
