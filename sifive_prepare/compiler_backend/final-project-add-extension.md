@@ -462,9 +462,9 @@ clang -march=rv64g_xmyma test.c -o test
 
 到這裡，你從 Ch 0 (build LLVM) 走到 Final Project (add extension)。
 
-從 `learn_riscv` (ISA 基礎) 到 `learn_elf_linking` (binary format) 到 `learn_compiler_backend` (你現在這裡)，你有了 SiFive job spec 要求的全部核心能力。
+從 `riscv` (ISA 基礎) 到 `elf_linking` (binary format) 到 `compiler_backend` (你現在這裡)，你有了 SiFive job spec 要求的全部核心能力。
 
-剩下兩門課（`learn_perf_bench` + `learn_yocto`）是應用與配套。**你已經有 80% 的戰力**。
+剩下兩門課（`perf_bench` + `yocto`）是應用與配套。**你已經有 80% 的戰力**。
 
 去做。
 

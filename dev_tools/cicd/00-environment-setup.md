@@ -81,11 +81,11 @@ python --version
 
 ## 拿到 `tasktrack` 初始專案
 
-起始碼放在本 repo 的 `learn_cicd/tasktrack/`。**複製一份到另一個獨立目錄當你的 repo**，因為後面要 `git init`、推到 GitHub、跑 Actions — 你不會想讓整套流程跑在 `learn_cicd` 的子目錄裡。
+起始碼放在本 repo 的 `cicd/tasktrack/`。**複製一份到另一個獨立目錄當你的 repo**，因為後面要 `git init`、推到 GitHub、跑 Actions — 你不會想讓整套流程跑在 `cicd` 的子目錄裡。
 
 ```bash
 # 放哪都行，這裡假設 ~/projects
-cp -r learn_cicd/tasktrack ~/projects/tasktrack
+cp -r cicd/tasktrack ~/projects/tasktrack
 cd ~/projects/tasktrack
 ```
 

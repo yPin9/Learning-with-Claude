@@ -317,7 +317,7 @@ SiFive patch 最終目標：**upstream merge 到 GCC / poky**。
 
 流程：
 
-1. Upstream GCC first (Ch 19 of learn_compiler_backend)
+1. Upstream GCC first (Ch 19 of compiler_backend)
 2. 等 poky 下一版含新 GCC
 3. Poky bump GCC → SiFive 的 patch 可以 remove from bbappend
 

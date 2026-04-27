@@ -148,7 +148,7 @@ difffolded.pl before.folded after.folded | flamegraph.pl > diff.svg
 - **Memory flame graph**：show 哪裡 allocation
 - **Hot-cold flame graph**：同時顯示 on-CPU + off-CPU
 
-這些用 eBPF 採集。`learn_bpf` 有 cover。
+這些用 eBPF 採集。`bpf` 有 cover。
 
 ## FlameGraph 的陷阱
 

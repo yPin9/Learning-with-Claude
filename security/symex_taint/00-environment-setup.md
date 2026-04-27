@@ -327,7 +327,7 @@ chmod +x ~/symex/check-env.sh
 
 ## 編輯器
 
-跟 `learn_sat_smt` / `learn_bpf` 一樣 — VS Code + Remote-WSL 最順。Python 端記得裝 Pylance，對 angr 這種重度 type 的庫幫很大。
+跟 `sat_smt` / `bpf` 一樣 — VS Code + Remote-WSL 最順。Python 端記得裝 Pylance，對 angr 這種重度 type 的庫幫很大。
 
 ## 常見問題
 

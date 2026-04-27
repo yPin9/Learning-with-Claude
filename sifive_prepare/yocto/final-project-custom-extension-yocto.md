@@ -1,7 +1,7 @@
 # Final Project — 把 custom extension patch 塞進 RISC-V Yocto image
 
 > 目標：整合整個 SiFive job spec 三條 responsibility 在一個 project：
-> 1. 你在 `learn_compiler_backend` final 加的 custom extension (XMyMA)
+> 1. 你在 `compiler_backend` final 加的 custom extension (XMyMA)
 > 2. 要 port 進 Yocto toolchain recipe (GCC + LLVM)
 > 3. 產 full bootable RISC-V image + SDK 給假想客戶
 >
@@ -9,14 +9,14 @@
 
 ## 為什麼這是好 final
 
-- **Cross three courses**：learn_compiler_backend + learn_elf_linking + learn_yocto
+- **Cross three courses**：compiler_backend + elf_linking + yocto
 - **完美 match job spec**：SiFive job 要求的所有技術 axis
 - **Demo 級作品**：面試時 show your laptop + live boot
 - **Production-like**：跟 SiFive 客戶 delivery 流程幾乎相同
 
 ## Prerequisites
 
-- 完成 learn_compiler_backend 的 final project（加 XMyMA extension）
+- 完成 compiler_backend 的 final project（加 XMyMA extension）
 - 有 Yocto environment set up
 - RISC-V hardware or QEMU
 
@@ -37,7 +37,7 @@ Customer 拿到:
 
 ## Phase 1: Prepare your custom extension patches
 
-把你從 `learn_compiler_backend` 的 work 轉 patch。
+把你從 `compiler_backend` 的 work 轉 patch。
 
 ### For GCC
 

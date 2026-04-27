@@ -270,7 +270,7 @@ public:
 1. **Boolean abstraction 手做**：將 `(x > 0 ∧ y < 5) ∨ (f(x) = f(y) ∧ x < 10)` 抽象化，寫出 atom-to-var map、Boolean CNF。
 2. **模擬 DPLL(T) 輪次**：用第一個例子 `(x > 0) ∧ (x < 0)`，用 paper 算一次 SAT + theory + lemma 三個 phase。
 3. **讀 Z3 trace**：`z3 -trace test.smt2` 印詳細內部流程，觀察 SAT conflict 和 theory conflict 交替。
-4. **MiniSMT 專案起步**：建 `learn_sat_smt/mini-smt/`，寫 `SATSolver` + `TheorySolver` interface，留空實作 — Ch 24 後就有內容填。
+4. **MiniSMT 專案起步**：建 `sat_smt/mini-smt/`，寫 `SATSolver` + `TheorySolver` interface，留空實作 — Ch 24 後就有內容填。
 
 ## 常見誤解
 

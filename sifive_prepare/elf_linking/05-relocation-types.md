@@ -79,7 +79,7 @@ R_RISCV_PCREL_LO12_I     對應 auipc 的 addi / lw 的 imm[11:0]
 R_RISCV_PCREL_LO12_S     對應 auipc 的 sw / sb 的 imm[11:0]
 ```
 
-**這三個是 RISC-V user-space code 最常見的 relocation**。`learn_riscv` Ch 3 解釋過 `auipc + addi/lw/sw` idiom 是 RISC-V 的靈魂，它們對應就是這一組 reloc。
+**這三個是 RISC-V user-space code 最常見的 relocation**。`riscv` Ch 3 解釋過 `auipc + addi/lw/sw` idiom 是 RISC-V 的靈魂，它們對應就是這一組 reloc。
 
 ### 為什麼 `PCREL_LO12` 的 symbol 很奇怪
 
@@ -222,7 +222,7 @@ runtime 時：
 - `auipc a0, 0x1` → a0 = PC(0x16ec) + (0x1 << 12) = 0x16ec + 0x1000 = 0x26ec
 - `addi a0, a0, 0x914` → a0 = 0x26ec + sign_ext(0x914) = 0x26ec + (-0x6ec) = 0x2000 ✓
 
-**這套公式有一個「+0x800」的 trick** 很容易錯。`learn_riscv` Ch 3 有提到。手寫 linker 時務必測試 low 12 bit 邊界。
+**這套公式有一個「+0x800」的 trick** 很容易錯。`riscv` Ch 3 有提到。手寫 linker 時務必測試 low 12 bit 邊界。
 
 ## Relocation overflow
 

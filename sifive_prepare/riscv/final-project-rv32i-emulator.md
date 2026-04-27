@@ -410,10 +410,10 @@ fix: correct B-type immediate sign extension
 
 ## 結束前的話
 
-這是 `learn_riscv` 課程的終點。你從「hello from spike」走到「自己寫一個 spike」。接下來：
+這是 `riscv` 課程的終點。你從「hello from spike」走到「自己寫一個 spike」。接下來：
 
-- **`learn_elf_linking`**：下一門課。深入 ELF 細節、relocation、linker script、relaxation。你寫過 emulator 再學這個會發現「喔原來 PT_LOAD 底下還有這麼多事」。
-- **`learn_compiler_backend`**：最後一門。有了 RISC-V 跟 ELF 的基礎，看 LLVM / GCC 的 RISC-V 後端會暢通無阻。
+- **`elf_linking`**：下一門課。深入 ELF 細節、relocation、linker script、relaxation。你寫過 emulator 再學這個會發現「喔原來 PT_LOAD 底下還有這麼多事」。
+- **`compiler_backend`**：最後一門。有了 RISC-V 跟 ELF 的基礎，看 LLVM / GCC 的 RISC-V 後端會暢通無阻。
 - **LLVM contribution**：挑一個 open bug，送 patch。用你的 emulator 驗證。這是面試作品集的 cherry on top。
 
 一步一步走。你會到 SiFive 的。

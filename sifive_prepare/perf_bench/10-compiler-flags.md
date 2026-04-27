@@ -125,7 +125,7 @@ Compiler 知道具體 CPU → 用對應 scheduling model → 可能產生更 tun
 
 ## `-flto` (Link-Time Optimization)
 
-Ch 14 of `learn_elf_linking` 細講。效果摘要：
+Ch 14 of `elf_linking` 細講。效果摘要：
 
 - **size**: -5% 到 -15%
 - **speed**: +2% 到 +10%

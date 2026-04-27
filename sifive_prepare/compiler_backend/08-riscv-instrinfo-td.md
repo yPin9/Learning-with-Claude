@@ -160,7 +160,7 @@ class RVInstI<bits<3> funct3, RVInstOpcode opcode,
 // 其他：RVInstS, RVInstB, RVInstU, RVInstJ...
 ```
 
-**對應 `learn_riscv` Ch 1 的六種 format**。這裡宣告它們的 bit layout。
+**對應 `riscv` Ch 1 的六種 format**。這裡宣告它們的 bit layout。
 
 ## `RISCVInstrInfo.td` 正式開始
 
@@ -226,7 +226,7 @@ def AND  : ALU_rr<0b0000000, 0b111, "and", /*Commutable=*/1>;
 
 10 條 R-type ALU 指令一次寫完。
 
-跟 `learn_riscv` Ch 1 的 funct3/funct7 表對照，你會看到一一對應。
+跟 `riscv` Ch 1 的 funct3/funct7 表對照，你會看到一一對應。
 
 ## I-type ALU
 
@@ -354,7 +354,7 @@ def PseudoRET : Pseudo<(outs), (ins), [(riscv_retglue)]>,
                 PseudoInstExpansion<(JALR X0, X1, 0)>;
 ```
 
-`Pseudo` 是佔位符指令，之後 lowering 展成真實指令。`PseudoRET` 最後變 `jalr x0, ra, 0`（Ch 3 of learn_riscv 講的）。
+`Pseudo` 是佔位符指令，之後 lowering 展成真實指令。`PseudoRET` 最後變 `jalr x0, ra, 0`（Ch 3 of riscv 講的）。
 
 ## Lui / Auipc
 
@@ -383,7 +383,7 @@ Pseudo 的好處：
 - pattern match 階段只看到一條指令（簡化）
 - 後續 expand 階段才處理具體展開
 
-`learn_riscv` Ch 3 講的 `li` / `la` / `call` / `ret` 都在 `.td` 以 Pseudo 形式存在。
+`riscv` Ch 3 講的 `li` / `la` / `call` / `ret` 都在 `.td` 以 Pseudo 形式存在。
 
 ## RV64-specific
 
@@ -463,7 +463,7 @@ grep "Pat<(add" *.td
 ## 自我檢核
 
 - [ ] 我能在 `RISCVInstrInfo.td` 找到任一基礎指令（ADD / BEQ / LW）的定義
-- [ ] 我能對照 `learn_riscv` Ch 1 的 format 跟 `RVInstR` class
+- [ ] 我能對照 `riscv` Ch 1 的 format 跟 `RVInstR` class
 - [ ] 我能讀 pattern 判斷它何時 match
 - [ ] 我知道 `Pseudo` 的角色跟展開時機
 - [ ] 我能用 grep 在 `.td` 裡快速定位

@@ -365,9 +365,9 @@ Link self-hosted hello world runs on Spike + pk."
 
 ## 結語
 
-這是 `learn_elf_linking` 的終點。你從「什麼是 ELF」走到「我寫了一個 ELF linker」。
+這是 `elf_linking` 的終點。你從「什麼是 ELF」走到「我寫了一個 ELF linker」。
 
-下一門課：**`learn_compiler_backend`**。有了 RISC-V + ELF + linker 的基礎，看 LLVM backend 會是暢通無阻的旅程。
+下一門課：**`compiler_backend`**。有了 RISC-V + ELF + linker 的基礎，看 LLVM backend 會是暢通無阻的旅程。
 
 **走到這裡，你離 SiFive offer 只剩一哩路。**
 

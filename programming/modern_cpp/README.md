@@ -1,4 +1,4 @@
-# learn_modern_cpp
+# modern_cpp
 
 給「有 C 基礎、想學 C++20」的人的速成課。目標：**讀得懂現代 C++ code，並能寫出符合現代風格的 C++**。
 

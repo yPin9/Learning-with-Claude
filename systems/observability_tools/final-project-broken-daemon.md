@@ -412,7 +412,7 @@ coredumpctl gdb -1
 
 **C. fault injection**：用 LD_PRELOAD 攔 `connect`，10% 機率回 ECONNREFUSED。觀察修好的 daemon 怎麼 retry。
 
-**D. 寫成 systemd service**：加 unit file，learn_linux_boot 學的東西用上。
+**D. 寫成 systemd service**：加 unit file，linux_boot 學的東西用上。
 
 **E. 用 ASan + libfuzzer 對 metric parser fuzz**（如果你加了 input parser）。
 
@@ -435,7 +435,7 @@ coredumpctl gdb -1
 
 接下來如果還想深入：
 
-- **Linux kernel 觀察**：`learn_bpf` 的 eBPF 深入、kprobe / fentry 自寫
+- **Linux kernel 觀察**：`bpf` 的 eBPF 深入、kprobe / fentry 自寫
 - **performance engineering**：Brendan Gregg 的 BPF Performance Tools 一書
 - **production debugging**：寫 SRE / incident response，把這套搬進 oncall
 - **security observability**：auditd、Falco、tetragon —— 這套工具往安全方向延伸

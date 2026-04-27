@@ -122,7 +122,7 @@ auipc ra, 0      ← 假值
 jalr  ra, 0      ← 假值
 ```
 
-真值要 linker 填（對應 Ch 5 of learn_elf_linking）。MC emit 時產生 **Fixup**：
+真值要 linker 填（對應 Ch 5 of elf_linking）。MC emit 時產生 **Fixup**：
 
 ```cpp
 Fixups.push_back(MCFixup::create(Offset, Value, MCFixupKind::fixup_riscv_call));
@@ -302,7 +302,7 @@ unsigned RISCVELFObjectWriter::getRelocType(MCContext &Ctx, const MCValue &Targe
 
 每個 MC fixup kind 對應一個 ELF relocation type。
 
-`learn_elf_linking` Ch 5 講的所有 relocation 在這裡誕生。
+`elf_linking` Ch 5 講的所有 relocation 在這裡誕生。
 
 ## Relax at assembler level
 

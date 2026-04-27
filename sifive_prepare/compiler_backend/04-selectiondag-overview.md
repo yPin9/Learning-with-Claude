@@ -164,7 +164,7 @@ SDValue RISCVTargetLowering::LowerCall(CallLoweringInfo &CLI, SmallVectorImpl<SD
 }
 ```
 
-**ABI 邏輯寫在這裡**。`learn_riscv` Ch 2 的 `a0..a7` / soft-float vs hard-float 全部對應到這個 function 的行為。
+**ABI 邏輯寫在這裡**。`riscv` Ch 2 的 `a0..a7` / soft-float vs hard-float 全部對應到這個 function 的行為。
 
 ## DAG 的 visualization
 

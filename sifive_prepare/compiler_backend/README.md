@@ -1,6 +1,6 @@
 # Compiler Backend：LLVM RISC-V 目標全解
 
-> 給已經會 compiler frontend（AST / SSA / IR）、讀過 `learn_riscv` 與 `learn_elf_linking`、想真正動手修 LLVM backend 的工程師。目標是能獨立加一條 custom instruction、能寫 scheduling model、能送 patch 上游。
+> 給已經會 compiler frontend（AST / SSA / IR）、讀過 `riscv` 與 `elf_linking`、想真正動手修 LLVM backend 的工程師。目標是能獨立加一條 custom instruction、能寫 scheduling model、能送 patch 上游。
 
 這是前兩門課的結尾合流。前兩門教你「看懂 RISC-V」與「看懂 ELF / linking」—— 本門把這些變成 **compiler 工程師的 day-to-day 技能**：SelectionDAG / GlobalISel / TableGen / MIR / Scheduler / MC layer。
 
@@ -14,13 +14,13 @@
 ## 本課與前兩門的關係
 
 ```
-learn_riscv          (ISA 本身)
+riscv          (ISA 本身)
      ↓
-learn_elf_linking    (binary format + relocation)
+elf_linking    (binary format + relocation)
      ↓
-learn_compiler_backend  (compiler 產出 binary 的後半段)
+compiler_backend  (compiler 產出 binary 的後半段)
      ↓
-learn_perf_bench + learn_yocto  (後續應用)
+perf_bench + yocto  (後續應用)
 ```
 
 **建議先讀完前兩門**。否則 Ch 8 講 `RISCVInstrInfo.td` 時會卡在「custom extension 是什麼」，Ch 17 講 MC layer 時會卡在「assembler 語法跟 encoding 怎麼對應」。
@@ -72,12 +72,12 @@ learn_perf_bench + learn_yocto  (後續應用)
 1. **LLVM source 放手邊**：<https://github.com/llvm/llvm-project>。本課每章都會引用某個 file / function。**不讀 source 學不會 backend**。
 2. **寫 micro-testcase**：看 IR → asm 的對應，最快的方法是寫 10 行 C、`clang -emit-llvm -S` 產 IR、`llc -march=riscv64` 產 asm，三者對照。
 3. **善用 `-debug-only=<name>`**：LLVM 有豐富的 debug output。例如 `llc -debug-only=isel hello.ll` 印出 instruction selection 過程。
-4. **對照 `learn_riscv` / `learn_elf_linking` 的章節**：當課內提到「這對應 RISC-V 的 XXX」時，回去翻前課。
+4. **對照 `riscv` / `elf_linking` 的章節**：當課內提到「這對應 RISC-V 的 XXX」時，回去翻前課。
 5. **做 final project**：加一個 custom extension 的完整流程（spec → TableGen → codegen → test）是本課的終點。比 40 章口頭知識值錢。
 
 ## 本課不涵蓋什麼
 
-- **Frontend 細節**：Clang 的 AST / template / name mangling 不碰（`learn_compiler_frontend` 的範圍）。
+- **Frontend 細節**：Clang 的 AST / template / name mangling 不碰（`compiler_frontend` 的範圍）。
 - **LLVM IR 的完整 spec**：只抓到 backend 相關的那 60%。想深究請讀 LangRef.
 - **LLVM pass 的完整列表**：太多了。我們只講 backend 關鍵 pass + 示範幾個代表 IR pass。
 - **JIT / MCJIT / ORC**：LLVM JIT 另一個大世界，不在 static compiler 的主線。

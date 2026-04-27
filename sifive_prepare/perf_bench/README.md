@@ -1,6 +1,6 @@
 # Performance Analysis 與 Benchmarking：從 perf 到 compiler optimization
 
-> 給已經會 C/C++、讀完 `learn_compiler_backend`、想把「效能」變成可以量化討論的能力的工程師。目標是看到 benchmark 數字能解讀、看到 hot function 能提出 compiler-level 改進、能跟硬體團隊討論 IPC 跟 cache behavior。
+> 給已經會 C/C++、讀完 `compiler_backend`、想把「效能」變成可以量化討論的能力的工程師。目標是看到 benchmark 數字能解讀、看到 hot function 能提出 compiler-level 改進、能跟硬體團隊討論 IPC 跟 cache behavior。
 
 這是 SiFive job spec 第二條 responsibility 的對口課程：**"Work with SiFive's benchmarking teams to analyze performance results and suggest new compiler optimizations."** 不會分析效能，你無法 suggest optimization；不會 benchmark，你無法 validate 改進。
 
@@ -14,18 +14,18 @@
 ## 本課與前幾門的關係
 
 ```
-learn_riscv           (ISA)
+riscv           (ISA)
      ↓
-learn_elf_linking     (binary format)
+elf_linking     (binary format)
      ↓
-learn_compiler_backend (compiler 如何產出 code)
+compiler_backend (compiler 如何產出 code)
      ↓
-learn_perf_bench     (如何測 compiler 產出的 code 是否夠快)  ← 你在這裡
+perf_bench     (如何測 compiler 產出的 code 是否夠快)  ← 你在這裡
      ↓
-learn_yocto          (如何把好 code 部署)
+yocto          (如何把好 code 部署)
 ```
 
-**建議先讀完 Ch 13 of `learn_compiler_backend`（scheduling model）**。本課很多 chapter 直接對應 compiler 層的概念。
+**建議先讀完 Ch 13 of `compiler_backend`（scheduling model）**。本課很多 chapter 直接對應 compiler 層的概念。
 
 ## 課程地圖
 
@@ -73,7 +73,7 @@ learn_yocto          (如何把好 code 部署)
 - **GPU profiling**：CUDA / Metal 另一個大世界，不碰。
 - **網路 / I/O 瓶頸**：專注 CPU-bound 情境。database / web 另有方法論。
 - **Power / energy analysis**：相關但獨立。嵌入式的話可選看 Ch 5 輕觸。
-- **DTrace / eBPF 深度**：`learn_bpf` 有 cover，這裡不重複。
+- **DTrace / eBPF 深度**：`bpf` 有 cover，這裡不重複。
 
 ## 參考資料
 

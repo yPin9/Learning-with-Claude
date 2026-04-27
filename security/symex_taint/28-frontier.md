@@ -132,7 +132,7 @@ Tool：Coq、Isabelle、F*、Dafny、Verus。
 
 - Coq / Isabelle 入門
 - F* / Dafny
-- SMT solver 內部（你應該先看 `learn_sat_smt`）
+- SMT solver 內部（你應該先看 `sat_smt`）
 - 讀：Software Foundations
 
 ### 方向 D：Academic research

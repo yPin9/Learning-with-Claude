@@ -201,13 +201,13 @@ ARM 有 TrustZone / CCA，x86 有 SGX / SEV。RISC-V 有：
 **下一步學習路徑**：
 
 ```
-learn_riscv (本課)
+riscv (本課)
      │
      ▼
-learn_elf_linking (下一門建議課)
+elf_linking (下一門建議課)
      │
      ▼
-learn_compiler_backend (最後的技術深度)
+compiler_backend (最後的技術深度)
      │
      ▼
 實戰：送 LLVM patch、跑 Coremark、面試 SiFive

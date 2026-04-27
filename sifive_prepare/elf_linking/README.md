@@ -2,7 +2,7 @@
 
 > 給已經會寫 C、看得懂組語、想徹底搞懂「`.o` → `.so` → 可執行檔」中間發生了什麼的系統軟體工程師。目標是看到任何 link error 能立刻判斷出在哪層、能寫 linker script 把 ELF 佈到任意地址、能解釋 RISC-V 的 linker relaxation 是怎麼回事。
 
-這是 `learn_riscv` 的後續課程。ELF 跟 linking 是所有 compiler / toolchain / kernel / firmware 工程師的隱形地基 —— 你每天在用、卻幾乎沒人從頭系統化學過。本課以 RISC-V 為主 target，但 80% 概念對 x86-64 / ARM 也適用。
+這是 `riscv` 的後續課程。ELF 跟 linking 是所有 compiler / toolchain / kernel / firmware 工程師的隱形地基 —— 你每天在用、卻幾乎沒人從頭系統化學過。本課以 RISC-V 為主 target，但 80% 概念對 x86-64 / ARM 也適用。
 
 ## 為什麼學這個？
 
@@ -12,9 +12,9 @@
 - **TLS / visibility / LTO 的交互是無止盡的 bug 源頭**：現代軟體日益依賴這些機制，了解它們能讓你 debug 時少走 99% 的彎路。
 - **寫 mini linker 是真正理解的終點**：跟前課的 emulator 一樣，能寫出來才算真懂。
 
-## 本課與 `learn_riscv` 的關係
+## 本課與 `riscv` 的關係
 
-`learn_riscv` Ch 3 講 pseudo-instruction 時埋了很多伏筆 —— `auipc + addi` / `auipc + jalr` / `R_RISCV_PCREL_HI20` / `R_RISCV_RELAX`。**這門課就是把那些伏筆全部兌現**。如果你還沒讀過 `learn_riscv` 的 Ch 3、Ch 5、Ch 16，建議先補。
+`riscv` Ch 3 講 pseudo-instruction 時埋了很多伏筆 —— `auipc + addi` / `auipc + jalr` / `R_RISCV_PCREL_HI20` / `R_RISCV_RELAX`。**這門課就是把那些伏筆全部兌現**。如果你還沒讀過 `riscv` 的 Ch 3、Ch 5、Ch 16，建議先補。
 
 ## 課程地圖
 
@@ -70,7 +70,7 @@
 ## 本課不涵蓋什麼
 
 - **完整 DWARF 規格**：這可以寫一本書。Ch 15 只講「跟 ELF section 的互動」。
-- **debugger 實作**：那是 `learn_gdb` 的事。
+- **debugger 實作**：那是 `gdb` 的事。
 - **COFF / Mach-O / PE**：Windows 跟 macOS 的 binary format 不在範圍內（但多數概念共通）。
 - **完整的 C++ name mangling**：會提 Itanium ABI 的 mangling rule，但不深究 RTTI / vtable 佈局。
 - **JIT / runtime code generation**：是另一個深坑，跳過。

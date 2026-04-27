@@ -157,7 +157,7 @@ RA 跑完後 **`PrologEpilogInserter` pass** 插入：
 
 ## Callee-saved vs caller-saved
 
-回顧 `learn_riscv` Ch 2：
+回顧 `riscv` Ch 2：
 
 - callee-saved：`s0..s11`（x8, x9, x18-x27），callee 要保存
 - caller-saved：`t0..t6, a0..a7, ra`，caller 要自己存

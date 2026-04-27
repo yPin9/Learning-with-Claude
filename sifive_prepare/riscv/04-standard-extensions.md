@@ -197,7 +197,7 @@ C 擴充也是 linker relaxation 的常客：
 - linker 發現它可以換成 16-bit `c.addi a5, 0`
 - 整個 code section 縮一點
 
-累積起來一個大 binary 能省幾 MB。這是 Ch 7 of `learn_elf_linking` 的主題。
+累積起來一個大 binary 能省幾 MB。這是 Ch 7 of `elf_linking` 的主題。
 
 ## Zicsr 與 Zifencei：被塞進 G 的小擴充
 

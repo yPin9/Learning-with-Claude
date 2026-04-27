@@ -1,6 +1,6 @@
 # tasktrack
 
-任務追蹤小服務，專為 [learn_cicd 課程](../README.md) 當示範用。
+任務追蹤小服務，專為 [cicd 課程](../README.md) 當示範用。
 
 ## 技術棧
 

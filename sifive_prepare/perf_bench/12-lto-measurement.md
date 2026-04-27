@@ -13,7 +13,7 @@ Link-Time Optimization：把每個 `.o` 內容（IR 形式）一起 optimize、�
 - Cross-TU constant propagation
 - Whole-program register allocation
 
-`learn_elf_linking` Ch 14 有詳細 overview。這章 focus **量測**。
+`elf_linking` Ch 14 有詳細 overview。這章 focus **量測**。
 
 ## Full LTO vs ThinLTO
 
@@ -152,7 +152,7 @@ LTO 會激進 inline → stack trace 不準。但 `-g -flto` 仍產 debug info�
 
 ## LTO vs visibility
 
-Ch 14 of `learn_elf_linking` 講過。LTO + `-fvisibility=hidden` 是黃金組合：
+Ch 14 of `elf_linking` 講過。LTO + `-fvisibility=hidden` 是黃金組合：
 
 - LTO 知道哪些 symbol 要 export（default visibility）
 - 其他 function 保證 internal

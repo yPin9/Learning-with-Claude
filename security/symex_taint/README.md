@@ -14,9 +14,9 @@
 ## 先備知識
 
 - 會 Python（angr 是 Python）、會 C（KLEE target 都是 C）
-- 會讀 x86-64 assembly，ELF 大致知道長怎樣（看 `learn_elf_linking`、`learn_ida_pro` 先補）
-- SMT / Z3 的基本概念（看 `learn_sat_smt` 的 Part 0 + Ch 22 足夠）
-- 用過 gdb 看過 program state（`learn_gdb`）
+- 會讀 x86-64 assembly，ELF 大致知道長怎樣（看 `elf_linking`、`ida_pro` 先補）
+- SMT / Z3 的基本概念（看 `sat_smt` 的 Part 0 + Ch 22 足夠）
+- 用過 gdb 看過 program state（`gdb`）
 
 沒有這些，這門課會太硬，建議先補。
 

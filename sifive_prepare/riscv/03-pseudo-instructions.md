@@ -124,7 +124,7 @@ jalr  ra, ra, %pcrel_lo(1b)
 - `jal` 的跳躍範圍 ±1 MiB（J-type 21-bit signed）
 - `call` = `auipc + jalr`，範圍 ±2 GiB
 
-如果 compiler / linker 能確定目標在 ±1 MiB 內，`call` 可以被 **relaxation 壓縮成一條 `jal`** — 省一條指令。這是 RISC-V linker relaxation 的經典例子，之後 `learn_elf_linking` Ch 6 會細講。
+如果 compiler / linker 能確定目標在 ±1 MiB 內，`call` 可以被 **relaxation 壓縮成一條 `jal`** — 省一條指令。這是 RISC-V linker relaxation 的經典例子，之後 `elf_linking` Ch 6 會細講。
 
 ## `tail`：尾呼叫
 
@@ -180,7 +180,7 @@ addi a0, a0, %lo(foo)   # 「linker 再把 low 12 bit 填進來」
 
 為什麼這樣？因為 linker 在填 `%pcrel_lo` 時，需要知道當初 `%pcrel_hi` 算的是「從哪條指令的 PC」算的，才能湊出對的低 12 bit。所以語法層級就逼你把兩條指令綁在一起。
 
-**這個設計在 relaxation 時會出大問題** — 如果 linker 把 `auipc` 拿掉（因為發現 offset 小、可以直接 `addi`），`%pcrel_lo` 指的 label 就沒了。Ch 6 of `learn_elf_linking` 會看 linker 怎麼處理這個。
+**這個設計在 relaxation 時會出大問題** — 如果 linker 把 `auipc` 拿掉（因為發現 offset 小、可以直接 `addi`），`%pcrel_lo` 指的 label 就沒了。Ch 6 of `elf_linking` 會看 linker 怎麼處理這個。
 
 ## 看一個真實例子
 

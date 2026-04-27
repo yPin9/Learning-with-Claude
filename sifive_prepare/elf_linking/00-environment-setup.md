@@ -253,7 +253,7 @@ riscv64-linux-gnu-objdump -d hello | less
 
 - **`printf` 被 compile 成 `puts`**（gcc 優化）
 - **`puts@plt`** 表示「呼叫動態連結的 puts」—— Ch 10 講 PLT / GOT
-- **`auipc + addi`** 的 PC-relative addressing 模式（`learn_riscv` Ch 3 的 foreshadow 在此）
+- **`auipc + addi`** 的 PC-relative addressing 模式（`riscv` Ch 3 的 foreshadow 在此）
 
 ## 第五個：nm 看 symbol
 

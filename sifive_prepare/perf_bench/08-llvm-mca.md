@@ -198,7 +198,7 @@ Index     0123456789
 
 ## llvm-mca 的 scheduling model
 
-llvm-mca 根據 `-mcpu=` 參考對應 LLVM 的 scheduling model（`RISCVSchedXxx.td`，Ch 13 of `learn_compiler_backend`）。
+llvm-mca 根據 `-mcpu=` 參考對應 LLVM 的 scheduling model（`RISCVSchedXxx.td`，Ch 13 of `compiler_backend`）。
 
 **這意味著 llvm-mca 的 accuracy 依賴 scheduling model 的正確性**。
 

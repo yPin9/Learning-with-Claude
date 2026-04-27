@@ -246,6 +246,6 @@ wrapper:
 - [ ] 我知道 `ilp32d` 與 `lp64d` 差在哪，為什麼不能互連
 - [ ] 我能指出哪種 call 可以做 tail-call optimization
 
-下一章我們拆 pseudo-instruction — 那些你天天在 `.S` 裡看到、但其實不在 ISA spec 裡的指令（`li`、`call`、`la`、`ret` 等）。會解釋 `auipc` 為什麼是 RISC-V 的靈魂、PC-relative addressing 怎麼運作、以及為什麼 RISC-V 的 linker **特別依賴 relaxation**。這條 foreshadow 會在 `learn_elf_linking` 延伸成整門課。
+下一章我們拆 pseudo-instruction — 那些你天天在 `.S` 裡看到、但其實不在 ISA spec 裡的指令（`li`、`call`、`la`、`ret` 等）。會解釋 `auipc` 為什麼是 RISC-V 的靈魂、PC-relative addressing 怎麼運作、以及為什麼 RISC-V 的 linker **特別依賴 relaxation**。這條 foreshadow 會在 `elf_linking` 延伸成整門課。
 
 → [Ch 3 Pseudo-instruction 與 assembler 展開](./03-pseudo-instructions.md)

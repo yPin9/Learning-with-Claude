@@ -348,6 +348,6 @@ ar rcs libfoo.a foo.o bar.o baz.o
 - [ ] 我知道 weak + strong、common 的解析規則
 - [ ] 我能讀 `objdump -r` 的輸出並對照 .text 找到對應位置
 
-下一章深入 relocation 的具體 type —— 每種 type 的語意、RISC-V 專屬的型態、以及為什麼 `R_RISCV_PCREL_LO12` 要指向 label 而不是 symbol（這個解答 `learn_riscv` Ch 3 埋的伏筆）。
+下一章深入 relocation 的具體 type —— 每種 type 的語意、RISC-V 專屬的型態、以及為什麼 `R_RISCV_PCREL_LO12` 要指向 label 而不是 symbol（這個解答 `riscv` Ch 3 埋的伏筆）。
 
 → [Ch 5 Relocation type 總論](./05-relocation-types.md)

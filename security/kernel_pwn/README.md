@@ -13,7 +13,7 @@
 
 ## 先備知識
 
-- **User-space pwn 熟練**：ROP、glibc heap（tcache / fastbin / unsorted bin）、format string、穩定解題。不熟的話先去補 `learn_pentest` 或自己刷 pwn.college。
+- **User-space pwn 熟練**：ROP、glibc heap（tcache / fastbin / unsorted bin）、format string、穩定解題。不熟的話先去補 `pentest` 或自己刷 pwn.college。
 - **C 語言 + 基本 x86-64 assembly**：會讀 `gdb disas` 輸出。
 - **Linux 命令列、QEMU 大致知道怎麼回事**。
 - **不需要**讀過 kernel 原始碼，也**不需要**寫過 kernel module — Ch 1-3 會補。

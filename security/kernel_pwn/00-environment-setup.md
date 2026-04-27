@@ -50,7 +50,7 @@ kernel pwn 的訓練靶場長這樣：
 
 kernel build、QEMU、gdb-multiarch 在 Linux 生活最順。原生 Windows 上幾乎都跑不起來，macOS 只能用 UTM 模擬，WSL2 是 Windows 上最乾淨的選項。
 
-如果你跑過 `learn_symex_taint` 或 `learn_afl_plus_plus`，WSL 應該已經有了，跳到 Step 2。沒有的話：
+如果你跑過 `symex_taint` 或 `afl_plus_plus`，WSL 應該已經有了，跳到 Step 2。沒有的話：
 
 ```powershell
 # PowerShell 管理員模式

@@ -179,7 +179,7 @@ clmulr   rd, rs1, rs2    # carry-less multiply, reversed
 
 **carry-less** 的意思是加法不進位 — 等於在 GF(2) 上做多項式乘法。這是 CRC 的數學基礎。
 
-C 的 intrinsic 叫 `__riscv_clmul_*`。之後 `learn_compiler_backend` 會看到怎麼寫一個 pass 把某些 pattern map 到 `clmul`。
+C 的 intrinsic 叫 `__riscv_clmul_*`。之後 `compiler_backend` 會看到怎麼寫一個 pass 把某些 pattern map 到 `clmul`。
 
 ## Compiler 什麼時候自動用 B 擴充
 

@@ -67,7 +67,7 @@
 
 - **不教 CPU 微架構設計**：我們講 ISA（軟硬體介面），不講怎麼用 Chisel 寫 Rocket / BOOM。那是硬體課。
 - **不教 Verilog / Chisel**：同上。如果你想設計 RISC-V core，這不是對的教材。
-- **不深挖 Linux porting**：`learn_bpf` 與未來的 `learn_yocto` 會碰到。本課只講 privileged ISA 到能看懂 trap handler 為止。
+- **不深挖 Linux porting**：`bpf` 與未來的 `yocto` 會碰到。本課只講 privileged ISA 到能看懂 trap handler 為止。
 - **不會變成刷題指南**：面試題不是目標，讀懂 spec 與 toolchain 是目標。
 
 ## 參考資料

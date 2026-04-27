@@ -38,7 +38,7 @@ parent 9688662abc...
 author ypp <ohtanishohei715@gmail.com> 1713123456 +0800
 committer ypp <ohtanishohei715@gmail.com> 1713123456 +0800
 
-Add learn_bpf course
+Add bpf course
 ```
 
 看到沒？**沒有 diff**。Commit 指向一個完整的 tree。

@@ -26,7 +26,7 @@
 
 ### A. 程式碼與結構
 
-- [ ] `tasktrack` 在自己的 GitHub repo、不在 `learn_cicd/` 裡面
+- [ ] `tasktrack` 在自己的 GitHub repo、不在 `cicd/` 裡面
 - [ ] `app/` 有 `main.py` + `db.py` + `models.py`，加了 `/healthz` endpoint
 - [ ] `tests/` 分成 `unit/` 與 `integration/` 兩個子目錄
 - [ ] `requirements.txt` + `requirements-dev.txt`，runtime 與 dev 分開

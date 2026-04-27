@@ -90,7 +90,7 @@ int result = __builtin_riscv_xmynew_add(a, b);
 int x = a * 3 + b;    // 某 ARM core 的 MLA 類指令
 ```
 
-在 LLVM 對應到 TableGen pattern match。這是 `learn_compiler_backend` 的課題，但設計 extension 時要想到這層。
+在 LLVM 對應到 TableGen pattern match。這是 `compiler_backend` 的課題，但設計 extension 時要想到這層。
 
 ### 8. 加 scheduling model
 
@@ -188,7 +188,7 @@ for each byte i in 0..XLEN/8:
 uint64_t __riscv_xmxor(uint64_t a, uint64_t b, uint64_t mask);
 ```
 
-## `learn_compiler_backend` 的預告
+## `compiler_backend` 的預告
 
 實作 Step 5–8 是 compiler backend 的主題。關鍵檔案：
 
@@ -203,7 +203,7 @@ uint64_t __riscv_xmxor(uint64_t a, uint64_t b, uint64_t mask);
 - `gcc/config/riscv/riscv.md` — machine description
 - `gcc/config/riscv/riscv-builtins.cc` — intrinsic 定義
 
-這裡先建立概念，細節留到 `learn_compiler_backend`。
+這裡先建立概念，細節留到 `compiler_backend`。
 
 ## Extension 的命名與 versioning
 
