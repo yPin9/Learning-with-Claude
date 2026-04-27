@@ -1,6 +1,6 @@
 ---
 name: learn
-description: Use this skill when the user wants to learn a new technical topic together by producing a structured tutorial course under learn_<topic>/ in this repo. Triggers include phrases like "我想學 X", "來學 X 吧", "幫我規劃學 X 的課程", "start learning X", "let's learn X", or requests to fill out / continue an existing empty learn_* folder. Produces Traditional Chinese (zh-TW) tutorial chapters, practice exercises, and a final project that match the repo's established style (see learn_compiler_frontend/).
+description: Use this skill when the user wants to learn a new technical topic together by producing a structured tutorial course under <category>/<topic>/ in this repo. Triggers include phrases like "我想學 X", "來學 X 吧", "幫我規劃學 X 的課程", "start learning X", "let's learn X", or requests to fill out / continue an existing empty course folder. Produces Traditional Chinese (zh-TW) tutorial chapters, practice exercises, and a final project that match the repo's established style (see sifive_prepare/compiler_frontend/).
 ---
 
 # 通用學習 skill
@@ -10,7 +10,7 @@ description: Use this skill when the user wants to learn a new technical topic t
 ## 什麼時候啟動這個 skill
 
 - 使用者說：「我想學 X」「來學 X 吧」「幫我規劃 X 的學習路徑」
-- 使用者說：「繼續寫 learn_X 裡面的內容」「把 learn_X 這個目錄補齊」
+- 使用者說：「繼續寫某個課程資料夾裡面的內容」「把某個課程目錄補齊」
 - 使用者要求新增一個主題到 repo
 
 若使用者只是問某個概念，**不要**啟動這個 skill — 直接回答就好。這個 skill 是為「成系列、成冊」的學習材料而存在。
@@ -31,7 +31,7 @@ description: Use this skill when the user wants to learn a new technical topic t
 
 ### Step 2 — 提出課綱草稿
 
-依 `learn_compiler_frontend/README.md` 的格式，在對話裡提出「課程地圖」草稿。至少包含：
+依 `sifive_prepare/compiler_frontend/README.md` 的格式，在對話裡提出「課程地圖」草稿。至少包含：
 
 - 課程簡介（一句為什麼學這個）
 - 分 Part 的章節大綱（每章一句話說明它在整體中的位置）
@@ -44,7 +44,7 @@ description: Use this skill when the user wants to learn a new technical topic t
 
 課綱確認後：
 
-1. 建立 `learn_<topic>/` 資料夾（topic 用 snake_case，例：`learn_gdb`、`learn_distributed_systems`）
+1. 在合適的分類下建立 `<category>/<topic>/` 資料夾（topic 用 snake_case，例：`security/gdb`、`systems/distributed_systems`）。沒有合適分類就新建一個分類資料夾，別丟在 repo root
 2. 寫 `README.md`（即課程地圖，格式見下方）
 3. 先建立所有章節檔名（空檔或只有標題），讓整體架構一次看得見
 4. 讓使用者檢視一次檔名與 README 再開始填內容
@@ -65,7 +65,7 @@ description: Use this skill when the user wants to learn a new technical topic t
 ## 命名與檔案結構
 
 ```
-learn_<topic>/
+<category>/<topic>/
 ├── README.md                       # 課程地圖
 ├── 00-environment-setup.md         # Ch 0：環境搭建（若需要）
 ├── 01-<topic>-overview.md          # Ch 1：全貌 / 為什麼學
@@ -219,7 +219,7 @@ learn_<topic>/
 
 ## 風格指南（很重要，不要偏離）
 
-寫作風格以 `learn_compiler_frontend/` 為標準。具體要求：
+寫作風格以 `sifive_prepare/compiler_frontend/` 為標準。具體要求：
 
 ### 語言
 
@@ -265,9 +265,9 @@ learn_<topic>/
 
 當不確定寫法時，直接打開這兩個檔案抄格式：
 
-- 章節範本：`learn_compiler_frontend/01-frontend-overview.md`
-- 練習範本：`learn_compiler_frontend/practice-a-c-tokenizer.md`
-- README 範本：`learn_compiler_frontend/README.md`
+- 章節範本：`sifive_prepare/compiler_frontend/01-frontend-overview.md`
+- 練習範本：`sifive_prepare/compiler_frontend/practice-a-c-tokenizer.md`
+- README 範本：`sifive_prepare/compiler_frontend/README.md`
 
 ## 常見狀況處理
 
@@ -275,7 +275,7 @@ learn_<topic>/
 
 先按 Step 1 問清楚，不要直接動筆。一個「學 Kubernetes」可以是五章的入門也可以是三十章的深入，差很多。
 
-### 使用者想繼續寫既有的 learn_X 資料夾（例如 learn_gdb 目前是空的）
+### 使用者想繼續寫既有的課程資料夾（例如 `security/gdb/` 目前是空的）
 
 1. 先看 README 是否存在、章節檔是否存在
 2. 若完全是空的，走完整 Step 1–5
