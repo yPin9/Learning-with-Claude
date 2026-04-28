@@ -49,6 +49,8 @@
   - 滲透測試的工具、心法、白帽思維
 - [kernel_pwn](./security/kernel_pwn/README.md)
   - Linux kernel pwn，目標 Google kernelCTF（含現代 heap / 隨機 kmalloc cache）
+- [owasp](./security/owasp/README.md)
+  - OWASP Top 10 + Web 安全完整課程，含 API Top 10、CVE 案例、WAF/RASP、紅藍隊演習
 
 ### soft_skills/
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
