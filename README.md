@@ -59,6 +59,8 @@
   - 從零拆解陌生產業到投資判斷
 - [chess](./soft_skills/chess/README.md)
   - 戰術 + 殘局 + 中局，最後 5 盤 Rapid 自我復盤
+- [go](./soft_skills/go/README.md)
+  - 圍棋從零到業餘高段，死活/手筋/形 重，AI 復盤(KataGo) 整 Part，50 盤升段 final
 
 ### systems/
 - [bpf](./systems/bpf/README.md)
@@ -71,3 +73,5 @@
   - perf + benchmark + compiler optimization 連動
 - [yocto](./systems/yocto/README.md)
   - toolchain 工程師速通：把 patched GCC 進 BSP
+- [networking](./systems/networking/README.md)
+  - TCP/IP + VPN + Proxy + VPS 全套，含 GFW 對抗演進史 + 完整 production 部署 final
