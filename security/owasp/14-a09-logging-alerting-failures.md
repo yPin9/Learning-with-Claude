@@ -1,6 +1,8 @@
-# Ch 14 — A09 Security Logging & Monitoring Failures
+# Ch 14 — A09 Security Logging & Alerting Failures
 
-> 目標：理解為什麼「log + monitor」是安全的最後防線，以及怎麼做對。
+> 目標：理解為什麼「log + alert」是安全的最後防線，以及怎麼做對。
+
+> **2025 變動**：2021 是「Logging & Monitoring Failures」，**2025 改名為「Logging & Alerting Failures」**。換字反映業界共識 — 光「監看」沒人會看，必須能**自動觸發告警**才有價值。本章 monitor / alert 兩字大部分時候可互換閱讀，但設計時要往「alerting」想。
 
 ## 為什麼這項排前 10
 
@@ -269,6 +271,6 @@ git clone https://github.com/redcanaryco/atomic-red-team.git
 - [ ] alert fatigue 是真問題
 - [ ] 自己 app 至少有基本 log
 
-下一章看 A10 SSRF — 最後一個 OWASP Top 10。
+下一章看 A10 Mishandling of Exceptional Conditions — 2025 全新類別（最後一個 Top 10）。SSRF 在 2025 已併入 A01，不再單獨佔 A10。
 
-→ [Ch 15 A10 SSRF](./15-a10-ssrf.md)
+→ [Ch 15 A10 Mishandling of Exceptional Conditions](./15-a10-mishandling-exceptions.md)

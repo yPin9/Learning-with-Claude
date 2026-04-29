@@ -2,6 +2,8 @@
 
 > 目標：搞懂 unsigned software update、insecure deserialization、CI/CD 攻擊面。
 
+> **2025 變動**：編號跟名稱都不變。注意：2025 把「Software Supply Chain Failures」拉成 A03（見 Ch 6），跟本章有部分重疊 — A03 著重 dependency / build pipeline 入侵的廣面，A08 著重「信不該信的東西」這個機制（簽章驗證、deserialization）。
+
 ## A08 是什麼
 
 「**信任不該信任的 software 或 data**」：
@@ -11,7 +13,7 @@
 - CI/CD pipeline 被攻擊
 - auto-update 機制不安全
 
-OWASP 2021 新加，反映現代 supply chain attack 趨勢。
+OWASP 2021 新加，反映現代 supply chain attack 趨勢；2025 沿用本類別 + 加開 A03 Software Supply Chain Failures 處理更廣的鏈條問題。
 
 ## 1. Insecure Deserialization
 
@@ -332,6 +334,6 @@ cosign verify --key cosign.pub myregistry/myimage:tag
 - [ ] 知道 cosign / sigstore 用途
 - [ ] webhook signature verify 寫過
 
-下一章看 A09 Logging & Monitoring Failures。
+下一章看 A09 Logging & Alerting Failures（2025 把「Monitoring」改成「Alerting」，強調光記錄不夠、要能觸發告警）。
 
-→ [Ch 14 A09 Security Logging & Monitoring Failures](./14-a09-logging-failures.md)
+→ [Ch 14 A09 Security Logging & Alerting Failures](./14-a09-logging-alerting-failures.md)

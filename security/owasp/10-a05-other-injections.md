@@ -1,6 +1,8 @@
-# Ch 8 — A03 其他注入：Command / NoSQL / LDAP / SSTI / XXE
+# Ch 10 — A05 其他注入：Command / NoSQL / LDAP / SSTI / XXE
 
 > 目標：認識 SQL / XSS 之外的常見注入類別 — 各自原理 + payload + 防禦。
+
+> **2025 變動**：2021 在 A03，2025 在 A05（Injection 大類沒變，編號改）。
 
 ## 1. Command Injection (OS Command Injection)
 
@@ -341,6 +343,6 @@ XXE labs 完整 set。
 - [ ] XXE 防禦：disable external entity
 - [ ] 知道 CSV / Header injection 等少見類型
 
-下一章看 A04 Insecure Design — framework 救不了的問題。
+下一章看 A06 Insecure Design — framework 救不了的問題（2025 編號 A06）。
 
-→ [Ch 9 A04 Insecure Design](./09-a04-insecure-design.md)
+→ [Ch 11 A06 Insecure Design](./11-a06-insecure-design.md)

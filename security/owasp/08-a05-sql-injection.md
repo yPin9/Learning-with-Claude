@@ -1,6 +1,8 @@
-# Ch 6 — A03 SQL Injection 深入
+# Ch 8 — A05 SQL Injection 深入
 
 > 目標：搞懂 SQL injection 各種類型 — union / blind / time-based / second-order，怎麼攻、怎麼防。
+
+> **2025 變動**：在 2021 SQLi / XSS / 其他注入都是 A03，**2025 統整為 A05「Injection」一類**（XSS 仍歸這裡）。本系列分 SQLi / XSS / 其他注入三章來細看。
 
 ## SQL Injection 基本
 
@@ -300,6 +302,6 @@ https://portswigger.net/web-security/sql-injection
 - [ ] 知道 escape / WAF / stored proc / 黑名單都不夠
 - [ ] DVWA / Juice Shop SQL injection challenges 完成
 
-下一章看 XSS — 注入第二大宗。
+下一章看 XSS — 注入第二大宗（同屬 A05）。
 
-→ [Ch 7 A03 XSS](./07-a03-xss.md)
+→ [Ch 9 A05 XSS](./09-a05-xss.md)

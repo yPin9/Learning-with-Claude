@@ -1,10 +1,12 @@
-# Ch 9 — A04 Insecure Design
+# Ch 11 — A06 Insecure Design
 
 > 目標：搞懂「**設計層面**」的安全問題 — business logic flaws、threat modeling 缺失、架構失策。framework 救不了。
 
-## A04 是什麼（OWASP 2021 新增）
+> **2025 變動**：2021 是 A04，**2025 編號 A06**（位置變動，本質不變）。
 
-OWASP 2021 新加的類別。前 9 個都是「**implementation 層面**」的漏洞（程式寫錯）。A04 是「**設計層面**」 — 即使程式寫對，**設計就有問題**。
+## A06 是什麼（2021 新增的類別）
+
+OWASP 2021 首度引進這類，2025 沿用。其他類別大多是「**implementation 層面**」的漏洞（程式寫錯）。Insecure Design 是「**設計層面**」 — 即使程式寫對，**設計就有問題**。
 
 例：
 
@@ -293,6 +295,6 @@ https://portswigger.net/web-security/logic-flaws
 - [ ] 對自己 project 跑過 STRIDE
 - [ ] Juice Shop business logic challenges 完成
 
-下一章看 A05 Misconfiguration — 設定錯比 code bug 更常見。
+下一章看 A07 Authentication Failures — 認證流程的常見漏洞（2025 從「Identification & Authentication Failures」縮短為「Authentication Failures」）。
 
-→ [Ch 10 A05 Security Misconfiguration](./10-a05-misconfiguration.md)
+→ [Ch 12 A07 Authentication Failures](./12-a07-auth-failures.md)

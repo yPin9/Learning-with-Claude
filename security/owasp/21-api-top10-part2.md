@@ -167,7 +167,7 @@ def require_role(role):
 
 「**業務流程**沒做 abuse 防禦」。
 
-跟 A04 Insecure Design 重疊，但 API 角度：
+跟 A06 Insecure Design 重疊（2021 編號 A04），但 API 角度：
 
 ### 例
 

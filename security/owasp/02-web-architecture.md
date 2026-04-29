@@ -257,7 +257,7 @@ SPA 把攻擊面從 server 移到「前端 + API」，不是「**消滅了**」�
 - Broken Access Control
 - 業務流程繞過
 
-**Insecure Design (A04)** 整個就是「**framework 不能救你**」。
+**Insecure Design (A06，2021 編號 A04)** 整個就是「**framework 不能救你**」。
 
 ## 動手練習
 

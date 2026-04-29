@@ -1,6 +1,8 @@
-# Ch 12 — A07 Identification & Authentication Failures
+# Ch 12 — A07 Authentication Failures
 
 > 目標：搞懂認證系統的常見漏洞 — session fixation、brute force、MFA bypass、JWT 弱點。
+
+> **2025 變動**：2021 叫「Identification & Authentication Failures」，**2025 縮短為「Authentication Failures」**。範圍實質不變。
 
 ## A07 包含什麼
 

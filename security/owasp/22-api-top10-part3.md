@@ -4,7 +4,7 @@
 
 ## API8: Security Misconfiguration
 
-跟 web A05 重疊，但 API 特有：
+跟 web A02 Misconfiguration 重疊（2021 編號 A05），但 API 特有：
 
 ### 1. CORS 太寬
 

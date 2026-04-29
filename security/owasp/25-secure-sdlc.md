@@ -64,7 +64,7 @@ production 才發現 = 改 + 重 deploy + 處理後果（bad PR / 賠償）。
 ### 6. Operate
 
 - WAF / RASP
-- Logging / monitoring (A09)
+- Logging / alerting (A09，2025 把 monitoring 改成 alerting)
 - Incident response
 - Bug bounty / responsible disclosure
 

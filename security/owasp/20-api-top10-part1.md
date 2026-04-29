@@ -19,18 +19,18 @@ OWASP API Top 10 (2023) 反映**API-specific** 風險。
 
 ## OWASP API Top 10 2023
 
-| # | 名稱 | 對應 web Top 10 |
+| # | 名稱 | 對應 web Top 10 (2025 / 2021) |
 |---|---|---|
-| API1 | Broken Object Level Authorization (BOLA) | A01 IDOR |
-| API2 | Broken Authentication | A07 |
-| API3 | Broken Object Property Level Authorization | A01 + A04 |
-| API4 | Unrestricted Resource Consumption | A04 |
-| API5 | Broken Function Level Authorization | A01 |
-| API6 | Unrestricted Access to Sensitive Business Flows | A04 |
-| API7 | Server Side Request Forgery (SSRF) | A10 |
-| API8 | Security Misconfiguration | A05 |
-| API9 | Improper Inventory Management | A05 + A06 |
-| API10 | Unsafe Consumption of APIs | A06 + A08 |
+| API1 | Broken Object Level Authorization (BOLA) | A01 IDOR (2025) / A01 (2021) |
+| API2 | Broken Authentication | A07 (兩版皆是) |
+| API3 | Broken Object Property Level Authorization | A01 + A06 (2025) / A01 + A04 (2021) |
+| API4 | Unrestricted Resource Consumption | A06 (2025) / A04 (2021) |
+| API5 | Broken Function Level Authorization | A01 (兩版) |
+| API6 | Unrestricted Access to Sensitive Business Flows | A06 (2025) / A04 (2021) |
+| API7 | Server Side Request Forgery (SSRF) | A01 (2025，併入) / A10 (2021) |
+| API8 | Security Misconfiguration | A02 (2025) / A05 (2021) |
+| API9 | Improper Inventory Management | A02 + A03 (2025) / A05 + A06 (2021) |
+| API10 | Unsafe Consumption of APIs | A03 + A08 (2025) / A06 + A08 (2021) |
 
 跟 web Top 10 重疊但角度不同。
 

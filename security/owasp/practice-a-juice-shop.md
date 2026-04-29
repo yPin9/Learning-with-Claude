@@ -2,6 +2,8 @@
 
 > 目標：用 Ch 4-19 學的 OWASP 知識 + 工具，對 OWASP Juice Shop 完成 50% 以上 challenges，寫 attack chain report。
 
+> 本練習所有 OWASP 編號採 **2025 版**。Juice Shop 的 challenge 內部 tag 仍為 2021 版（畫面上顯示 A01:2021 / A03:2021 等），請對照 README 的 2021→2025 對照表理解。
+
 ## 任務規格
 
 | # | 任務 | 驗收 |
@@ -42,11 +44,11 @@ firefox http://localhost:3000
 
 ### 簡單級 (1-2 stars)
 
-#### "DOM XSS" (1 star, A03)
+#### "DOM XSS" (1 star, A05 / 2021:A03)
 
 URL: 訪問 `/#/search?q=<iframe src="javascript:alert(`xss`)">`
 
-#### "Login Admin" (2 stars, A03)
+#### "Login Admin" (2 stars, A05 / 2021:A03)
 
 Email: `' OR 1=1--`  
 Password: random
@@ -63,7 +65,7 @@ Login 後 → Burp 看 GET `/rest/basket/<id>` → 改 ID 為其他用戶。
 
 研究 Jim 的 security question (找 review 中提示)。Reset password 流程：給對 security question answer → 改密碼。
 
-#### "Database Schema" (3 stars, A03)
+#### "Database Schema" (3 stars, A05 / 2021:A03)
 
 product search 含 SQL injection。用 UNION SELECT 拿 schema：
 
@@ -73,7 +75,7 @@ qwert')) UNION SELECT sql,2,3,4,5,6,7,8,9 FROM sqlite_master--
 
 ### 困難級 (5-6 stars)
 
-#### "Forged JWT" (6 stars, A02 + A07)
+#### "Forged JWT" (6 stars, A04 + A07 / 2021:A02+A07)
 
 JWT secret 弱 / alg=none：
 
@@ -115,19 +117,20 @@ nuclei -u http://localhost:3000
 
 對應 README 對照表：
 
-| OWASP | Juice Shop challenge |
-|---|---|
-| A01 | View Basket / Repeat Charges / Forged Feedback |
-| A02 | Forged JWT / Bonus Payload |
-| A03 SQL | Login Admin / Login Bender / Database Schema |
-| A03 XSS | DOM XSS / Reflected XSS / Persisted XSS |
-| A04 | Forged Coupon / Negative Score Cheat |
-| A05 | Error Handling / Outdated Whitelist |
-| A06 | Vulnerable Library |
-| A07 | Login Admin / MFA / Password Strength |
-| A08 | Deserialization / Login Backdoor |
-| A09 | Login Backdoor (沒 log it) |
-| A10 | SSRF |
+| OWASP 2025 | (2021) | Juice Shop challenge |
+|---|---|---|
+| A01 Broken Access Control | A01 | View Basket / Repeat Charges / Forged Feedback |
+| A01（含 SSRF） | (2021:A10) | SSRF (profile image 上傳收 URL) |
+| A02 Misconfiguration | (2021:A05) | Error Handling / Outdated Whitelist |
+| A03 Supply Chain | (2021:A06) | Vulnerable Library |
+| A04 Cryptographic Failures | (2021:A02) | Forged JWT / Bonus Payload |
+| A05 Injection (SQL) | (2021:A03) | Login Admin / Login Bender / Database Schema |
+| A05 Injection (XSS) | (2021:A03) | DOM XSS / Reflected XSS / Persisted XSS |
+| A06 Insecure Design | (2021:A04) | Forged Coupon / Negative Score Cheat |
+| A07 Authentication Failures | A07 | Login Admin / MFA / Password Strength |
+| A08 Integrity Failures | A08 | Deserialization / Login Backdoor |
+| A09 Logging & Alerting Failures | (2021:A09) | Login Backdoor（沒 log it） |
+| A10 Mishandling Exceptions | (新類別) | Error Handling 觸發 stack trace 外洩 / Forced Endpoint exception |
 
 每組玩 1-2 個。
 
@@ -139,7 +142,7 @@ nuclei -u http://localhost:3000
 ### Challenge: Login Admin
 
 **Difficulty**: 2 stars  
-**OWASP**: A03 Injection (SQL)
+**OWASP**: A05 Injection (SQL) [2021:A03]
 
 **Steps**:
 1. 訪問 /login

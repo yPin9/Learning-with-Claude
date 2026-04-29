@@ -2,7 +2,9 @@
 
 > 給有 binary security / pentest 背景但 web 不熟、想徹底學會 OWASP Top 10 + API 安全 + 防禦產品 + 真實 CVE 案例 + 紅藍隊演習的工程師。
 
-這系列把 web 安全從零教完：HTTP / Browser 模型 → OWASP Top 10 2021 全部 10 個 → 主流工具（Burp / sqlmap / ZAP / nuclei）→ API Security Top 10 2023 → WAF / RASP 防禦 → 真實 CVE 案例（Log4Shell / Heartbleed / SolarWinds 等）→ 紅藍隊演習方法論。讀完能 audit 一個 web app 找出 OWASP 弱點 + 知道怎麼修 + 對 API 安全有概念 + 看得懂 CVE advisory。
+這系列把 web 安全從零教完：HTTP / Browser 模型 → **OWASP Top 10 2025** 全部 10 個（含 2021→2025 對照）→ 主流工具（Burp / sqlmap / ZAP / nuclei）→ API Security Top 10 2023 → WAF / RASP 防禦 → 真實 CVE 案例（Log4Shell / Heartbleed / SolarWinds 等）→ 紅藍隊演習方法論。讀完能 audit 一個 web app 找出 OWASP 弱點 + 知道怎麼修 + 對 API 安全有概念 + 看得懂 CVE advisory。
+
+> **2025 版本說明**：本系列章節順序與編號採用 **OWASP Top 10:2025 release candidate**（2025-11-06 公開）。RC 與最終版差異預期極小；多數企業 / compliance 仍同時參考 2021，因此每章開頭會點明「2021 → 2025 變動」，並有總對照表（下方）。
 
 ## 為什麼學這個？
 
@@ -22,6 +24,24 @@
 
 **未授權對別人 server 攻擊在多數國家是刑事犯罪**。這課教的工具跟技術是雙面刃 — 用來做防禦或合法 pentest，不要用來做違法的事。
 
+## 2021 → 2025 對照表
+
+| 2025 | 名稱 | 2021 對應 | 主要變動 |
+|---|---|---|---|
+| A01 | Broken Access Control | A01 + A10 | **吸收 SSRF** |
+| A02 | Security Misconfiguration | A05 | 從 #5 升到 #2（cloud / IaC 攻擊面爆量） |
+| A03 | Software Supply Chain Failures | A06 | 從 Vulnerable Components **擴張**為整條 supply chain |
+| A04 | Cryptographic Failures | A02 | 位置降，本身範圍不變 |
+| A05 | Injection | A03 | 編號變、含 XSS / SQLi / Command / SSTI 等 |
+| A06 | Insecure Design | A04 | 編號變，本質同 |
+| A07 | Authentication Failures | A07 | **改名**（拿掉「Identification &」） |
+| A08 | Software or Data Integrity Failures | A08 | 沒變（與 A03 部分重疊） |
+| A09 | Security Logging & Alerting Failures | A09 | **「Monitoring」改 「Alerting」** |
+| A10 | Mishandling of Exceptional Conditions | — | **全新類別** |
+
+退出：2021 的 A10 SSRF（併入 A01）。
+新增：2025 的 A10 Mishandling of Exceptional Conditions。
+
 ## 課程地圖
 
 ### Part 1 — Web 基礎
@@ -30,19 +50,19 @@
 - [Ch 2 Web 架構速覽](./02-web-architecture.md)
 - [Ch 3 Browser 安全模型](./03-browser-security-model.md)
 
-### Part 2 — OWASP Top 10 2021
-- [Ch 4 A01 Broken Access Control](./04-a01-broken-access-control.md)
-- [Ch 5 A02 Cryptographic Failures](./05-a02-cryptographic-failures.md)
-- [Ch 6 A03 SQL Injection 深入](./06-a03-sql-injection.md)
-- [Ch 7 A03 XSS](./07-a03-xss.md)
-- [Ch 8 A03 其他注入 (Command/NoSQL/LDAP/SSTI/XXE)](./08-a03-other-injections.md)
-- [Ch 9 A04 Insecure Design](./09-a04-insecure-design.md)
-- [Ch 10 A05 Security Misconfiguration](./10-a05-misconfiguration.md)
-- [Ch 11 A06 Vulnerable & Outdated Components](./11-a06-vulnerable-components.md)
-- [Ch 12 A07 Identification & Authentication Failures](./12-a07-auth-failures.md)
+### Part 2 — OWASP Top 10 2025
+- [Ch 4 A01 Broken Access Control（含 SSRF）](./04-a01-broken-access-control.md)
+- [Ch 5 A02 Security Misconfiguration](./05-a02-misconfiguration.md)
+- [Ch 6 A03 Software Supply Chain Failures](./06-a03-software-supply-chain.md)
+- [Ch 7 A04 Cryptographic Failures](./07-a04-cryptographic-failures.md)
+- [Ch 8 A05 SQL Injection 深入](./08-a05-sql-injection.md)
+- [Ch 9 A05 XSS](./09-a05-xss.md)
+- [Ch 10 A05 其他注入 (Command/NoSQL/LDAP/SSTI/XXE)](./10-a05-other-injections.md)
+- [Ch 11 A06 Insecure Design](./11-a06-insecure-design.md)
+- [Ch 12 A07 Authentication Failures](./12-a07-auth-failures.md)
 - [Ch 13 A08 Software & Data Integrity Failures](./13-a08-integrity-failures.md)
-- [Ch 14 A09 Security Logging & Monitoring Failures](./14-a09-logging-failures.md)
-- [Ch 15 A10 SSRF](./15-a10-ssrf.md)
+- [Ch 14 A09 Security Logging & Alerting Failures](./14-a09-logging-alerting-failures.md)
+- [Ch 15 A10 Mishandling of Exceptional Conditions](./15-a10-mishandling-exceptions.md)
 
 ### Part 3 — 主流工具
 - [Ch 16 Burp Suite 完整](./16-burp-suite.md)
@@ -78,6 +98,7 @@
 
 - 《The Web Application Hacker's Handbook》— 經典中的經典
 - OWASP 官方 Top 10：https://owasp.org/Top10/
+- OWASP Top 10:2025 RC：https://owasp.org/Top10/2025/
 - OWASP API Security Top 10：https://owasp.org/API-Security/
 - OWASP Cheat Sheet Series：https://cheatsheetseries.owasp.org/
 - PortSwigger Web Security Academy：https://portswigger.net/web-security （免費 lab）

@@ -1,10 +1,12 @@
-# Ch 5 — A02 Cryptographic Failures
+# Ch 7 — A04 Cryptographic Failures
 
 > 目標：搞懂加密相關的常見錯誤 — 弱算法 / 明文傳輸 / 密碼存錯 / 隨機性不足。
 
+> **2025 變動**：在 2021 是 #2，**2025 降到 #4**。降不是因為變不重要，而是 misconfig / supply chain 問題的測試命中率上升把它擠下去。本身的攻擊面跟以前一樣大。
+
 ## 「Cryptographic Failures」是什麼
 
-OWASP 2021 把舊的「Sensitive Data Exposure」改名 — 強調**根本原因是加密用錯**，不只是資料外洩結果。
+OWASP 2021 把舊的「Sensitive Data Exposure」改名（2025 沿用）— 強調**根本原因是加密用錯**，不只是資料外洩結果。
 
 包含：
 
@@ -310,6 +312,6 @@ trufflehog git https://github.com/your/repo
 - [ ] JWT alg=none 攻擊原理
 - [ ] 對自己 site 跑過 SSL test
 
-下一章進注入大宗 — SQL Injection。
+下一章進注入大宗 — SQL Injection（2025 把 SQLi / XSS / 各類注入合併到 A05）。
 
-→ [Ch 6 A03 SQL Injection 深入](./06-a03-sql-injection.md)
+→ [Ch 8 A05 SQL Injection 深入](./08-a05-sql-injection.md)

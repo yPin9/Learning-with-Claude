@@ -1,8 +1,10 @@
-# Ch 10 — A05 Security Misconfiguration
+# Ch 5 — A02 Security Misconfiguration
 
 > 目標：搞懂常見的「**設定錯**」漏洞 — default credentials、debug mode、verbose error、open S3 bucket、CORS misconfig。
 
-## 為什麼這項排第 5
+> **2025 變動**：Misconfiguration 從 2021 的 #5 升到 **2025 的 #2**。社群票選與真實事件數據都顯示這類問題愈滾愈大（cloud / IaC / Kubernetes 把 misconfig 攻擊面爆量擴大）。
+
+## 為什麼這項排第 2
 
 Misconfiguration 是「**沒做好基本設定**」 — 不是 code bug，但可能更糟。攻擊面：
 
@@ -363,6 +365,6 @@ aws s3api get-bucket-policy --bucket your-bucket
 - [ ] 用 nuclei / nikto 掃過至少 1 次
 - [ ] 知道 `.git/` exposure 的危險
 
-下一章看 A06 Vulnerable Components — 你的 dependency 危險。
+下一章看 A03 Software Supply Chain Failures — 你的 dependency / build pipeline / CI 都是攻擊面（2025 從 A06 升 A03 並大幅擴張）。
 
-→ [Ch 11 A06 Vulnerable & Outdated Components](./11-a06-vulnerable-components.md)
+→ [Ch 6 A03 Software Supply Chain Failures](./06-a03-software-supply-chain.md)
