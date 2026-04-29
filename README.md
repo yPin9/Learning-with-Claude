@@ -13,6 +13,8 @@
 ### architecture/
 - [riscv](./architecture/riscv/README.md)
   - 從 RV32I 到 V/B 擴充、custom extension，自寫 RV32I emulator
+- [arm](./architecture/arm/README.md)
+  - Cortex-A/M 雙線，從 ISA 到 JTAG，自刻 STM32 韌體與 Cortex-M3 mini RTOS-lite
 
 ### compilers/
 - [compiler_frontend](./compilers/compiler_frontend/README.md)
@@ -50,7 +52,7 @@
 - [kernel_pwn](./security/kernel_pwn/README.md)
   - Linux kernel pwn，目標 Google kernelCTF（含現代 heap / 隨機 kmalloc cache）
 - [owasp](./security/owasp/README.md)
-  - OWASP Top 10 + Web 安全完整課程，含 API Top 10、CVE 案例、WAF/RASP、紅藍隊演習
+  - OWASP Top 10 2025 + Web 安全完整課程（含 2021→2025 對照），含 API Top 10、CVE 案例、WAF/RASP、紅藍隊演習
 
 ### soft_skills/
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
