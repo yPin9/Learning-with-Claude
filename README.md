@@ -53,6 +53,10 @@
   - Linux kernel pwn，目標 Google kernelCTF（含現代 heap / 隨機 kmalloc cache）
 - [owasp](./security/owasp/README.md)
   - OWASP Top 10 2025 + Web 安全完整課程（含 2021→2025 對照），含 API Top 10、CVE 案例、WAF/RASP、紅藍隊演習
+- [malware_analysis](./security/malware_analysis/README.md)
+  - 讀懂並分析惡意程式碼：PE/ELF → anti-analysis 對抗 → injection/C2/ransomware → Linux rootkit → .NET/CS beacon → Volatility memory forensics → Yara/Sigma 偵測規則
+- [cryptography](./security/cryptography/README.md)
+  - 從 GF(2⁸) 到 mini-TLS：對稱/公鑰/AEAD/post-quantum 全套+攻擊（Bleichenbacher、Logjam、Heartbleed），手刻 AES/RSA/Kyber/TLS 1.3
 
 ### soft_skills/
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
@@ -65,6 +69,10 @@
   - 戰術 + 殘局 + 中局，最後 5 盤 Rapid 自我復盤
 - [go](./soft_skills/go/README.md)
   - 圍棋從零到業餘高段，死活/手筋/形 重，AI 復盤(KataGo) 整 Part，50 盤升段 final
+
+### scripting/
+- [powershell](./scripting/powershell/README.md)
+  - 從零到系統維運自動化：語法核心 + 系統管理 + AD + PSRemoting + 自訂模組，final = SysOpsToolkit
 
 ### systems/
 - [bpf](./systems/bpf/README.md)
@@ -79,3 +87,5 @@
   - toolchain 工程師速通：把 patched GCC 進 BSP
 - [networking](./systems/networking/README.md)
   - TCP/IP + VPN + Proxy + VPS 全套，含 GFW 對抗演進史 + 完整 production 部署 final
+- [linux_commands](./systems/linux_commands/README.md)
+  - 從 VFS/inode/fd 底層到 shell scripting，31 章 + 4 練習 + SysOps 腳本工具包 final
