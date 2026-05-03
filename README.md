@@ -6,6 +6,10 @@
 
 ## 教材索引
 
+### algorithms/
+- [leetcode_patterns](./algorithms/leetcode_patterns/README.md)
+  - 演算法面試完整課程：C++，從遞迴直覺到 DP/Graph/Greedy，41 章 + 6 練習 + 30 題衝刺 final
+
 ### ai/
 - [ai_applications](./ai/ai_applications/README.md)
   - Claude 深度應用 + 用 Claude 生態做產品 + 通用 LLM 工程（RAG / eval / observability）
