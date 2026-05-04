@@ -51,8 +51,38 @@
 - [Ch 20 反思：RISC-V 的爭議與未來](./20-reflections.md)
 - [練習 B：用 spike 跑 baremetal](./practice-b-baremetal-on-spike.md)
 
-### Part 7 — 整合專案
-- [Final Project：Mini RV32I Emulator](./final-project-rv32i-emulator.md)
+### Part 7 — 整合專案（RV32I）
+- [Final Project A：Mini RV32I Emulator](./final-project-rv32i-emulator.md)
+
+### Part 8 — RV64I 核心差異
+- [Ch 21 XLEN=64 的意義：暫存器加寬、指令集延伸規則](./21-rv64i-xlen.md)
+- [Ch 22 W 後綴指令全解：ADDW/SUBW/SLLW/SRLW/SRAW 的 sign-extension 語意](./22-w-suffix-instructions.md)
+- [Ch 23 64 位元 Load/Store：LD / SD / LWU 與資料對齊陷阱](./23-rv64-load-store.md)
+
+### Part 9 — LP64D ABI 與 Toolchain
+- [Ch 24 LP64D 呼叫慣例：argument passing、return value、stack frame layout](./24-lp64d-calling-convention.md)
+- [Ch 25 Struct / Union layout：padding、alignment、bitfield 在 64 位元下的行為](./25-struct-union-layout.md)
+- [Ch 26 64 位元 inline assembly 與 constraint：在 C 裡嵌入 RV64 asm](./26-inline-assembly-rv64.md)
+
+### Part 10 — 虛擬記憶體（Sv39 / Sv48 / Sv57）
+- [Ch 27 分頁機制基礎：地址翻譯概念、physical / virtual 分離的理由](./27-paging-basics.md)
+- [Ch 28 Sv39：三層頁表結構、PTE 格式、satp CSR 設定](./28-sv39-pagetable.md)
+- [Ch 29 Sv48 / Sv57：更大的地址空間，手動建立 Sv48 頁表](./29-sv48-sv57.md)
+- [Ch 30 TLB 管理：SFENCE.VMA、TLB shootdown、ASID](./30-tlb-sfence.md)
+- [Ch 31 Page Fault 處理：trap 流程、load / store / instruction page fault 分類](./31-page-fault.md)
+
+### Part 11 — 64 位元特權 ISA 深入
+- [Ch 32 64 位元 CSR 行為：sstatus.SXL/UXL、mstatus、wide performance counter](./32-64bit-csr.md)
+- [Ch 33 Trap 完整流程（RV64 視角）：user → S-mode → M-mode delegation 鏈](./33-trap-rv64.md)
+- [Ch 34 OpenSBI → Linux 啟動流程解析：從 M-mode 到 S-mode kernel](./34-opensbi-linux-boot.md)
+- [Ch 35 Context switch 實作：arch/riscv 的 switch_to() 是怎麼工作的](./35-context-switch.md)
+
+### Part 12 — 整合與實戰
+- [Ch 36 QEMU virt 跑 Linux：讀 /proc/cpuinfo、dmesg、/proc/interrupts](./36-qemu-linux-practice.md)
+- [Ch 37 arch/riscv 程式碼導覽：kernel 資料夾結構與關鍵路徑](./37-arch-riscv-code-tour.md)
+- [練習 C：RV64 Assembly 實戰](./practice-c-rv64-assembly.md)
+- [練習 D：手動建立 Sv48 頁表（baremetal QEMU）](./practice-d-sv48-pagetable.md)
+- [Final Project B：RV64I Emulator + Sv48 Page Walk](./final-project-rv64i-sv48-emulator.md)
 
 ## 學習方式建議
 
