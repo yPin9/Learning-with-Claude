@@ -33,6 +33,8 @@
   - 給已經會 add/commit/push、想真正熟練的人，hooks + worktree + 真實踩坑
 - [cicd](./dev_tools/cicd/README.md)
   - Docker + GitHub Actions，把 FastAPI + Postgres 服務做成可交付 pipeline
+- [docker](./dev_tools/docker/README.md)
+  - 從 `docker run` 到生產部署：namespace/cgroup/OverlayFS 底層 + Dockerfile 進階 + Compose + 資安 hardening + Swarm，28 章 + 3 練習 + CI Pipeline final
 
 ### programming/
 - [algorithms](./programming/algorithms/README.md)
