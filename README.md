@@ -76,6 +76,10 @@
 - [go](./soft_skills/go/README.md)
   - 圍棋從零到業餘高段，死活/手筋/形 重，AI 復盤(KataGo) 整 Part，50 盤升段 final
 
+### embedded/
+- [protocols](./embedded/protocols/README.md)
+  - ESP32 嵌入式通訊協議：SPI/I2C/UART/RS-485/Modbus/CAN/BLE/LoRa/Zigbee/USB/Ethernet，全程 register-level，不靠 HAL，26 章 + 3 練習 + 工業閘道器 final
+
 ### scripting/
 - [powershell](./scripting/powershell/README.md)
   - 從零到系統維運自動化：語法核心 + 系統管理 + AD + PSRemoting + 自訂模組，final = SysOpsToolkit
