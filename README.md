@@ -27,6 +27,8 @@
   - LLVM RISC-V backend：SelectionDAG / TableGen / Scheduler / MC
 - [elf_linking](./compilers/elf_linking/README.md)
   - relocation / linker script / RISC-V relaxation
+- [ssa_optimizations](./compilers/ssa_optimizations/README.md)
+  - SSA 理論到 LLVM Pass 實作：Dominator Tree / SCCP / GVN / SCEV / 過程間分析，32 章 + 3 練習 + mini optimizer + CSmith 驗證 final
 
 ### dev_tools/
 - [git](./dev_tools/git/README.md)
@@ -43,6 +45,8 @@
   - 給有 C 基礎的人速成 C++20，目標讀 + 寫現代風格
 - [sat_smt](./programming/sat_smt/README.md)
   - 從命題邏輯到自刻 mini-SMT solver，C++20，全程不靠 Z3 當黑盒
+- [c_interview](./programming/c_interview/README.md)
+  - C 語言面試深度準備：記憶體/UB/ABI/嵌入式/效能/lock-free，30 章 + 3 練習 + mini libc final
 
 ### security/
 - [gdb](./security/gdb/README.md)
@@ -65,6 +69,10 @@
   - 從 GF(2⁸) 到 mini-TLS：對稱/公鑰/AEAD/post-quantum 全套+攻擊（Bleichenbacher、Logjam、Heartbleed），手刻 AES/RSA/Kyber/TLS 1.3
 - [ai_security](./security/ai_security/README.md)
   - AI 資安工程師面試衝刺：LLM 攻擊面（Prompt Injection/Jailbreak/RAG 投毒/Agent 劫持）+ 防護工具（NeMo Guardrails/Lakera Guard）+ NIST AI RMF/ISO 42001，27 章 + 3 練習 + Red Team 評測 final
+- [oscp_prep](./security/oscp_prep/README.md)
+  - OSCP 備考全攻略：從完全新手到拿證，含 Buffer Overflow + AD 三機鏈 + HTB/THM 機器推薦，42 章 + 4 練習 + 24hr PG 模擬 final
+- [windows_kernel_driver](./security/windows_kernel_driver/README.md)
+  - Windows 核心驅動開發 + 核心安全研究雙線：WDM/KMDF/Minifilter/WFP + BYOVD/Token 竊取/Pool 利用/Anti-EDR/VBS-HVCI，40 章 + 3 練習 + NanoEDR final
 
 ### soft_skills/
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
@@ -78,6 +86,10 @@
 - [go](./soft_skills/go/README.md)
   - 圍棋從零到業餘高段，死活/手筋/形 重，AI 復盤(KataGo) 整 Part，50 盤升段 final
 
+### automation/
+- [n8n](./automation/n8n/README.md)
+  - 從零建立個人自動化中樞：視覺化 workflow + Code Node + REST/Webhook + self-host + AI Agent，25 章 + 3 練習 + 個人自動化中樞 final
+
 ### embedded/
 - [protocols](./embedded/protocols/README.md)
   - ESP32 嵌入式通訊協議：SPI/I2C/UART/RS-485/Modbus/CAN/BLE/LoRa/Zigbee/USB/Ethernet，全程 register-level，不靠 HAL，26 章 + 3 練習 + 工業閘道器 final
@@ -85,6 +97,10 @@
 ### scripting/
 - [powershell](./scripting/powershell/README.md)
   - 從零到系統維運自動化：語法核心 + 系統管理 + AD + PSRemoting + 自訂模組，final = SysOpsToolkit
+
+### ml/
+- [local_llm](./ml/local_llm/README.md)
+  - 地端 LLM 全端工程：pre-training 原理 + QLoRA fine-tuning + Ollama 部署，CPU 跑得動，34 章 + 4 練習 + 地端繁中小模型 final
 
 ### systems/
 - [bpf](./systems/bpf/README.md)
