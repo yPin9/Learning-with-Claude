@@ -1,8 +1,7 @@
 # Project 200
 
-我跟 Claude 一起亂學東西的地方。
+我跟 Claude 一起亂學東西的地方
 
-新人建議從 [`soft_skills/how_to_learn`](./soft_skills/how_to_learn/README.md) 起手 —— 它是後面每一門課的前置。
 
 ## 教材索引
 
