@@ -1,188 +1,205 @@
-# Ch 25 — Ring buffer vs perf buffer
+# Ch 25 — ringbuf vs perfbuf：事件傳輸設計
 
-> 目標：徹底搞懂 perf buffer 與 ring buffer 在內部結構、ordering、loss 處理、wake-up 行為、效能上的差異，學會在現代 BPF 工具中做正確選擇。
+> **目標**：深入理解 `BPF_MAP_TYPE_RINGBUF`（ringbuf）和 `BPF_MAP_TYPE_PERF_EVENT_ARRAY`（perfbuf）的設計差異——記憶體模型、producer/consumer 的交互、wakeup policy——讓你能在正確的場景選對工具。
 
-## 兩種上報機制的定位
+## 問題：BPF 程式如何把資料傳給 userspace？
 
-BPF kernel 端要把 event 丟給 user space 消費，主流兩條路：
+BPF 程式在 kernel context 執行，資料要傳給 userspace 有兩種機制：
 
-| | perf buffer | ring buffer |
+1. **Shared maps（同步讀取）**：userspace 定期 poll map 讀取資料（適合 counter、stats）
+2. **Event streaming（異步推送）**：BPF 程式把事件 push 到 buffer，userspace 消費（適合 execve、network event 等串流）
+
+Event streaming 有兩種 buffer 類型：perfbuf（2016 年引入）和 ringbuf（kernel 5.8，2020 年引入）。
+
+## perfbuf（`BPF_MAP_TYPE_PERF_EVENT_ARRAY`）的設計
+
+```
+perfbuf 架構：
+
+每個 CPU 一個獨立的 ring buffer
+  CPU 0: [event][event][event]...
+  CPU 1: [event][event][event]...
+  CPU N: [event][event][event]...
+
+Userspace 需要同時監控所有 CPU 的 buffer（epoll 或 poll N 個 fd）
+```
+
+**特性**：
+- Per-CPU：每個 CPU 有獨立的 buffer，BPF 程式只寫自己 CPU 的 buffer，**不需要跨 CPU 鎖**
+- 記憶體佔用：`N_CPUs × buffer_size_per_cpu`（32 CPU × 1MB = 32 MB）
+- Userspace 需要每個 CPU 一個 epoll fd
+- 每次 output 都是一次 **拷貝**（`bpf_perf_event_output` 複製資料到 buffer）
+
+## ringbuf（`BPF_MAP_TYPE_RINGBUF`）的設計
+
+```
+ringbuf 架構：
+
+所有 CPU 共享一個 ring buffer
+  ┌─────────────────────────────────────────┐
+  │           shared ring buffer             │
+  │  [event][event][       reserved      ]  │
+  │                  ↑ producer tail         │
+  │                              ↑ consumer head│
+  └─────────────────────────────────────────┘
+
+所有 CPU 的 BPF 程式都寫入同一個 buffer
+Userspace 只需要一個 fd
+```
+
+**特性**：
+- Shared：所有 CPU 共享一個 buffer，記憶體更省
+- **Zero-copy**：BPF 程式先 `reserve`（在 ring 裡拿到一塊空間），直接寫入，再 `submit`；userspace 直接讀這塊記憶體，不用再次複製
+- **Write-side is wait-free**（非阻塞寫入）：producer 用 atomic CAS 更新 tail pointer，不需要 lock
+- Read side：只有一個 consumer，不需要鎖
+- Wakeup 更精確：可以設定 `BPF_RB_NO_WAKEUP` 累積多個事件再一次 wakeup，減少 context switch
+
+## 直接比較
+
+| 特性 | perfbuf | ringbuf |
 |---|---|---|
-| 進 mainline | 4.3 (2015) | 5.8 (2020) |
-| Map type | `BPF_MAP_TYPE_PERF_EVENT_ARRAY` | `BPF_MAP_TYPE_RINGBUF` |
-| 結構 | per-CPU buffer | **全域共享 buffer** |
-| 生產者 | 只能單 CPU | **多 CPU**（atomic reservation） |
-| 消費者 | user space epoll | user space epoll |
-| 順序 | 各 CPU 自己 ordered | **全域 ordered** |
-| Wake-up | 每事件 IPI | 自適應 batch |
-| Loss 行為 | 滿了 drop event | 滿了 reserve 失敗（你決定怎麼處理） |
-| 寫入流程 | 1-step copy | 2-step reserve + commit |
-| Memory 使用 | nr_cpus × buffer_size | 一份 buffer_size |
+| **記憶體模型** | Per-CPU（N 份）| Shared（1 份）|
+| **記憶體佔用** | N × size | size |
+| **拷貝** | 有（一次 copy）| 無（zero-copy）|
+| **Write synchronization** | 無（per-CPU 不需要）| CAS（wait-free）|
+| **Userspace fd** | N 個（每 CPU 一個）| 1 個 |
+| **Drop behavior** | Per-CPU drop | Shared drop |
+| **Kernel 版本** | 4.x+ | 5.8+ |
+| **Wakeup 控制** | 有限 | 精細（`BPF_RB_NO_WAKEUP`）|
 
-## perf buffer 的內部結構
-
-```
-CPU 0:  [event][event][event][...buffer 0...]  ← user epoll fd 0
-CPU 1:  [event][event][event][...buffer 1...]  ← user epoll fd 1
-CPU 2:  [event][event][event][...buffer 2...]  ← user epoll fd 2
-CPU 3:  [event][event][event][...buffer 3...]  ← user epoll fd 3
-```
-
-**N 顆 CPU = N 個獨立 buffer，N 個 fd**。
-
-優點：
-- 純 per-CPU 寫入，零 contention
-- 4.3 就有，舊 kernel 也能用
-
-缺點：
-- **記憶體 N 倍消耗**（每 CPU 都要 256KB → 64-core 機器吃 16MB）
-- 每事件都觸發 wake-up（IPI 中斷）→ user space 反應快但 IPI 開銷大
-- 跨 CPU 沒順序保證（A CPU 早寫的可能晚被 user 看到）
-- BCC 老工具大量使用，但**新專案不推薦**
-
-## ring buffer 的內部結構
-
-```
-              ┌────────────────────────────────────────┐
-   全部 CPU →  [event][event][event][event][...buffer]  ← 一個 fd
-              └────────────────────────────────────────┘
-                  ↑                  ↑
-                consumer        producers (atomic reserve)
-```
-
-**全域單一 buffer**，多 CPU 透過 atomic 分配寫入位置。
-
-優點：
-- **記憶體不隨 CPU 數變大**
-- **全域 ordered**：寫入順序就是 user 看到的順序
-- **自適應 wake-up**：consumer 在跑時 producer 不發 IPI，省 overhead
-- 兩階段 API（reserve + commit）允許**寫到一半中止**（不浪費 ring 空間）
-
-缺點：
-- 5.8+ 才有
-- 多 CPU 寫入時有 atomic contention（極高 PPS 場景才感覺得到）
-
-## reserve / submit / discard
-
-ring buffer 的兩段式 API：
+## ringbuf 的 API 詳解
 
 ```c
-struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-if (!e) {
-    // ring 滿了，event 丟掉
-    return 0;
-}
+/* 方式一：reserve + submit（推薦，零拷貝）*/
+struct event *e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+if (!e)
+    return 0;  /* ring 滿了，drop */
 
-e->pid = ...;
-e->ts  = ...;
+/* 直接寫入 ring buffer 的記憶體（不是 stack copy）*/
+e->pid = bpf_get_current_pid_tgid() >> 32;
+bpf_get_current_comm(&e->comm, sizeof(e->comm));
 
-// 看條件決定：commit 還是丟掉
-if (e->latency > threshold) {
-    bpf_ringbuf_submit(e, 0);     // 真的提交
-} else {
-    bpf_ringbuf_discard(e, 0);    // 還掉空間
-}
+/* 提交（讓 userspace 可以讀到）*/
+bpf_ringbuf_submit(e, 0);  /* flags = 0：立即 wakeup userspace */
+
+/* 或 */
+bpf_ringbuf_submit(e, BPF_RB_NO_WAKEUP);  /* 不立即 wakeup，後面批次處理 */
+bpf_ringbuf_submit(e, BPF_RB_FORCE_WAKEUP);  /* 強制 wakeup */
+
+/* 如果 reserve 成功但後來決定不 submit */
+bpf_ringbuf_discard(e, 0);
+
+/* 方式二：output（有一次拷貝，但更簡單）*/
+struct event ev = { .pid = ... };
+bpf_ringbuf_output(&rb, &ev, sizeof(ev), 0);
 ```
 
-`discard` 是 ring buffer 的特色 — 你可以「先寫好、評估後決定是否上報」。perf buffer 沒這個。
+## 什麼時候 drop？
 
-## Loss 處理
+**ringbuf drop**：ring 滿了時，`bpf_ringbuf_reserve` 回傳 NULL。
 
-兩者滿了行為不同：
+決策：ring 滿的情況代表 consumer（userspace）跟不上 producer（BPF 程式）。解法：
+1. 增大 `max_entries`（增加 ring 的容量）
+2. 加速 consumer（減少 `ring_buffer__poll` 的處理時間）
+3. 降低 BPF 程式的 event rate（filter 掉不重要的事件）
 
-| | 滿了會怎樣 |
-|---|---|
-| perf buffer | event 直接丟掉、kernel 內計數 lost event，user 端可以查 |
-| ring buffer | `bpf_ringbuf_reserve` 回 NULL，BPF 要自己決定（通常也是丟） |
+**perfbuf drop**：per-CPU buffer 滿了時，`bpf_perf_event_output` 回傳 -ENOSPC。
 
-ring buffer 的「reserve 失敗回 NULL」設計**讓你能 in-kernel 統計 loss**：
+**監控 drop**：
 
 ```c
-struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-if (!e) {
-    __sync_fetch_and_add(&loss_counter, 1);
+/* 在 BPF 程式裡追蹤 drop */
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, u64);
+} dropped SEC(".maps");
+
+SEC("...")
+int my_prog(void *ctx)
+{
+    struct event *e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+    if (!e) {
+        u32 k = 0;
+        u64 *d = bpf_map_lookup_elem(&dropped, &k);
+        if (d) __sync_fetch_and_add(d, 1);
+        return 0;
+    }
+    /* ... fill event ... */
+    bpf_ringbuf_submit(e, 0);
     return 0;
 }
 ```
 
-## Wake-up 行為（為什麼 ring buffer 通常更快）
-
-每次 producer 寫一個 event，user space epoll 是不是要立刻 wake up？
-
-- **perf buffer**：有 watermark 設定，超過就 wake；預設行為偏向「快」（每事件都 wake）
-- **ring buffer**：consumer 還在 polling 時不 wake（自適應）
-
-對「user space 來得及消費」的場景，ring buffer 大幅減少 wake-up overhead。對「user space 慢、producer 快」的場景，兩者表現接近（都 backlog）。
-
-## User 端 polling
-
-兩者 user space API 都是 epoll 為基礎：
-
-### perf buffer (libbpf)
+## Wakeup Policy 的選擇
 
 ```c
-struct perf_buffer *pb;
-pb = perf_buffer__new(map_fd, 64 /* pages per CPU */,
-                      handle_event, handle_lost, NULL, NULL);
-while (running) {
-    perf_buffer__poll(pb, 100);
-}
+/* 預設（BPF_RB_FORCE_WAKEUP or flags=0）：每個 event 都 wakeup userspace */
+/* 適合：低 event rate（< 10K/s）；latency 要求高（< 1ms）*/
+bpf_ringbuf_submit(e, 0);
+
+/* BPF_RB_NO_WAKEUP：不 wakeup，讓 userspace 在 timeout 後醒來 */
+/* 適合：高 event rate（> 100K/s）；可以接受批次處理的 latency */
+bpf_ringbuf_submit(e, BPF_RB_NO_WAKEUP);
+
+/* BPF_RB_FORCE_WAKEUP：不管 consumer 的設定，強制 wakeup */
+bpf_ringbuf_submit(e, BPF_RB_FORCE_WAKEUP);
 ```
 
-`handle_event` callback 對每個 event 跑一次。`handle_lost` 對每個 lost batch 跑。
+**實際的 wakeup overhead**：每次 wakeup 大約 5–50 μs（syscall + context switch）。在 100K events/s 的情況下，不做批次處理 = 100K wakeup/s = 500ms overhead。
 
-### ring buffer (libbpf)
+## 選擇建議
 
-```c
-struct ring_buffer *rb;
-rb = ring_buffer__new(map_fd, handle_event, NULL, NULL);
-while (running) {
-    ring_buffer__poll(rb, 100);
-}
-```
+**選 ringbuf 如果**：
+- Kernel 5.8+（幾乎所有現代系統）
+- 想要零拷貝
+- 想要簡單的 userspace（只需要一個 fd）
+- 記憶體有限
 
-只一個 callback，處理就比 perf buffer 簡單。
+**選 perfbuf 如果**：
+- 需要支援 kernel 5.8 以前的系統
+- 有嚴格的 per-CPU locality 要求（例如 NUMA-aware 工具）
+- 已有大量基於 perfbuf 的程式碼，不想重寫
 
-## 測量差異
+**不管選哪個**，都要監控 drop count，並根據 event rate 設計合適的 buffer 大小和 wakeup policy。
 
-簡單實驗：寫個 BPF 在 `vfs_read` 上發 100 byte event，跑 30 秒：
+## 踩雷集錦
 
-| Buffer 類型 | 平均吞吐 | CPU usage | Memory |
-|---|---|---|---|
-| perf buffer (256 KB/CPU, 16 CPU) | ~500K events/s | 中等 | 4 MB |
-| ring buffer (4 MB total) | ~600K events/s | 略低 | 4 MB |
+1. **ringbuf 的 `max_entries` 必須是 2 的幂次且 ≥ PAGE_SIZE**：`256 * 1024`（256 KB）是常用的初始值；過小會頻繁 drop，過大浪費記憶體
 
-ring buffer 一致性勝出，且記憶體不隨 CPU 數膨脹。
+2. **reserve 失敗後不能用 output 作 fallback**：`bpf_ringbuf_output` 也需要在 ring 裡分配空間；ring 滿了的時候 output 也會失敗
 
-## 何時還可能用 perf buffer
+3. **userspace 沒有及時 consume 導致 ring 滿**：`ring_buffer__poll` 用太長的 timeout，或 callback 太慢，都會讓 ring 堆積；監控 `consumed` 和 `lost` 計數
 
-1. **目標 kernel < 5.8** — 沒得選
-2. **真的需要 per-CPU 隔離**：不希望某顆 CPU 的高量事件影響其他 CPU 的延遲
-3. **既有 BCC 工具兼容**：bcc 老 macro 很多還是 `BPF_PERF_OUTPUT`
-
-對其他 99% 場景，**用 ring buffer**。
-
-## 一個常見誤解
-
-「ring buffer 是 perf buffer 的修正版」 — **嚴格說只對一半**。
-
-ring buffer 解了 perf buffer 多數痛點，但**設計取捨不同**。perf buffer 仍然是「per-CPU 嚴格隔離」的選擇 — 高頻 perf event sampling 場景仍然首選 perf buffer（事實上 BPF profile 仍用 perf event）。
+4. **BPF_RB_NO_WAKEUP 讓 userspace 感覺延遲高**：No wakeup 意味著 userspace 只在 timeout 時才醒來；如果你的 poll timeout 是 1000ms，你的事件延遲最高是 1000ms；高頻率事件搭配短 timeout + NO_WAKEUP 是好方案
 
 ## 動手練習
 
-1. **改 Ch 13 minimal 用 ringbuf vs perfbuf 兩個版本**：分別寫一個，比較程式碼長度。
-2. **量 latency**：在 BPF 寫 timestamp 進 event、user 端比較收到時的 timestamp，得 end-to-end latency。
-3. **製造 loss**：寫一個小 ringbuf（4096 byte），讓 BPF 一秒寫 100K event、user 端 sleep 不消費，看 reserve 多快開始失敗。
-4. **bpftrace 用哪個**：用 `sudo bpftool map list` 看 bpftrace 跑時建的 map type。
+1. 寫一個程式，用 ringbuf 傳輸事件，故意把 `max_entries` 設很小（4096），然後快速生成大量 event（在另一個 terminal 快速執行很多 `ls`），觀察 drop 計數增加
+
+2. 對比 `bpf_ringbuf_submit(e, 0)` 和 `bpf_ringbuf_submit(e, BPF_RB_NO_WAKEUP)` 在高 event rate（10K events/s）下的 CPU overhead（用 `perf stat` 測量 context switch 次數）
+
+## 本章重點整理
+
+- perfbuf 是 per-CPU 的，不需要跨 CPU 同步；ringbuf 是 shared 的，用 CAS 做 wait-free 寫入
+- ringbuf 零拷貝（reserve → 直接寫入 → submit）；perfbuf 有一次拷貝
+- Ring 滿時 reserve 失敗（drop）；要監控 drop 並設計合適的 buffer size 和 wakeup policy
+- 在 kernel 5.8+ 上優先選 ringbuf
 
 ## 自我檢核
 
-- [ ] 我能畫出 perf buffer 與 ring buffer 的內部結構差異
-- [ ] 我能解釋為什麼 ring buffer 全域 ordered
-- [ ] 我能描述 reserve / submit / discard 的兩段式 API
-- [ ] 我能說出何時仍應用 perf buffer
-- [ ] 我能用 libbpf 寫兩種 buffer 的 user 端 polling
+- [ ] 能解釋 ringbuf 和 perfbuf 在記憶體模型上的根本差異（shared vs per-CPU）
+- [ ] 知道 ringbuf 的「零拷貝」是怎麼實現的（reserve + 直接寫入 ring 記憶體）
+- [ ] 知道 `BPF_RB_NO_WAKEUP` 的適用場景和副作用（高 event rate vs 高延遲）
 
-下一章我們處理「BPF 如何組合大型系統」的問題 — tail call、map-in-map、subprogram，這些是構建 Cilium / Falco 等大型系統的關鍵 mechanism。
+## 延伸閱讀
 
-→ [Ch 26 Tail call、program chain、map-in-map](./26-tailcall-and-composition.md)
+### 部落格
+
+- **[BPF ring buffer](https://nakryiko.com/posts/bpf-ringbuf/)** — Andrii Nakryiko
+  - **這篇說什麼**：ringbuf 的完整設計說明，包括 perfbuf 的問題、ringbuf 的解法、API 的每個細節
+  - **讀哪裡**：整篇；這是 ringbuf 最完整的設計文件
+  - **為什麼值得讀**：作者是 ringbuf 的設計者
+
+→ [練習 D：PostgreSQL slow query tracer](./practice-d-postgresql-slow-query.md)

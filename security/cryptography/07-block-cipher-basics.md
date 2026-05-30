@@ -1,271 +1,408 @@
-# Ch 7 — 區塊密碼基礎：Feistel vs SPN、IND-CPA
+# Ch 7 — Block Cipher 基礎：Feistel 與 SPN
 
-> 目標：搞懂區塊密碼兩大架構（Feistel network 與 Substitution-Permutation Network）的差異與取捨，並把 IND-CPA 從上一章的直覺升級到嚴格定義。為 Ch 8 DES 與 Ch 9-10 AES 鋪底。
+> **目標**：理解 Feistel network 和 SPN（Substitution-Permutation Network）兩種結構的差異，能口頭解釋 IND-CPA 安全定義，知道為什麼 block cipher 本身不安全（必須配合 mode of operation）。
 
-## 區塊密碼是什麼
+## 為什麼需要這個？
 
-```
-n-bit plaintext block ──┐
-                        ├──► Block Cipher (key k) ──► n-bit ciphertext block
-n-bit key ──────────────┘
-```
+Ch 6 的結論：完美保密需要和明文等長的 key，工程上不實用。現代密碼學的核心問題變成：**能不能用一個短 key（如 128 或 256 bit）安全地加密任意長度的訊息？**
 
-把固定長度（block size）的 plaintext 變成同長 ciphertext，**用 key 控制行為**。常見 block size：
+答案是 block cipher + mode of operation。但這兩者必須分開理解：
 
-- **DES**：64-bit
-- **AES**：128-bit（256-bit 是 key size，block 還是 128）
-- **ChaCha20**：嚴格說不算 block cipher，是 stream
+- **Block cipher**：一個用固定 key 把固定長度的明文 block 加密成等長密文 block 的函式
+- **Mode of operation**：把 block cipher 應用到任意長度訊息的方法（ECB、CBC、CTR 等，Ch 10 詳講）
 
-block cipher 是**抽象建構積木**。實際傳訊息用 mode（CBC / CTR / GCM ...）把多個 block 串起來，Ch 11 / Ch 25-27 詳述。
+這一章講 block cipher 本身——它的兩種主流結構（Feistel 和 SPN）、它的數學定義（pseudorandom permutation）、以及為什麼單獨使用它是不安全的。
 
-## 兩個關鍵性質：confusion 與 diffusion
+## 先建立直覺
 
-Shannon 1949 提的設計原則，後來成所有 block cipher 通則：
+Block cipher 的核心概念：
 
 ```
-Confusion（混淆）
-  Ciphertext 與 key 的關係極複雜，無法簡單推回 key
-  → 用非線性元件達成（S-box、modular addition）
+明文 block（固定長度）    key（固定長度）
+      │                      │
+      ▼                      ▼
+  ┌─────────────────────────────┐
+  │        Block Cipher          │
+  │   E: {0,1}ⁿ × {0,1}ᵏ →    │
+  │         {0,1}ⁿ              │
+  └─────────────────────────────┘
+                │
+                ▼
+      密文 block（和明文等長）
 
-Diffusion（擴散）
-  Plaintext 一個 bit 變動 → ciphertext 多個 bit 變
-  → 用線性混合達成（permutation、矩陣乘）
+n = block size（DES: 64 bit, AES: 128 bit）
+k = key size（DES: 56 bit, AES: 128/192/256 bit）
+
+給定一個 key K，E(K, ·) 是一個 permutation（雙射）：
+  每個不同的明文 block 映射到不同的密文 block
+  可以反向解密：D(K, ·) = E(K, ·)⁻¹
 ```
 
-**所有現代 block cipher 都是 confusion + diffusion 的組合**。差別在用哪些元件、迭代多少輪。
+為什麼是 permutation？因為如果兩個不同明文映射到相同密文，解密就不唯一了。
 
-## Feistel Network
+Block cipher 的設計目標：讓 E(K, ·) 看起來像一個**隨機選取的 permutation**——也就是 pseudorandom permutation（PRP）。
 
-1973 年 IBM Horst Feistel 提出。**核心 idea**：把 block 切兩半，用一個 round function 反覆混：
+## Feistel Network：DES 的結構
 
-```
-              plaintext block (2n bit)
-                     │
-          ┌──────────┴──────────┐
-          ▼                     ▼
-       L₀ (n bit)           R₀ (n bit)
-          │                     │
-          │  ┌──── F(R₀, k₁) ◄──┤   F = round function
-          │  │                  │
-          ▼  ▼                  │
-         XOR                    │
-          │                     │
-          ▼                     ▼
-       L₁ = R₀                R₁ = L₀ ⊕ F(R₀, k₁)
-          │                     │
-                ... 多輪 ...
-          │                     │
-       L_r                    R_r
-          │                     │
-          └──────────┬──────────┘
-                     ▼
-              ciphertext block
-```
+### 核心概念
 
-每一輪：
+Feistel network 是 Horst Feistel（IBM）在 1970 年代提出的結構。DES（Ch 8）和許多後來的 cipher 都基於它。
+
+關鍵洞察：你不需要設計一個完整的 permutation——只需要設計一個**任意的 round function F**（不需要可逆），Feistel 結構保證整體可逆。
+
+### 一輪 Feistel 的 ASCII 圖
 
 ```
-L_{i+1} = R_i
-R_{i+1} = L_i XOR F(R_i, k_{i+1})
+輸入 block（2n bits）
+┌──────────┬──────────┐
+│  Lᵢ      │   Rᵢ     │    （左半 n bits + 右半 n bits）
+└────┬─────┴────┬─────┘
+     │          │
+     │          ├────────→ F(Kᵢ, Rᵢ)
+     │          │               │
+     │     ┌────┘               │
+     │     │                    │
+     ▼     ▼                    ▼
+   Lᵢ₊₁ = Rᵢ          Rᵢ₊₁ = Lᵢ ⊕ F(Kᵢ, Rᵢ)
+┌──────────┬──────────┐
+│  Lᵢ₊₁    │  Rᵢ₊₁    │
+└──────────┴──────────┘
+
+加密：Lᵢ₊₁ = Rᵢ
+      Rᵢ₊₁ = Lᵢ ⊕ F(Kᵢ, Rᵢ)
+
+解密（反過來跑）：
+      Rᵢ = Lᵢ₊₁
+      Lᵢ = Rᵢ₊₁ ⊕ F(Kᵢ, Lᵢ₊₁)
+
+注意：解密不需要 F 的反函式！只需要 F 本身。
+這就是 Feistel 的精髓——F 可以是任意函式，整體仍然可逆。
 ```
 
-**奇妙之處**：解密用 same algorithm，只要倒著用 round key（k_r, k_{r-1}, ..., k_1）。從輸出反推：
+### 多輪 Feistel
 
 ```
-L_{i+1} = R_i           → R_i = L_{i+1}
-R_{i+1} = L_i XOR F(R_i, k) → L_i = R_{i+1} XOR F(L_{i+1}, k)
+明文 (L₀ | R₀)
+    │
+    ▼
+ Round 1: K₁ → F(K₁, R₀)  → L₁=R₀, R₁=L₀⊕F(K₁,R₀)
+    │
+    ▼
+ Round 2: K₂ → F(K₂, R₁)  → L₂=R₁, R₂=L₁⊕F(K₂,R₁)
+    │
+    ▼
+   ...
+    │
+    ▼
+ Round r: Kᵣ → F(Kᵣ, Rᵣ₋₁) → Lᵣ=Rᵣ₋₁, Rᵣ=Lᵣ₋₁⊕F(Kᵣ,Rᵣ₋₁)
+    │
+    ▼
+密文 (Lᵣ | Rᵣ)
+
+DES: r=16 輪
+Blowfish: r=16 輪
+Camellia: r=18 或 24 輪
 ```
 
-- enc 與 dec 共用同一電路（**省硬體成本**）
-- F 不需要可逆 — 只要是函數就行（**設計自由度大**）
-
-代表 cipher：**DES、3DES、Blowfish、CAST5、Camellia**。
-
-## Substitution-Permutation Network (SPN)
-
-另一條路：**整個 block 同時做 confusion + diffusion**：
-
-```
-plaintext block (n bit)
-        │
-        ▼
-   AddRoundKey (XOR key)
-        │
-        ▼
-   ┌───────────────────┐
-   │ S-box S-box ... │  ← Substitution（confusion）
-   └───────────────────┘
-        │
-        ▼
-   ┌───────────────────┐
-   │ Permutation       │  ← Diffusion
-   └───────────────────┘
-        │
-        ▼
-   AddRoundKey
-        │
-        ... 多輪 ...
-        │
-        ▼
-   ciphertext block
-```
-
-代表 cipher：**AES、Serpent、PRESENT**。
-
-每輪：
-
-```
-state = state XOR round_key
-state = SubBytes(state)        # 每個 byte 經 S-box
-state = Permute(state)         # 全 block 重排或矩陣混合
-```
-
-**特性**：
-
-- enc 與 dec **不同**（解密要用 inverse S-box / inverse permutation）
-- F（這裡是整個輪）必須**可逆**
-- 每個 byte / 位元都被處理 — 比 Feistel **更強的 diffusion per round**
-- **AES 4 輪後達 full diffusion**；Feistel 通常 8+ 輪
-
-## Feistel vs SPN 對照
-
-| | Feistel | SPN |
-|---|---|---|
-| 輪數需求 | 多（DES 16、3DES 48） | 少（AES 10/12/14） |
-| 硬體 | enc/dec 共用電路 | 兩套電路 |
-| 軟體 | 簡單，64-bit lane | 高效，128-bit SIMD |
-| 設計自由 | F 不需可逆 | S-box / permutation 必須可逆 |
-| Diffusion 速度 | 慢（一半 bit 一輪） | 快（整 block 一輪） |
-| 代表 | DES, Blowfish | AES, Serpent |
-
-**現代主流是 SPN**（AES 贏了 1997-2001 NIST 競賽）。Feistel 仍存在於遺留系統與某些 key schedule。
-
-## 輪數與 key schedule
-
-```
-master key (128/192/256 bit)
-        │
-        ▼
-   Key Schedule (KS algorithm)
-        │
-        ▼
-round_key_1, round_key_2, ..., round_key_r
-```
-
-key schedule 把 master key 擴展成多個 round key。要求：
-
-1. **每個 round key 看起來無關**（防 related-key attack）
-2. **快**（不能比 cipher 本身慢）
-3. **可逆**（解密要算 round key）
-
-AES 的 key schedule 是核心設計之一，下章 Ch 9-10 細看。
-
-## IND-CPA 嚴格定義（升級版）
-
-Ch 3 給了直覺，這裡給數學形式：
-
-```
-IND-CPA 安全 game：
-
-1. challenger 隨機產生 key k ← KeyGen()
-2. attacker A 給定 oracle access：A 提任意 m，得到 Enc(k, m)
-3. A 選兩個等長 m₀, m₁ 給 challenger
-4. challenger 擲銅板 b ∈ {0,1}，回 c* = Enc(k, m_b)
-5. A 繼續用 oracle（除了不能查 c* 對應的 m₀ 或 m₁）
-6. A 輸出猜測 b'
-7. A 贏 ↔ b' = b
-
-Encryption scheme is IND-CPA-secure iff
-  for all polynomial-time A:
-    | Pr[A wins] - 1/2 | ≤ negligible
-```
-
-直覺：**就算 A 能任意加密 plaintext 看密文（oracle），也無法區分**兩個她選的 plaintext 的密文。
-
-## 確定性 vs 隨機性加密
-
-block cipher 本身是 **確定性 PRP**：相同 key + 相同 plaintext → 永遠相同 ciphertext。
-
-問題：**確定性加密絕對不滿足 IND-CPA**：
-
-```
-A 選 m₀ = "00...0", m₁ = "11...1"
-challenger 回 c*
-A 用 oracle 查 Enc(k, m₀) 與 Enc(k, m₁)
-看 c* 等於哪個 → 100% 知道 b
-```
-
-**所以 ECB mode（直接用 block cipher 加密每個 block）不滿足 IND-CPA**。Ch 11 會展開 — 經典 ECB penguin 圖就是這個 attack 的視覺化。
-
-要 IND-CPA 必須：
-
-1. 用 **隨機 IV / nonce**（CBC、CTR）
-2. 同 plaintext 加密兩次得不同 ciphertext
-
-## IND-CPA → IND-CCA 升級
-
-實際攻擊更狠：**A 可解密**（除了 challenge ciphertext 本身）。
-
-對應現實：
-
-- **padding oracle**：server 回不同 error 給「padding 對 / 不對」 — 等於部分解密 oracle
-- **Bleichenbacher 1998**：RSA PKCS#1 v1.5 對應的 oracle attack
-- **CCA2**：A 看到 c* 後仍能繼續查解密 oracle（adaptive）— 最強模型
-
-**現代密碼學要求 IND-CCA2**。純 block cipher + random IV 仍只是 IND-CPA — 必須加 MAC（authenticated encryption）才達到 IND-CCA。Ch 25 詳述。
-
-## 一個對照：CTR 與 CBC 的 IND-CPA 差別
+### Python 實作
 
 ```python
-# CTR mode 的「加密」概念
-def ctr_encrypt(key, nonce, plaintext):
-    out = b""
-    for i, block in enumerate(blocks(plaintext)):
-        keystream = AES_enc(key, nonce || i)
-        out += xor(block, keystream)
-    return nonce || out
+def feistel_encrypt(block: bytes, round_keys: list[bytes], f) -> bytes:
+    """通用 Feistel 加密。block 長度必須為偶數。"""
+    n = len(block) // 2
+    L, R = block[:n], block[n:]
+
+    for ki in round_keys:
+        new_L = R
+        fout = f(ki, R)
+        new_R = bytes(a ^ b for a, b in zip(L, fout))
+        L, R = new_L, new_R
+
+    return L + R
+
+def feistel_decrypt(block: bytes, round_keys: list[bytes], f) -> bytes:
+    """解密：round key 順序反轉"""
+    return feistel_encrypt(block, round_keys[::-1], f)
+
+# 一個玩具 round function（不安全，僅示範結構）
+import hashlib
+
+def toy_f(key: bytes, data: bytes) -> bytes:
+    h = hashlib.sha256(key + data).digest()
+    return h[:len(data)]
+
+# 測試
+plaintext = b"ABCDEFGH"  # 8 bytes = 64 bits
+keys = [f"key{i}".encode() for i in range(16)]  # 16 輪
+
+ct = feistel_encrypt(plaintext, keys, toy_f)
+pt = feistel_decrypt(ct, keys, toy_f)
+
+print(f"明文: {plaintext}")
+print(f"密文: {ct.hex()}")
+print(f"解密: {pt}")
+assert pt == plaintext
 ```
 
-CTR 的安全性歸結到：**AES_enc(k, nonce || i) 是 PRF** → 多 block 的 keystream 是獨立隨機 → IND-CPA。
+## SPN（Substitution-Permutation Network）：AES 的結構
 
-**CTR 非常清晰**。CBC 也 IND-CPA 但證明複雜（需要 IV 真隨機 + 不能 chosen-IV），這就是為什麼現代偏 CTR / GCM。
+### 核心概念
 
-## 安全歸約：「破我等同破 PRP」
+SPN 是 AES 使用的結構。和 Feistel 不同，SPN 在每一輪對**整個 block** 做操作（不是只處理一半）。
 
-block cipher 安全證明的標準形式：
+SPN 的每一輪有三個操作：
+1. **Substitution（S-box）**：非線性替換，提供 confusion
+2. **Permutation / Linear mixing**：位元重排或線性變換，提供 diffusion
+3. **Key addition（XOR round key）**：混入 key
+
+### AES 一輪的流程圖
 
 ```
-假設 AES 是 secure PRP（沒人破得了）
-則 AES-CTR 是 IND-CPA-secure
-證明：對任何 IND-CPA attacker A，可構造 PRP distinguisher D
-      D 模擬 A 的環境，A 贏 → D 區分 PRP / random function 成功
-      若 A 贏機率 > 1/2 + ε → AES 不是 PRP，矛盾
+輸入 State（128 bits = 4×4 bytes 矩陣）
+│
+├─→ SubBytes    ：每個 byte 通過同一個 S-box（256→256 的查表）
+│                  → confusion（非線性）
+│
+├─→ ShiftRows   ：每一行循環左移不同的量
+│                  Row 0: 不動
+│                  Row 1: 左移 1 byte
+│                  Row 2: 左移 2 bytes
+│                  Row 3: 左移 3 bytes
+│                  → 跨 column 擴散
+│
+├─→ MixColumns  ：每一 column 做 GF(2⁸) 上的矩陣乘法
+│                  → 同一 column 內的 bytes 互相影響
+│                  → diffusion（線性但在 GF(2⁸) 上）
+│
+└─→ AddRoundKey ：整個 state 和 round key 做 XOR
+                   → 混入 key
+
+AES-128: 10 輪（最後一輪省略 MixColumns）
+AES-192: 12 輪
+AES-256: 14 輪
 ```
 
-整個現代密碼學都是這樣 reduce：**底層原語安全（AES、SHA、橢圓曲線假設）→ 上層協定安全**。看 paper 看到 "we reduce to..."、"under the assumption that..." 就是這個。
+### Feistel vs SPN 的根本差異
 
-## 一個常見誤解
+Feistel 每輪只處理一半的 block，靠 L/R 交換把資訊擴散到另一半。SPN 每輪處理整個 block。
 
-「block cipher 比 stream cipher 安全」
+```
+Feistel:                        SPN:
+┌─────┬─────┐                  ┌───────────┐
+│  L  │  R  │                  │  整個     │
+│     │──→F─│─⊕→              │  block    │
+│  ⊕←─│     │                  │           │
+│     │     │                  │  SubBytes │
+└─────┴─────┘                  │ ShiftRows │
+每輪只有一半被 F 處理            │MixColumns │
+另一半原封不動搬過去              │AddRoundKey│
+需要 2 輪才能讓所有 bits 被影響   └───────────┘
+                                每輪所有 bits 都被處理
+```
 
-**沒這回事**。安全性看設計，不看類別。
+## IND-CPA 安全定義
 
-- **AES（block）**：強
-- **3DES（block）**：弱（64-bit block 太短，2³² 個 block 後 birthday attack）
-- **ChaCha20（stream）**：強
-- **RC4（stream）**：已死
+Block cipher 的設計目標是做一個好的 PRP（pseudorandom permutation）。但把 block cipher 用於加密時，需要更嚴格的安全定義：**IND-CPA**（Indistinguishability under Chosen-Plaintext Attack）。
 
-**但 block cipher 通常更通用**：可以用於 MAC、KDF、PRF 各種構造（CMAC、HKDF、AES-GCM）。stream cipher 構造範圍小（多用於 stream encryption）。
+### Challenger Game（挑戰者遊戲）
+
+```
+    攻擊者 A                          挑戰者 C
+    ─────────                         ────────
+                                      隨機選 key K
+                                      隨機選 bit b ∈ {0, 1}
+    
+    1. A 選兩個等長明文 m₀, m₁  ──→  C
+    
+    2. C 計算 c* = Enc(K, m_b)  ──→  A
+       （如果 b=0 加密 m₀；b=1 加密 m₁）
+    
+    3. A 輸出猜測 b' ∈ {0, 1}
+    
+    A 可以重複步驟 1-2 多次（多次查詢）
+    
+    安全定義：對所有 polynomial-time A：
+      |Pr[b' = b] - 1/2| ≤ negligible
+    
+    白話：A 猜對的機率不能顯著超過 1/2（亂猜）
+```
+
+### 為什麼 Block Cipher + ECB 不滿足 IND-CPA
+
+ECB（Electronic Codebook）模式：把明文分成 block，每個 block 獨立加密。
+
+```
+ECB 加密：
+明文:  [B₁][B₂][B₃][B₄]
+        │    │    │    │
+        ▼    ▼    ▼    ▼
+       E_K  E_K  E_K  E_K
+        │    │    │    │
+        ▼    ▼    ▼    ▼
+密文:  [C₁][C₂][C₃][C₄]
+
+問題：相同的明文 block 永遠產生相同的密文 block！
+```
+
+IND-CPA 攻擊 ECB：
+
+```
+1. A 送 m₀ = [X][X]（兩個相同的 block）
+        m₁ = [X][Y]（兩個不同的 block）
+
+2. C 回傳 c* = Enc(K, m_b)
+
+3. A 檢查：如果 c* 的前半和後半相同 → b = 0
+            如果 c* 的前半和後半不同 → b = 1
+
+   A 的猜測正確率 = 100%
+```
+
+ECB 是 deterministic 的——同一個 key 下，同一個明文永遠產生同一個密文。這讓 IND-CPA 瞬間崩潰。
+
+經典視覺化：ECB 模式加密的 Linux 企鵝圖片（Tux），加密後輪廓仍然清晰可見——因為相同顏色（相同 block）的像素加密成相同密文。
+
+```python
+# 示範 ECB 的 deterministic 問題
+from hashlib import sha256
+
+def toy_ecb_encrypt(blocks: list[bytes], key: bytes) -> list[bytes]:
+    """玩具版 ECB：每個 block 獨立加密"""
+    return [sha256(key + b).digest()[:len(b)] for b in blocks]
+
+key = b"mysecretkey"
+b1 = b"AAAAAAAA"
+b2 = b"BBBBBBBB"
+
+# 加密 [A][A]
+ct1 = toy_ecb_encrypt([b1, b1], key)
+print(f"[A][A] → [{ct1[0].hex()[:8]}][{ct1[1].hex()[:8]}]")
+print(f"  前半 == 後半? {ct1[0] == ct1[1]}")  # True!
+
+# 加密 [A][B]
+ct2 = toy_ecb_encrypt([b1, b2], key)
+print(f"[A][B] → [{ct2[0].hex()[:8]}][{ct2[1].hex()[:8]}]")
+print(f"  前半 == 後半? {ct2[0] == ct2[1]}")  # False
+
+# 攻擊者一看就知道哪個是 [A][A]
+```
+
+## 對比與取捨
+
+| 特性 | Feistel Network | SPN |
+|---|---|---|
+| 代表 cipher | DES, Blowfish, Camellia | AES, PRESENT, GIFT |
+| 每輪處理 | 半個 block | 整個 block |
+| Round function 要求 | 不需可逆（任意 F） | 每個操作必須可逆（S-box 雙射）|
+| 加解密對稱性 | 結構相同，key 順序反轉 | 結構不同，需要 inverse S-box |
+| 硬體效率 | 加解密共用電路 | 加密和解密需要不同電路（除非用 CTR mode）|
+| Diffusion 速度 | 慢（2 輪才影響全部 bits）| 快（1 輪就影響全部 bits）|
+| 安全性證明 | Luby-Rackoff 定理：3 輪 Feistel + PRF → PRP | 無直接結構性證明，靠個別分析 |
+
+## 踩雷集錦
+
+1. **「Block cipher 就是加密」**：block cipher 是一個 PRP（pseudorandom permutation），不是加密方案。加密方案 = block cipher + mode of operation + padding。單獨使用 block cipher（ECB）不滿足 IND-CPA。
+
+2. **「Feistel 比 SPN 弱」**：兩者都能設計出安全的 cipher。DES 的問題是 key 太短（56 bit），不是 Feistel 結構的問題。Camellia（Feistel）的安全性和 AES（SPN）相當。
+
+3. **「S-box 越大越好」**：S-box 越大，confusion 越好，但實作成本（查找表大小）也越高。AES 的 8-bit S-box（256 entries）是在安全性和效率之間的甜蜜點。DES 的 6→4 bit S-box 其實也夠用（問題在 key 長度）。
+
+4. **「IND-CPA 就夠了」**：IND-CPA 只保證被動竊聽的安全。如果攻擊者能修改密文（active attack），還需要 IND-CCA（Ch 25 AEAD 會講）。
+
+5. **「AES 有 10 輪所以比 DES 的 16 輪弱」**：輪數不能跨 cipher 比較。AES 每輪處理整個 128-bit block（SPN），DES 每輪只處理 32 bits（Feistel 的一半）。AES 的 10 輪提供的 diffusion 遠超 DES 的 16 輪。
+
+## 進階：再往深一層
+
+### Luby-Rackoff 定理
+
+Michael Luby 和 Charles Rackoff 在 1988 年證明：如果 F 是一個 secure PRF（pseudorandom function），那麼 3 輪 Feistel network 是 secure PRP，4 輪是 strong PRP（加密和解密都 indistinguishable from random）。
+
+這個定理的意義：它把 Feistel 結構的安全性歸約到 round function F 的安全性。你只需要設計一個好的 F，Feistel 結構保證整體是安全的 PRP。
+
+```
+PRF（F 足夠好）
+    ↓ Luby-Rackoff
+3-round Feistel = PRP（加密方向 indistinguishable）
+    ↓
+4-round Feistel = Strong PRP（加解密都 indistinguishable）
+```
+
+### Avalanche Effect（雪崩效應）
+
+好的 block cipher 應該滿足：明文改變 1 bit → 密文改變約 50% 的 bits。這叫 avalanche effect，是 diffusion 的量化指標。
+
+```python
+def count_bit_diff(a: bytes, b: bytes) -> int:
+    return sum(bin(x ^ y).count('1') for x, y in zip(a, b))
+
+# 用 AES 測試 avalanche effect
+from hashlib import sha256
+
+def toy_block_cipher(key: bytes, block: bytes) -> bytes:
+    """模擬 block cipher（用 SHA-256 的前 16 bytes 近似）"""
+    return sha256(key + block).digest()[:16]
+
+key = b"0123456789ABCDEF"
+p1 = b"ABCDEFGHIJKLMNOP"
+p2 = bytearray(p1)
+p2[0] ^= 0x01  # 只改 1 bit
+p2 = bytes(p2)
+
+c1 = toy_block_cipher(key, p1)
+c2 = toy_block_cipher(key, p2)
+
+diff = count_bit_diff(c1, c2)
+print(f"明文差異: 1 bit")
+print(f"密文差異: {diff} bits / {len(c1)*8} bits = {diff/(len(c1)*8)*100:.1f}%")
+# 好的 cipher 應該接近 50%
+```
+
+### PRP vs PRF
+
+- **PRF**（Pseudorandom Function）：`F: K × X → Y`，key 固定後看起來像隨機函式
+- **PRP**（Pseudorandom Permutation）：`E: K × X → X`，key 固定後看起來像隨機 permutation（雙射）
+
+Block cipher 的目標是 PRP。當 block size 足夠大時，PRP 和 PRF 幾乎無法區分（PRF/PRP switching lemma：區分的 advantage ≤ q²/2ⁿ，其中 q 是查詢次數，n 是 block size）。
+
+## 動手練習
+
+1. **實作 Feistel**：用上面的程式碼框架，把 round 數從 16 改成 1、2、3，觀察 avalanche effect 的變化。幾輪之後才能達到接近 50% 的 bit 翻轉率？
+
+2. **ECB 視覺化**：用 Python Pillow 庫，把一張 BMP 圖片的像素資料用 ECB mode 加密（每 16 bytes 一組），觀察加密後的圖片是否還能看出原始輪廓
+
+3. **IND-CPA 遊戲**：寫一個程式模擬 IND-CPA challenger game。讓「攻擊者」針對 ECB 模式總是能以 100% 正確率猜出 b；換成加了隨機 IV 的 CBC 模式後，正確率降到 ~50%
+
+4. **Feistel 可逆性驗證**：在 `toy_f` 中故意使用一個不可逆的 hash function，驗證 Feistel 解密仍然正確——體會「F 不需要可逆」這個性質
+
+## 本章重點整理
+
+- Block cipher 是固定長度 block 的加密原語（PRP），分為 Feistel（DES）和 SPN（AES）兩大結構；Feistel 的 round function 不需可逆，SPN 的每個操作都必須可逆
+- IND-CPA 是「攻擊者選兩個明文，看到其中一個的密文，猜不出是哪個」的 challenger game；ECB mode 因為 deterministic 而無法滿足 IND-CPA
+- Block cipher 本身不是加密方案——必須搭配 mode of operation 才能安全地加密任意長度的訊息
 
 ## 自我檢核
 
-- [ ] 我能畫出 Feistel 一輪的訊號流
-- [ ] 我能畫出 SPN 一輪的訊號流
-- [ ] 我能比較 Feistel 與 SPN 的優缺
-- [ ] 我能說出 Shannon 的 confusion / diffusion
-- [ ] 我能寫出 IND-CPA game 的 6 個步驟
-- [ ] 我能解釋為什麼 ECB 不滿足 IND-CPA
+- [ ] 能畫出 Feistel 一輪的 L/R 交換圖，並解釋為什麼 F 不需可逆
+- [ ] 能列出 AES（SPN）每輪的四個操作，並說出各自提供 confusion 還是 diffusion
+- [ ] 能口頭解釋 IND-CPA 的 challenger game（不看筆記）
+- [ ] 能解釋為什麼 ECB 模式不滿足 IND-CPA（用具體的攻擊）
+- [ ] 能區分 PRP 和 PRF，知道 block cipher 的目標是哪個
 
-下一章看第一個現代 block cipher — DES。它的設計、NSA 改 S-box 的故事、為什麼要被 AES 取代。
+## 延伸閱讀
 
-→ [Ch 8 DES / 3DES](./08-des-3des.md)
+- **Luby & Rackoff, "How to Construct Pseudorandom Permutations from Pseudorandom Functions"（1988）**
+  - **讀哪裡**：Theorem 1（3-round Feistel → PRP）的陳述和證明思路
+  - **學什麼**：Feistel 結構安全性的理論基礎——為什麼 3 輪就夠
+  - **關聯**：本章 Feistel 的理論保證
+
+- **Jonathan Katz & Yehuda Lindell,《Introduction to Modern Cryptography》Ch 7**
+  - **讀哪裡**：Block cipher 的定義、PRP/PRF 的形式化、IND-CPA 的完整定義
+  - **學什麼**：本章直覺版概念的嚴格數學定義
+  - **關聯**：想要看完整證明時的首選教科書
+
+- **NIST, "Recommendation for Block Cipher Modes of Operation" (SP 800-38A)**
+  - **讀哪裡**：Section 6（各 mode 的定義）
+  - **學什麼**：ECB/CBC/CFB/OFB/CTR 五種基本 mode 的官方規格
+  - **關聯**：Ch 10 會詳講 mode of operation，這是權威參考
+
+→ [Ch 8 DES 與 3DES](./08-des-3des.md)

@@ -1,71 +1,105 @@
-# Linux 開機流程學習筆記：從按下電源到登入畫面
+# Linux 開機流程學習筆記：從按下電源到 shell prompt
 
-> 給會一點 C 和組合語言、想徹底搞懂 Linux 怎麼從一塊冷的硬體跑起來的工程師。
+> 給懂一點 C、想徹底搞懂「電腦開機時到底發生什麼」的工程師。
 
-這系列把 x86_64 Linux 的開機流程從頭到尾拆開：BIOS / UEFI 兩條路線並列，包含自製 boot sector、自製 UEFI app、自製 initramfs，全部在 QEMU 裡跑。讀完你會知道按下電源後的每一個 byte 跑去哪裡。
+這系列把開機這個黑盒子完全拆開：x86 BIOS 與 UEFI 兩條路徑都走一遍、親手寫 16-bit boot sector、親手寫 UEFI application、親手打包 initramfs，全程在 QEMU 裡動手、用 gdb remote debug。讀完你能解釋從 reset vector 到 `/sbin/init` 的每一步，能 debug 任何開機卡死，能自己組一個可開機的最小系統。
 
 ## 為什麼學這個？
 
-- **debug 的盡頭**：看得懂 kernel panic / `dracut: emergency shell` / GRUB 噴錯，不會只能重灌
-- **理解整個 stack**：systemd unit、initramfs、UEFI 變數，這些東西平常被當魔法，攤開後其實不複雜
-- **embedded / SRE / kernel dev 的入場券**：要碰客製 image、PXE boot、recovery，不懂這套寸步難行
-- **滿足好奇心**：「按下電源後到底發生什麼事」這題不搞清楚會癢一輩子
+- **開機是系統知識的試金石**：開機流程串起 CPU 模式切換、記憶體佈局、韌體、分區、檔案系統、kernel 初始化、process 模型——搞懂它，你對整個系統的理解會跳一級
+- **debug 能力**：伺服器開不了機、kernel panic 在 initramfs、Secure Boot 擋住自製 kernel——這些問題只有懂開機流程的人能救
+- **職涯角度**：嵌入式、韌體、kernel、雲端基礎設施、安全（Secure Boot/TPM）——開機知識是這些領域的硬底子，面試常考
+
+## 先修知識
+
+- **C 語言**（程度：會指標、struct、能讀懂 function；不需要寫過 kernel）
+- **一點點 assembly 概念**（程度：知道暫存器、指令是什麼；x86 細節課程會教）
+- **Linux 基礎**（程度：會用 shell、知道 process 和檔案系統是什麼）
+- 不需要：組合語言實戰經驗、kernel 開發經驗、韌體經驗（課程從零補）
 
 ## 課程地圖
 
-### Part 1 — 開機全景與 x86 模式基礎
+### Part 1 — 開機全貌與環境（Ch 0–3）
 - [Ch 0 環境搭建](./00-environment-setup.md)
-- [Ch 1 從電源到登入畫面的全景](./01-boot-panorama.md)
-- [Ch 2 x86 三種 CPU 模式](./02-x86-cpu-modes.md)
-- [Ch 3 BIOS vs UEFI 路線總覽](./03-bios-vs-uefi.md)
+- [Ch 1 從電源到 shell：開機全景圖](./01-boot-overview.md)
+- [Ch 2 x86 啟動時的 CPU 狀態](./02-cpu-startup-state.md)
+- [Ch 3 開機時的記憶體佈局](./03-early-memory-layout.md)
 
-### Part 2 — BIOS / Legacy 路線
-- [Ch 4 BIOS POST、reset vector、INT 服務](./04-bios-post-and-int.md)
-- [Ch 5 MBR 與 boot sector](./05-mbr-and-boot-sector.md)
-- [Ch 6 動手：自製 hello boot sector](./06-hello-boot-sector.md)
-- [Ch 7 切到 protected mode (GDT / A20 / CR0)](./07-protected-mode-switch.md)
-- [Ch 8 切到 long mode (paging / PML4 / EFER)](./08-long-mode-switch.md)
-- [Ch 9 GRUB 內部結構](./09-grub-internals.md)
+### Part 2 — BIOS 線：傳統開機（Ch 4–9）
+- [Ch 4 BIOS 韌體做什麼](./04-bios-firmware.md)
+- [Ch 5 MBR 與 boot sector](./05-mbr-boot-sector.md)
+- [Ch 6 寫一個 boot sector](./06-write-boot-sector.md)
+- [Ch 7 從 real mode 到 protected mode](./07-real-to-protected-mode.md)
+- [Ch 8 進入 long mode（64-bit）](./08-long-mode.md)
+- [Ch 9 兩階段 bootloader 與磁碟讀取](./09-two-stage-bootloader.md)
+- [練習 A：64-bit 兩階段 bootloader](./practice-a-64bit-bootloader.md)
 
-### Part 3 — UEFI 路線
-- [Ch 10 UEFI 架構：Boot Services / Runtime Services / Protocol](./10-uefi-architecture.md)
-- [Ch 11 ESP、efibootmgr、NVRAM 變數](./11-esp-and-efibootmgr.md)
-- [Ch 12 動手：用 gnu-efi 寫 minimal UEFI app](./12-minimal-uefi-app.md)
-- [Ch 13 UEFI 下的 GRUB2 與 systemd-boot](./13-uefi-bootloaders.md)
-- [練習 A：在 OVMF 上加自製 boot entry](./practice-a-uefi-boot-entry.md)
+### Part 3 — UEFI 線：現代開機（Ch 10–16）
+- [Ch 10 UEFI 是什麼、為什麼取代 BIOS](./10-uefi-overview.md)
+- [Ch 11 GPT 分區表](./11-gpt-partition.md)
+- [Ch 12 UEFI Boot Services 與 Runtime Services](./12-uefi-services.md)
+- [Ch 13 寫一個 UEFI application](./13-write-uefi-app.md)
+- [Ch 14 UEFI 的記憶體與 ExitBootServices](./14-uefi-memory.md)
+- [Ch 15 UEFI 變數與開機項管理](./15-uefi-variables.md)
+- [Ch 16 從 UEFI app 載入並啟動 kernel](./16-uefi-load-kernel.md)
+- [練習 B：UEFI app（memory map + 讀檔 + ExitBootServices）](./practice-b-uefi-app.md)
 
-### Part 4 — Kernel 載入
-- [Ch 14 bzImage / vmlinuz 結構與 Linux boot protocol](./14-bzimage-structure.md)
-- [Ch 15 arch/x86/boot 從 setup 到 start_kernel](./15-arch-x86-boot.md)
-- [Ch 16 kernel cmdline](./16-kernel-cmdline.md)
+### Part 4 — Bootloader：GRUB 與其他（Ch 17–20）
+- [Ch 17 Bootloader 的角色與生態](./17-bootloader-ecosystem.md)
+- [Ch 18 GRUB 深入：架構與模組](./18-grub-internals.md)
+- [Ch 19 GRUB 在 BIOS 與 UEFI 的差異](./19-grub-bios-uefi.md)
+- [Ch 20 Multiboot 與 kernel handover protocol](./20-multiboot-handover.md)
 
-### Part 5 — initramfs 與 rootfs pivot
-- [Ch 17 initramfs 是什麼](./17-initramfs-overview.md)
-- [Ch 18 動手：自製最小 initramfs](./18-build-minimal-initramfs.md)
-- [Ch 19 switch_root / pivot_root](./19-pivot-root.md)
-- [練習 B：手動 pivot 到 real rootfs](./practice-b-manual-pivot.md)
+### Part 5 — Kernel 啟動（Ch 21–25）
+- [Ch 21 bzImage 結構與 kernel 解壓](./21-bzimage-decompress.md)
+- [Ch 22 kernel 早期初始化](./22-kernel-early-init.md)
+- [Ch 23 從 kernel 到第一個 process](./23-kernel-to-init.md)
+- [Ch 24 initramfs / initrd 機制](./24-initramfs.md)
+- [Ch 25 寫一個自製 initramfs](./25-custom-initramfs.md)
+- [練習 C：自製 initramfs + switch_root](./practice-c-initramfs.md)
 
-### Part 6 — userspace 啟動
-- [Ch 20 PID 1 簡史](./20-pid-1-history.md)
-- [Ch 21 systemd unit / target / dependency](./21-systemd-units.md)
-- [Ch 22 systemd 早期 boot target chain](./22-systemd-boot-targets.md)
-- [Ch 23 開機排錯](./23-boot-troubleshooting.md)
+### Part 6 — init 與進階主題（Ch 26–30）
+- [Ch 26 init 系統：從 SysV 到 systemd](./26-init-systemd.md)
+- [Ch 27 Secure Boot：簽署鏈](./27-secure-boot.md)
+- [Ch 28 Measured Boot 與 TPM](./28-measured-boot-tpm.md)
+- [Ch 29 開機問題診斷](./29-boot-debugging.md)
+- [Ch 30 ARM 與其他架構的開機差異](./30-arm-boot.md)
 
-### Part 7 — 進階整合
-- [Ch 24 Secure Boot、TPM、measured boot](./24-secure-boot-and-tpm.md)
-- [Final Project：從零組最小 Linux](./final-project-minimal-linux.md)
+### Final Project
+- [Final Project：從零組一個可開機系統](./final-project-boot-system.md)
 
 ## 學習方式建議
 
-1. **每章都要在 QEMU 裡跑一次**：boot 這個主題不動手等於沒讀，文字描述開機流程像看人游泳教學
-2. **故意弄壞**：把 boot sector 最後兩個 byte 刪掉、把 GDT 設爛、把 initramfs 裡的 `/init` 改成 `exit 1`，看系統怎麼罵你
-3. **`gdb` + `qemu -s -S`**：QEMU 可以從 `0xFFFFFFF0` 第一條指令開始 step，幾乎沒有東西比這更適合學 boot
-4. **永遠對照真機**：每章學的概念，都拿你自己 Linux 機器的 `/boot`、`efibootmgr -v`、`systemctl list-units` 對照看一次
+1. **每章都在 QEMU 跑起來**：開機是動手的學問。每個 boot sector、UEFI app、initramfs 都要真的在 QEMU 跑，看到輸出
+2. **用 gdb 追執行**：QEMU + gdb remote 能單步追蹤從 reset vector 開始的每一條指令。這是理解開機最強的工具（Ch 0 教設定）
+3. **故意弄壞看現象**：把 boot signature 改掉、跳過 A20、ExitBootServices 後用 boot service——看它怎麼壞，比看它怎麼成功更有教育意義
 
-## 參考資料
+## 精選資料庫
 
-- [OSDev Wiki](https://wiki.osdev.org/) — boot / UEFI / x86 模式切換的事實標準參考
-- 《Linux Kernel Development》Robert Love — Ch 2 提到 boot 流程概覽
-- Linux source tree `Documentation/x86/boot.rst` — boot protocol 權威來源
-- UEFI Specification ([uefi.org](https://uefi.org/specifications)) — 厚但有用，當字典查
-- `arch/x86/boot/` 整個目錄 — 看真實的 boot code 比看任何書都有效
+### 必讀基礎
+
+- **[OSDev Wiki](https://wiki.osdev.org/)**
+  - 自製 OS / bootloader 的社群聖經；Boot Sequence、UEFI、GDT、Long Mode 等條目是本課多章的權威參考
+- **[UEFI Specification](https://uefi.org/specifications)**
+  - UEFI 的最終仲裁；Boot/Runtime Services、Protocol、變數的精確定義；當作查閱手冊
+
+- **[Linux kernel: Documentation/x86/boot.rst](https://www.kernel.org/doc/html/latest/arch/x86/boot.html)**
+  - Linux boot protocol 的權威來源；bzImage 結構、boot_params、bootloader 怎麼把控制權交給 kernel
+
+### 推薦部落格 / 文章
+
+- **[The Linux Boot Process series (0xax: Linux Insides)](https://0xax.gitbooks.io/linux-insides/content/Booting/)** — 0xax
+  - 逐行讀 Linux kernel 開機原始碼的系列；Part 5（kernel 啟動）的最佳深度補充
+- **[Writing an OS in Rust: bootloader posts](https://os.phil-opp.com/)** — Philipp Oppermann
+  - 雖然用 Rust，但對 boot、long mode、UEFI 的解釋極清晰，概念跨語言通用
+
+### 工具與規格
+
+- **[QEMU documentation](https://www.qemu.org/docs/master/)**
+  - 本課的主要實驗平台；-s -S（gdb stub）、OVMF 設定
+- **[TianoCore / EDK II](https://github.com/tianocore/edk2)**（UEFI 參考實作，OVMF 來自這裡）
+
+### 讀完本課之後
+
+- **《Understanding the Linux Kernel》** — Bovet & Cesati（kernel 內部，開機之後的世界）
+- **[coreboot documentation](https://doc.coreboot.org/)**（開源韌體，取代專有 BIOS/UEFI 韌體本身）

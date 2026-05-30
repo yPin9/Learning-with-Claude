@@ -1,353 +1,645 @@
-# 練習 C — 手刻 RSA-2048 + 跑經典攻擊
+# 練習 C — RSA 手刻 + 三大經典攻擊
 
-> 目標：把 Part 5 的 RSA 學完整：手刻 RSA-2048 keygen / encrypt / decrypt（C + Python）、CRT 加速、PKCS#1 v1.5 padding，最後對自己的 weak key 跑三個經典攻擊（Wiener / Hastad broadcast / 簡化版 Bleichenbacher）。
+> 目標：手刻 RSA-2048 key pair + 跑 Wiener / Hastad / 簡化版 Bleichenbacher 三個經典攻擊。
 
-## 任務規格
+---
 
-| Part | 內容 | 語言 |
-|---|---|---|
-| 1 | RSA-2048 keygen（Miller-Rabin + 隨機 prime） | Python |
-| 2 | RSA encrypt/decrypt + CRT 加速 | Python |
-| 3 | PKCS#1 v1.5 padding implement | Python |
-| 4 | Wiener attack：產 weak d，破 | Python |
-| 5 | Hastad broadcast attack：e=3 + 同訊息給 3 人 | Python |
-| 6 | 簡化版 Bleichenbacher：local oracle，破特定 m | Python |
-| 7 | C 版 RSA encrypt（用 GMP `mpz_powm`） | C |
+## 概覽
 
-## 期望輸出
+本練習分四個 Phase：
 
-```bash
-$ python rsa.py keygen
-[*] Generated 2048-bit RSA key
-$ python rsa.py encrypt "hello"
-$ python rsa.py decrypt
-hello
+| Phase | 內容 | 預計時間 | 難度 |
+|---|---|---|---|
+| Phase 1 | 手刻 RSA-2048（自己做 prime generation） | 90 min | ★★★ |
+| Phase 2 | Wiener attack（連分數逼近） | 60 min | ★★★ |
+| Phase 3 | Hastad broadcast attack（CRT + 開根號） | 45 min | ★★☆ |
+| Phase 4 | 簡化版 Bleichenbacher（optional） | 60 min | ★★★★ |
 
-$ python wiener.py
-[*] target n bits: 1024
-[*] expected d:  ...
-[*] recovered d: ...
-[+] Wiener attack succeeded
+環境：Python 3.11, Ubuntu 22.04。不允許使用 `pycryptodome`、`cryptography` 等套件的 RSA keygen——全部手刻。
 
-$ python hastad.py
-[*] Sending m to 3 recipients with e=3
-[+] Hastad attack: m recovered = "secret message"
+---
 
-$ python bleichenbacher.py
-[*] Querying oracle 12345 times...
-[+] Bleichenbacher: m recovered = "secret message"
-```
+## Phase 1：手刻 RSA-2048
 
-## 實作步驟建議
+### 目標
 
-### Step 1-2：RSA keygen + encrypt/decrypt + CRT
+從零開始生成一對 RSA-2048 key pair，包含：
+1. 質數生成（Miller-Rabin 測試）
+2. Key generation（n, e, d, CRT 參數）
+3. 加密 / 解密
+4. CRT 加速解密
+
+### 步驟
+
+#### Step 1.1：Miller-Rabin 質數測試
 
 ```python
+"""
+實作 Miller-Rabin probabilistic primality test。
+要求：至少 20 rounds，確保 false positive 機率 < 4^(-20)。
+"""
 import secrets
-from sympy import isprime
 
-def gen_prime(bits):
-    while True:
-        n = secrets.randbits(bits) | 1 | (1 << (bits-1))
-        if isprime(n):
-            return n
 
+def miller_rabin(n, rounds=20):
+    """
+    回傳 True = probably prime, False = definitely composite
+    你要實作：
+    1. 處理 n < 4 的 edge case
+    2. 寫出 n-1 = 2^r × d（d 為奇數）
+    3. 對每個 witness a，執行 Miller-Rabin 測試
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試
+assert miller_rabin(2) == True
+assert miller_rabin(3) == True
+assert miller_rabin(4) == False
+assert miller_rabin(561) == False   # Carmichael number（騙 Fermat，但騙不了 MR）
+assert miller_rabin(7919) == True
+assert miller_rabin(104729) == True
+print("Miller-Rabin tests passed ✓")
+```
+
+**提示**：
+- n-1 = 2^r × d 的分解：不斷除以 2 直到奇數
+- Witness a 的測試：計算 x = a^d mod n，然後做 r 次 squaring
+- 如果在任何 squaring 步驟中 x 變成 n-1，這個 witness 不能判定 composite
+
+#### Step 1.2：質數生成
+
+```python
+def generate_prime(bits):
+    """
+    生成一個 bits 位元的質數。
+    要求：
+    1. 最高位必須是 1（確保 bit 數正確）
+    2. 最低位必須是 1（偶數一定不是質數）
+    3. 用 secrets 模組生成隨機數（不要用 random）
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試
+p = generate_prime(1024)
+assert p.bit_length() == 1024
+assert miller_rabin(p)
+print(f"Generated 1024-bit prime: {hex(p)[:30]}...")
+```
+
+**提示**：
+- 一個隨機奇數是質數的機率約為 2/(bits × ln2)
+- 對 1024-bit，平均嘗試 ~355 次
+- 可以先過濾掉小質數（2, 3, 5, 7, 11, ...）的倍數，加速
+
+#### Step 1.3：Extended Euclidean Algorithm
+
+```python
+def extended_gcd(a, b):
+    """
+    回傳 (gcd, x, y) 使得 a*x + b*y = gcd(a, b)
+    """
+    # === 你的 code ===
+    pass
+
+
+def mod_inverse(a, m):
+    """
+    計算 a 的模逆元：a^(-1) mod m
+    如果 gcd(a, m) != 1，raise ValueError
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試
+g, x, y = extended_gcd(65537, 3120)
+assert g == 1
+assert (65537 * x + 3120 * y) == 1
+print("Extended GCD tests passed ✓")
+```
+
+#### Step 1.4：RSA Key Generation
+
+```python
 def rsa_keygen(bits=2048):
-    p = gen_prime(bits // 2)
-    q = gen_prime(bits // 2)
-    while q == p:
-        q = gen_prime(bits // 2)
+    """
+    生成 RSA key pair。
+    回傳 dict 包含：
+      n, e, d, p, q, d_p, d_q, q_inv
+
+    要求：
+    1. |p - q| 要夠大（> 2^(bits/2 - 100)）
+    2. n.bit_length() == bits
+    3. e = 65537
+    4. 包含 CRT 參數
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試
+key = rsa_keygen(2048)
+assert key['n'].bit_length() == 2048
+assert key['e'] == 65537
+assert (key['e'] * key['d']) % ((key['p']-1) * (key['q']-1)) == 1
+assert key['p'] * key['q'] == key['n']
+print("RSA keygen tests passed ✓")
+```
+
+#### Step 1.5：加密、解密、CRT 解密
+
+```python
+def rsa_encrypt(m, n, e):
+    """Textbook RSA 加密"""
+    assert 0 <= m < n
+    return pow(m, e, n)
+
+
+def rsa_decrypt(c, n, d):
+    """Textbook RSA 解密"""
+    return pow(c, d, n)
+
+
+def rsa_decrypt_crt(c, p, q, d_p, d_q, q_inv):
+    """
+    用 CRT 加速 RSA 解密。
+    要求：
+    1. m1 = c^d_p mod p
+    2. m2 = c^d_q mod q
+    3. h = q_inv × (m1 - m2) mod p
+    4. m = m2 + h × q
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試
+key = rsa_keygen(2048)
+m = int.from_bytes(b"RSA works!", 'big')
+c = rsa_encrypt(m, key['n'], key['e'])
+m1 = rsa_decrypt(c, key['n'], key['d'])
+m2 = rsa_decrypt_crt(c, key['p'], key['q'],
+                      key['d_p'], key['d_q'], key['q_inv'])
+assert m1 == m
+assert m2 == m
+print("Encrypt/Decrypt tests passed ✓")
+
+# 性能比較
+import time
+count = 50
+start = time.perf_counter()
+for _ in range(count):
+    rsa_decrypt(c, key['n'], key['d'])
+t_normal = time.perf_counter() - start
+
+start = time.perf_counter()
+for _ in range(count):
+    rsa_decrypt_crt(c, key['p'], key['q'],
+                    key['d_p'], key['d_q'], key['q_inv'])
+t_crt = time.perf_counter() - start
+
+print(f"Normal decrypt: {t_normal/count*1000:.1f} ms/op")
+print(f"CRT decrypt:    {t_crt/count*1000:.1f} ms/op")
+print(f"Speedup:        {t_normal/t_crt:.1f}x")
+```
+
+**Phase 1 驗收標準**：
+- [ ] Miller-Rabin 正確判定（含 Carmichael number）
+- [ ] 生成的 prime 確實是 prime
+- [ ] RSA-2048 key pair 通過正確性測試
+- [ ] CRT 解密速度明顯快於普通解密（預期 3-4x）
+- [ ] 整個 keygen 在 10 秒內完成
+
+---
+
+## Phase 2：Wiener Attack
+
+### 目標
+
+實作 Wiener attack，對 d < n^(1/4)/3 的 RSA key 恢復私鑰。
+
+### 步驟
+
+#### Step 2.1：連分數展開
+
+```python
+def continued_fraction_expansion(numerator, denominator):
+    """
+    計算 numerator/denominator 的連分數展開 [a0; a1, a2, ...]
+    回傳 list of integers
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試
+assert continued_fraction_expansion(17993, 90581) == [0, 5, 29, 4, 1, 3, 2, 4, 3]
+# 或類似的展開（取決於實作細節）
+print("Continued fraction tests passed ✓")
+```
+
+#### Step 2.2：收斂子（Convergents）
+
+```python
+def convergents_from_cf(cf):
+    """
+    從連分數展開計算所有收斂子 p_i/q_i
+    回傳 list of (p_i, q_i) tuples
+
+    遞推公式：
+      h[-1] = 1, h[-2] = 0
+      k[-1] = 0, k[-2] = 1
+      h[i] = a[i] * h[i-1] + h[i-2]
+      k[i] = a[i] * k[i-1] + k[i-2]
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試
+cf = [3, 7, 15, 1]  # π ≈ [3; 7, 15, 1]
+convs = convergents_from_cf(cf)
+# 收斂子應該接近 π：3/1, 22/7, 333/106, 355/113
+print(f"Convergents of [3;7,15,1]: {convs}")
+```
+
+#### Step 2.3：Wiener Attack
+
+```python
+from math import isqrt
+
+
+def wiener_attack(e, n):
+    """
+    嘗試用 Wiener attack 恢復 d。
+    成功回傳 (d, p, q)，失敗回傳 None。
+
+    策略：
+    1. 計算 e/n 的連分數展開
+    2. 對每個收斂子 k/d：
+       a. 檢查 (ed - 1) 是否被 k 整除
+       b. 如果是，計算 φ(n) = (ed - 1) / k
+       c. 用 φ(n) 和 n 解出 p, q
+       d. 驗證 p × q == n
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試：構造一個弱 RSA key
+def make_weak_rsa(bits=1024):
+    """
+    生成一個 d 很小的 RSA key（容易被 Wiener attack 打的）
+    """
+    half = bits // 2
+    p = generate_prime(half)
+    q = generate_prime(half)
     n = p * q
     phi = (p - 1) * (q - 1)
-    e = 65537
-    d = pow(e, -1, phi)
-    return {'n': n, 'e': e, 'd': d, 'p': p, 'q': q}
 
-def rsa_encrypt(m_int, key):
-    return pow(m_int, key['e'], key['n'])
+    # 選一個很小的 d
+    bound = isqrt(isqrt(n)) // 3
+    from math import gcd
+    d = secrets.randbelow(bound - 2) + 2
+    while gcd(d, phi) != 1:
+        d = secrets.randbelow(bound - 2) + 2
 
-def rsa_decrypt_crt(c_int, key):
-    p, q, d = key['p'], key['q'], key['d']
-    dp = d % (p - 1)
-    dq = d % (q - 1)
-    qinv = pow(q, -1, p)
-    m_p = pow(c_int, dp, p)
-    m_q = pow(c_int, dq, q)
-    h = (qinv * (m_p - m_q)) % p
-    return m_q + h * q
+    e = mod_inverse(d, phi)
+    return n, e, d, p, q
+
+
+n, e, d_real, p_real, q_real = make_weak_rsa(1024)
+print(f"n: {n.bit_length()} bits")
+print(f"e: {e.bit_length()} bits (unusually large)")
+print(f"d: {d_real.bit_length()} bits (dangerously small)")
+
+result = wiener_attack(e, n)
+if result:
+    d_found, p_found, q_found = result
+    assert d_found == d_real
+    print(f"\nWiener attack 成功！")
+    print(f"d = {d_found}")
+    print(f"p = {p_found}")
+    print(f"q = {q_found}")
+else:
+    print("Wiener attack 失敗")
 ```
 
-### Step 3：PKCS#1 v1.5 padding
+**Phase 2 驗收標準**：
+- [ ] 連分數展開正確
+- [ ] 收斂子計算正確
+- [ ] 對 1024-bit weak RSA key，Wiener attack 在 < 1 秒內恢復 d
+- [ ] 驗證：用恢復的 d 可以解密密文
+
+---
+
+## Phase 3：Hastad Broadcast Attack
+
+### 目標
+
+實作 Hastad broadcast attack，對 e=3 + 同一明文發給 3 人的情形恢復明文。
+
+### 步驟
+
+#### Step 3.1：CRT（中國剩餘定理）
 
 ```python
-def pkcs1_v15_pad(message: bytes, key_bytes: int) -> bytes:
-    """加 padding 使長度 = key_bytes"""
-    if len(message) > key_bytes - 11:
-        raise ValueError("message too long")
-    ps_len = key_bytes - len(message) - 3
-    ps = bytearray()
-    while len(ps) < ps_len:
-        b = secrets.randbits(8)
-        if b != 0:
-            ps.append(b)
-    return b'\x00\x02' + bytes(ps) + b'\x00' + message
+def chinese_remainder_theorem(remainders, moduli):
+    """
+    解聯立同餘方程：
+      x ≡ r_i (mod m_i) for all i
+    回傳 x mod (m_1 × m_2 × ... × m_k)
 
-def pkcs1_v15_unpad(padded: bytes) -> bytes:
-    if padded[0] != 0x00 or padded[1] != 0x02:
-        raise ValueError("invalid padding")
-    sep = padded.find(b'\x00', 2)
-    if sep < 10:
-        raise ValueError("invalid padding")
-    return padded[sep+1:]
+    要求：moduli 兩兩互質
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試
+# x ≡ 2 (mod 3), x ≡ 3 (mod 5), x ≡ 2 (mod 7)
+x = chinese_remainder_theorem([2, 3, 2], [3, 5, 7])
+assert x % 3 == 2
+assert x % 5 == 3
+assert x % 7 == 2
+print(f"CRT result: {x} (mod 105)")
+print("CRT tests passed ✓")
 ```
 
-### Step 4：Wiener attack
-
-產一把 weak d 的 key（d < n^0.25 / 3），跑 Wiener：
+#### Step 3.2：整數 k 次根
 
 ```python
-def gen_weak_rsa():
-    """故意產 d 太小的 key"""
-    bits = 1024
+def integer_kth_root(n, k):
+    """
+    計算 n 的整數 k 次根。
+    如果 n 不是完全 k 次方，回傳 None。
+    用 Newton's method。
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試
+assert integer_kth_root(27, 3) == 3
+assert integer_kth_root(1000, 3) == 10
+assert integer_kth_root(26, 3) == None
+assert integer_kth_root(2**300, 3) == 2**100  # 大數測試
+print("Integer kth root tests passed ✓")
+```
+
+#### Step 3.3：Hastad Broadcast Attack
+
+```python
+def hastad_broadcast_attack(ciphertexts, moduli, e=3):
+    """
+    Hastad broadcast attack。
+    ciphertexts: [c1, c2, c3]
+    moduli: [n1, n2, n3]
+    e: 公鑰指數（預設 3）
+
+    策略：
+    1. 用 CRT 恢復 m^e mod (n1 × n2 × n3)
+    2. 因為 m < min(n_i)，所以 m^e < n1 × n2 × n3
+    3. m^e 是一個「普通整數」，直接開 e 次根
+    """
+    # === 你的 code ===
+    pass
+
+
+# 測試：生成 3 組 e=3 的 RSA key
+def make_rsa_e3(bits=1024):
+    """生成 e=3 的 RSA key"""
+    half = bits // 2
     while True:
-        p = gen_prime(bits // 2)
-        q = gen_prime(bits // 2)
+        p = generate_prime(half)
+        q = generate_prime(half)
         n = p * q
         phi = (p - 1) * (q - 1)
-        # 直接選小 d
-        bits_d = 200  # 比 1024/4=256 還小
-        d = secrets.randbits(bits_d) | 1
-        try:
-            e = pow(d, -1, phi)
-            if e < n:
-                return {'n': n, 'e': e, 'd': d, 'p': p, 'q': q}
-        except ValueError:
-            continue
+        from math import gcd
+        if gcd(3, phi) == 1 and n.bit_length() == bits:
+            d = mod_inverse(3, phi)
+            return n, 3, d
 
-def continued_fraction(num, den):
-    cf = []
-    while den:
-        cf.append(num // den)
-        num, den = den, num % den
-    return cf
 
-def convergents(cf):
-    h2, h1 = 1, cf[0]
-    k2, k1 = 0, 1
-    yield (h1, k1)
-    for ai in cf[1:]:
-        h, k = ai*h1 + h2, ai*k1 + k2
-        yield (h, k)
-        h2, h1 = h1, h
-        k2, k1 = k1, k
+n1, _, _ = make_rsa_e3(1024)
+n2, _, _ = make_rsa_e3(1024)
+n3, _, _ = make_rsa_e3(1024)
 
-def wiener(n, e):
-    cf = continued_fraction(e, n)
-    for k, d in convergents(cf):
-        if k == 0: continue
-        phi = (e * d - 1) // k
-        if phi <= 0: continue
-        s = n - phi + 1
-        disc = s*s - 4*n
-        if disc < 0: continue
-        from sympy import isqrt
-        sq = isqrt(disc)
-        if sq*sq == disc:
-            return d
-    return None
+# 明文（必須 < min(n1, n2, n3)）
+m = int.from_bytes(b"Hastad attack works!", 'big')
+print(f"原始明文: {m}")
 
-# 測試
-key = gen_weak_rsa()
-recovered_d = wiener(key['n'], key['e'])
-assert recovered_d == key['d']
-print(f"[+] Wiener attack: d = {recovered_d}")
+# 三個密文
+c1 = pow(m, 3, n1)
+c2 = pow(m, 3, n2)
+c3 = pow(m, 3, n3)
+
+# 攻擊
+m_recovered = hastad_broadcast_attack([c1, c2, c3], [n1, n2, n3], e=3)
+
+if m_recovered is not None:
+    print(f"恢復的明文: {m_recovered}")
+    print(f"轉回 bytes: {m_recovered.to_bytes((m_recovered.bit_length()+7)//8, 'big')}")
+    assert m_recovered == m
+    print("Hastad broadcast attack 成功 ✓")
+else:
+    print("攻擊失敗")
 ```
 
-### Step 5：Hastad broadcast attack
+**Phase 3 驗收標準**：
+- [ ] CRT 正確（小數和大數都測試）
+- [ ] 整數 k 次根正確（包含 2^300 級別的大數）
+- [ ] 對 1024-bit RSA key + e=3，Hastad attack 成功恢復明文
+- [ ] 攻擊時間 < 1 秒
+
+---
+
+## Phase 4：簡化版 Bleichenbacher（Optional）
+
+### 目標
+
+實作 Bleichenbacher padding oracle attack 的核心邏輯。因為完整版需要 ~2^20 次 oracle 查詢，這裡用小參數（RSA-256）演示。
+
+### 步驟
+
+#### Step 4.1：PKCS#1 v1.5 Padding Oracle Server
 
 ```python
-def hastad_attack(messages_with_keys, e=3):
+class PaddingOracleServer:
     """
-    messages_with_keys = [(c1, n1), (c2, n2), (c3, n3)]
-    e = 3
+    模擬一個有 PKCS#1 v1.5 padding oracle 的 RSA server。
+    oracle 洩露「padding 是否合法」的資訊。
     """
-    cs = [c for c, _ in messages_with_keys]
-    ns = [n for _, n in messages_with_keys]
-    # CRT 合併
-    from functools import reduce
-    N = reduce(lambda a, b: a * b, ns)
-    me = 0
-    for c, n in messages_with_keys:
-        Ni = N // n
-        me += c * Ni * pow(Ni, -1, n)
-    me %= N
-    # 開 e 次方
-    from sympy import integer_nthroot
-    m, exact = integer_nthroot(me, e)
-    if not exact:
-        return None
-    return m
 
-# 測試
-import secrets
-m = int.from_bytes(b"hello", 'big')
-keys = [rsa_keygen_e3() for _ in range(3)]  # e=3 版本
-cts = [(pow(m, 3, k['n']), k['n']) for k in keys]
-recovered = hastad_attack(cts)
-assert recovered == m
+    def __init__(self, bits=256):
+        """
+        生成小的 RSA key（方便攻擊在合理時間內完成）
+        """
+        key = rsa_keygen(bits)
+        self.n = key['n']
+        self.e = key['e']
+        self.d = key['d']
+        self.k = (self.n.bit_length() + 7) // 8  # key byte length
+        self.oracle_calls = 0
+
+    def encrypt(self, plaintext_bytes):
+        """加密（帶 PKCS#1 v1.5 padding）"""
+        mlen = len(plaintext_bytes)
+        ps_len = self.k - mlen - 3
+        assert ps_len >= 8, "Message too long"
+
+        # 生成非零隨機 padding
+        ps = bytes(secrets.choice(range(1, 256)) for _ in range(ps_len))
+        em = b'\x00\x02' + ps + b'\x00' + plaintext_bytes
+
+        m_int = int.from_bytes(em, 'big')
+        return rsa_encrypt(m_int, self.n, self.e)
+
+    def oracle(self, ciphertext):
+        """
+        Padding oracle：解密並回傳 padding 是否合法。
+        這就是 Bleichenbacher 利用的 leak。
+        """
+        self.oracle_calls += 1
+        m_int = rsa_decrypt(ciphertext, self.n, self.d)
+        em = m_int.to_bytes(self.k, 'big')
+        return em[0] == 0x00 and em[1] == 0x02
 ```
 
-### Step 6：簡化 Bleichenbacher
-
-完整 Bleichenbacher 算法複雜（4 step、上百萬 query）。簡化版：對小 n 做演示：
+#### Step 4.2：Bleichenbacher 攻擊核心
 
 ```python
-def bleichenbacher_simplified(c, e, n, oracle):
+def bleichenbacher_attack(server, ciphertext):
     """
-    oracle(c) -> True 若 c 解密後 PKCS conformant
-    回傳 m
+    Bleichenbacher padding oracle attack（簡化版）。
+
+    核心邏輯：
+    1. 利用 RSA 的 multiplicative homomorphism：
+       c' = c × s^e mod n → 解密得到 m × s mod n
+    2. 如果 oracle(c') = True，知道 m × s mod n ∈ [2B, 3B)
+    3. 逐步縮小 m 的範圍
+
+    因為是簡化版，這裡用 brute force 搜索 s。
+    完整版有更聰明的搜索策略（見 Bleichenbacher 原論文）。
+
+    你的任務：
+    1. 計算 B = 2^(8*(k-2))
+    2. 搜索 s 使得 oracle(c × s^e mod n) = True
+    3. 用每個有效的 s 縮小 m 的範圍
     """
-    # B = 2^(8 × (k-2)), k = key bytes
-    k = (n.bit_length() + 7) // 8
-    B = 2 ** (8 * (k - 2))
-    
-    # Step 1: blinding（這裡 c 已 conformant 跳過）
-    s = 1
-    M = [(2*B, 3*B - 1)]
-    
-    # 簡化版邏輯（完整版見 Bleichenbacher 1998 paper）
-    # ...
+    n = server.n
+    e = server.e
+    k = server.k
+    B = 1 << (8 * (k - 2))
+
+    print(f"B = 2^{8*(k-2)}")
+    print(f"合法 padding 範圍: [{2*B}, {3*B-1}]")
+
+    # Step 1: 找第一個 s1 使得 oracle(c * s1^e) = True
+    # === 你的 code ===
+
+    # Step 2: 縮小 m 的範圍
+    # === 你的 code ===
+
+    # Step 3: 重複直到範圍只有一個值
+    # === 你的 code ===
+
+    print(f"Oracle 查詢次數: {server.oracle_calls}")
+    return None  # 替換成恢復的 m
+
+
+# 測試（用小 RSA key）
+server = PaddingOracleServer(bits=256)  # 非常小，僅供演示
+plaintext = b"\x42"  # 1 byte 明文
+ciphertext = server.encrypt(plaintext)
+
+print(f"RSA key size: {server.n.bit_length()} bits")
+print(f"密文: {ciphertext}")
+print()
+
+# m_recovered = bleichenbacher_attack(server, ciphertext)
+# if m_recovered is not None:
+#     recovered_bytes = m_recovered.to_bytes(server.k, 'big')
+#     # 找到 0x00 分隔符
+#     sep = recovered_bytes.index(b'\x00', 2)
+#     plaintext_recovered = recovered_bytes[sep+1:]
+#     print(f"恢復的明文: {plaintext_recovered}")
 ```
 
-實際做：用 cryptohack 上的 Bleichenbacher 範例題（CTF 風格）熟悉。完整實作放 reference solution。
+**Phase 4 驗收標準**：
+- [ ] Padding oracle server 正確實作 PKCS#1 v1.5 格式
+- [ ] 攻擊能在小 RSA key（256-bit）上成功（可能需要數分鐘）
+- [ ] 理解 Bleichenbacher 的核心邏輯：multiplicative homomorphism + oracle feedback
 
-### Step 7：C 版 RSA（用 GMP）
+---
 
-```c
-#include <gmp.h>
-#include <stdio.h>
+## 完成後的自我檢核
 
-void rsa_encrypt(mpz_t out, const mpz_t m, const mpz_t e, const mpz_t n) {
-    mpz_powm(out, m, e, n);
-}
+### Phase 1
+- [ ] 我能解釋 Miller-Rabin 為什麼是 probabilistic（而非 deterministic）
+- [ ] 我能解釋 CRT 加速的數學原理（為什麼快 4 倍）
+- [ ] 我的 prime generation 使用 `secrets`（不是 `random`）
 
-void rsa_decrypt_crt(mpz_t out, const mpz_t c, const mpz_t p, const mpz_t q,
-                     const mpz_t d) {
-    mpz_t p_minus_1, q_minus_1, dp, dq, qinv, m_p, m_q, h, tmp;
-    mpz_inits(p_minus_1, q_minus_1, dp, dq, qinv, m_p, m_q, h, tmp, NULL);
-    
-    mpz_sub_ui(p_minus_1, p, 1);
-    mpz_sub_ui(q_minus_1, q, 1);
-    mpz_mod(dp, d, p_minus_1);
-    mpz_mod(dq, d, q_minus_1);
-    mpz_invert(qinv, q, p);
-    
-    mpz_powm(m_p, c, dp, p);
-    mpz_powm(m_q, c, dq, q);
-    mpz_sub(h, m_p, m_q);
-    mpz_mul(h, h, qinv);
-    mpz_mod(h, h, p);
-    mpz_mul(out, h, q);
-    mpz_add(out, out, m_q);
-    
-    mpz_clears(p_minus_1, q_minus_1, dp, dq, qinv, m_p, m_q, h, tmp, NULL);
-}
+### Phase 2
+- [ ] 我能手算一個小例子的連分數展開和收斂子
+- [ ] 我能解釋 Wiener attack 為什麼在 d > n^0.292 時失效
 
-int main(void) {
-    mpz_t n, e, d, p, q, m, c, decrypted;
-    mpz_inits(n, e, d, p, q, m, c, decrypted, NULL);
-    
-    /* set values from keygen output */
-    mpz_set_str(n, "...", 16);
-    mpz_set_ui(e, 65537);
-    /* ... */
-    
-    mpz_set_ui(m, 12345);
-    rsa_encrypt(c, m, e, n);
-    rsa_decrypt_crt(decrypted, c, p, q, d);
-    
-    gmp_printf("decrypted = %Zd\n", decrypted);
-    
-    mpz_clears(n, e, d, p, q, m, c, decrypted, NULL);
-    return 0;
-}
+### Phase 3
+- [ ] 我能解釋 CRT 在 Hastad attack 中的角色
+- [ ] 我能解釋 OAEP 為什麼可以防禦 Hastad attack
+
+### Phase 4（Optional）
+- [ ] 我能畫出 Bleichenbacher attack 的流程圖
+- [ ] 我能解釋 RSA 的 multiplicative homomorphism 為什麼是攻擊的核心
+
+---
+
+## 加分挑戰
+
+1. **Common Modulus Attack**：實作 Ch 20 的 common modulus attack，當兩人共用 n 時恢復明文。
+
+2. **Fermat Factorization**：實作 Fermat factorization，對 |p-q| 很小的 RSA key 分解 n。測量不同 |p-q| 下的攻擊時間。
+
+3. **Timing Attack 觀察**：用 `timeit` 測量不同 d 值的 `pow(c, d, n)` 時間。觀察 d 的 hamming weight 和解密時間的關聯。
+
+4. **Boneh-Durfee bound**：在 SageMath 中用 Coppersmith's method 攻擊 d < n^0.292 的 RSA key（超出 Wiener 的 n^0.25 bound）。
+
+---
+
+## 提示與除錯
+
+### 常見問題
+
+**Q: Miller-Rabin 把 Carmichael number 判成質數了**
+A: 檢查你的 witness 測試邏輯。Carmichael number（如 561 = 3 × 11 × 17）會通過 Fermat test，但 Miller-Rabin 有額外的 squaring 檢查可以抓到它。
+
+**Q: RSA keygen 很慢**
+A: 在生成隨機數前先做小質數篩選（trial division by first 100 primes），可以排除掉 ~75% 的合數。
+
+**Q: Wiener attack 找不到 d**
+A: 確認 d 確實 < n^(1/4)/3。用 `isqrt(isqrt(n)) // 3` 計算 bound。
+
+**Q: 整數開三次根不精確**
+A: Newton's method 的收斂判斷要用整數比較（不要用浮點數）。最後一步要驗證 `result ** k == n`。
+
+**Q: CRT 的結果溢出**
+A: Python 的大整數沒有溢出問題。但要注意負數的 mod 運算：Python 的 `%` 永遠回傳非負值，這是正確的。
+
+---
+
+## 參考答案結構
+
+```
+practice-c/
+├── phase1_rsa.py          # RSA-2048 手刻
+├── phase2_wiener.py       # Wiener attack
+├── phase3_hastad.py       # Hastad broadcast attack
+├── phase4_bleichenbacher.py  # (Optional)
+└── test_all.py            # 整合測試
 ```
 
-編譯：
-
-```bash
-gcc -O2 rsa.c -lgmp -o rsa_test
-```
-
-## 完整參考解答
-
-**寫過再看**。
-
-<details>
-<summary>Wiener attack 完整版</summary>
-
-```python
-from sympy import isqrt
-
-def wiener_attack(n, e):
-    cf = continued_fraction(e, n)
-    for h, k in convergents(cf):
-        if k == 0:
-            continue
-        phi_candidate = (e * h - 1) // k
-        if phi_candidate <= 0:
-            continue
-        s = n - phi_candidate + 1
-        disc = s * s - 4 * n
-        if disc < 0:
-            continue
-        sq = isqrt(disc)
-        if sq * sq == disc:
-            return h
-    return None
-```
-
-</details>
-
-<details>
-<summary>Hastad attack 完整版</summary>
-
-```python
-def hastad_attack(triples, e):
-    """triples = [(c, n), ...] 共 e 個"""
-    from functools import reduce
-    from sympy import integer_nthroot
-    N = reduce(lambda a, b: a * b, [n for _, n in triples])
-    M_e = 0
-    for c, n in triples:
-        N_i = N // n
-        N_i_inv = pow(N_i, -1, n)
-        M_e = (M_e + c * N_i * N_i_inv) % N
-    m, exact = integer_nthroot(M_e, e)
-    if not exact:
-        return None
-    return m
-```
-
-</details>
-
-## 測試用例
-
-1. **RSA 一致性**：keygen → encrypt → decrypt 還原原文 1000 次
-2. **CRT vs 普通**：兩種 decrypt 結果一致，CRT 約 4× 快
-3. **Wiener 對 d < n^(1/4)/3 的 key 100% 成功**
-4. **Hastad e=3, 3 個 recipient 必成功**
-5. **修補後**：用 OAEP 取代 PKCS#1 v1.5 → Bleichenbacher 失敗
-
-## 自我檢核
-
-- [ ] 我能寫 RSA-2048 keygen + CRT decrypt（Python）
-- [ ] 我能用 Wiener 破 weak d（< n^(1/4)/3）的 RSA
-- [ ] 我能用 Hastad 對 e=3 + 3 同訊息攻擊
-- [ ] 我用 GMP 寫了 C 版 RSA encrypt/decrypt
-- [ ] 我能解釋為什麼 OAEP 修好了 Bleichenbacher
-- [ ] 我能說出至少 5 條 RSA 安全用法的紀律
-
-下一個 Part 進 AEAD（authenticated encryption）— 把 Part 3 的對稱加密與 Part 4 的 MAC 整合。
-
-→ [Ch 25 AEAD 概念](./25-aead-concepts.md)
+每個 phase 完成後執行 `python test_all.py` 確認所有測試通過。

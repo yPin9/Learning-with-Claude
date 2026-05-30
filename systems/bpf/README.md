@@ -1,84 +1,127 @@
-# BPF 學習筆記：從 packet filter 到生產級 eBPF 工具
+# eBPF 完整學習筆記：從 kernel 底層到生產級 observability agent
 
-> 給已經會 C、想徹底搞懂 Linux kernel 內部觀測與擴展機制的工程師。
+> 給懂一點 C、想把 eBPF 從頭學到底的工程師。
 
-這是一系列循序漸進的教學文章，從 1992 年的 classic BPF 講起，一路寫到現代 eBPF 的 verifier、CO-RE、libbpf，並涵蓋 observability、networking、security 三大應用面。最終你會用 Go + eBPF 寫出一個自己的 mini observability + security agent。
+這系列從 Classic BPF 的歷史出發，帶你走過 eBPF ISA、verifier 安全機制、BTF/CO-RE 相容性系統、全部主要工具鏈（bpftrace / BCC / libbpf / cilium-ebpf），深入 tracing、networking、security 三大應用域，最後整合成一個生產可用的 observability agent。讀完你能看懂 `kernel/bpf/` 的 source code、能設計自己的 BPF program、能讀懂 verifier 拒絕你的原因。
 
 ## 為什麼學這個？
 
-- **看得見以前看不見的東西**：syscall 流量、process 檔案存取、TCP retransmit、function latency — 不用改一行 kernel code，全部都觀察得到。
-- **這是 cloud-native infra 的新底層**：Cilium（Kubernetes 網路）、Falco / Tetragon（runtime security）、Pixie / Parca（observability）背後都是 eBPF。會 BPF 才看得懂這個世代的 infra。
-- **不再害怕 kernel**：BPF 給你一個安全的方式進到 kernel 跑 code，verifier 會幫你把關。比寫 kernel module 友善 100 倍，但能力相當接近。
-- **debug 神器**：production 上一個間歇性的 bug，用 bpftrace 可能 3 行解決。你會反向懷疑「以前怎麼活下來的」。
+- **observability 的現代標準**：Datadog Agent、Grafana Beyla、Cilium、Falco 底層都跑 eBPF；不懂它，你只能用別人封裝好的工具，永遠不知道為什麼出問題
+- **理解底層設計**：verifier 怎麼用抽象解釋（abstract interpretation）證明安全性、JIT 怎麼把 BPF bytecode 變成 native x86-64、CO-RE 怎麼在不重新編譯的情況下跑在不同 kernel 版本——這些是值得花時間理解的系統設計
+- **職涯實用性**：Linux kernel、SRE、platform engineering、cloud-native security 職位越來越常問 eBPF；Cloudflare、Meta、Google、Datadog、Isovalent 的技術面試都可能碰到
+
+## 先修知識
+
+- **C 語言**（程度：會指標、struct、function pointer；不需要 kernel programming 經驗）
+- **Linux 基礎**（程度：會用 shell、知道 process 和 file descriptor 是什麼）
+- 不需要：kernel module 開發、assembly、network programming（課程會補足必要背景）
 
 ## 課程地圖
 
-### Part 0 — 起步
+### Part 1 — 基礎與歷史（Ch 0–5）
 - [Ch 0 環境搭建](./00-environment-setup.md)
-- [Ch 1 BPF 是什麼？從 packet filter 到 universal kernel runtime](./01-bpf-overview.md)
+- [Ch 1 為什麼是 eBPF？](./01-why-ebpf.md)
+- [Ch 2 你需要的 Linux kernel 底層知識](./02-linux-kernel-basics.md)
+- [Ch 3 Classic BPF：tcpdump 的 packet filter](./03-classic-bpf.md)
+- [Ch 4 eBPF ISA 與 JIT 編譯器](./04-ebpf-isa-and-jit.md)
+- [Ch 5 eBPF Verifier：安全性證明的工作原理](./05-ebpf-verifier.md)
+- [練習 A：bpftool 全面探索](./practice-a-bpftool-exploration.md)
 
-### Part 1 — Kernel 速成（給不熟 kernel 的人）
-- [Ch 2 Kernel / User space 邊界與 syscall](./02-kernel-userspace-boundary.md)
-- [Ch 3 傳統 kernel 觀測手段：printk、ftrace、perf、strace](./03-traditional-kernel-observation.md)
-- [Ch 4 Kernel 鉤子機制：kprobe / uprobe / tracepoint / fentry](./04-kernel-hooks.md)
+### Part 2 — 核心抽象（Ch 6–12）
+- [Ch 6 Program Types 完整解析](./06-program-types.md)
+- [Ch 7 Attach 機制與 bpf_link 生命週期](./07-attach-mechanisms.md)
+- [Ch 8 BPF Maps：所有資料結構](./08-bpf-maps.md)
+- [Ch 9 BTF：BPF Type Format 深入](./09-btf-deep-dive.md)
+- [Ch 10 CO-RE：Compile Once Run Everywhere](./10-co-re.md)
+- [Ch 11 Helper Functions 系統](./11-helper-functions.md)
+- [Ch 12 BPF syscall 底層序列](./12-bpf-syscall-internals.md)
+- [練習 B：裸 BPF syscall 實作](./practice-b-raw-bpf-syscall.md)
 
-### Part 2 — BPF 核心架構
-- [Ch 5 classic BPF：為什麼會發明一個 in-kernel VM](./05-classic-bpf.md)
-- [Ch 6 eBPF instruction set、register、JIT 與 sandboxing](./06-ebpf-isa-and-jit.md)
-- [Ch 7 Program types 與 attach 點全景](./07-program-types-and-attach.md)
-- [Ch 8 BPF maps：kernel 與 user space 共享狀態](./08-bpf-maps.md)
-- [Ch 9 Verifier 深入：為什麼你的 BPF 會被拒絕](./09-verifier-deep-dive.md)
-- [Ch 10 BTF 與 CO-RE：跨 kernel 版本部署](./10-btf-and-core.md)
-- [練習 A：用 bpftool 探索系統上的 BPF](./practice-a-bpftool-exploration.md)
+### Part 3 — 工具鏈（Ch 13–18）
+- [Ch 13 bpftrace：動態腳本語言](./13-bpftrace.md)
+- [Ch 14 BCC：Python-kernel 雙語框架](./14-bcc.md)
+- [Ch 15 libbpf：現代 C 開發框架](./15-libbpf.md)
+- [Ch 16 BPF Skeleton：自動生成的 userspace 介面](./16-bpf-skeleton.md)
+- [Ch 17 cilium/ebpf：Go 生態系](./17-cilium-ebpf-go.md)
+- [Ch 18 交叉比較：選哪個工具？](./18-toolchain-comparison.md)
+- [練習 C：libbpf execve tracer](./practice-c-libbpf-execve-tracer.md)
 
-### Part 3 — 寫 BPF：從高階到低階
-- [Ch 11 bpftrace：一行解決問題的高階語言](./11-bpftrace.md)
-- [Ch 12 bcc：Python 包 C 的混合方式](./12-bcc.md)
-- [Ch 13 libbpf + CO-RE 入門（kernel side C）](./13-libbpf-core-kernel-side.md)
-- [Ch 14 User space loader：用 C 寫 loader](./14-userspace-loader-c.md)
-- [Ch 15 cilium/ebpf：Go 寫 user space](./15-cilium-ebpf-go.md)
-- [練習 B：execve tracer 三種寫法](./practice-b-execve-tracer.md)
+### Part 4 — Tracing 深挖（Ch 19–25）
+- [Ch 19 kprobes / kretprobes](./19-kprobes-kretprobes.md)
+- [Ch 20 Tracepoints 與 raw_tracepoints](./20-tracepoints-raw-tracepoints.md)
+- [Ch 21 fentry / fexit：BTF-based hooks](./21-fentry-fexit.md)
+- [Ch 22 USDT：userspace 靜態探針](./22-usdt.md)
+- [Ch 23 perf_event 與 PMU 硬體計數器](./23-perf-event-pmu.md)
+- [Ch 24 Profiling 與 Flamegraph](./24-profiling-flamegraph.md)
+- [Ch 25 ringbuf vs perfbuf：事件傳輸設計](./25-ringbuf-vs-perfbuf.md)
+- [練習 D：PostgreSQL slow query tracer](./practice-d-postgresql-slow-query.md)
 
-### Part 4 — Observability 應用
-- [Ch 16 效能分析經典工具巡禮](./16-bpf-performance-tools.md)
-- [Ch 17 USDT：觀察 user space 應用](./17-usdt.md)
-- [Ch 18 Profiling 與 flamegraph 製作](./18-profiling-flamegraph.md)
-- [練習 C：SQL 慢查詢 tracer](./practice-c-sql-slow-query-tracer.md)
+### Part 5 — Networking（Ch 26–33）
+- [Ch 26 XDP：最快的 packet 處理](./26-xdp.md)
+- [Ch 27 AF_XDP：零拷貝 userspace packet I/O](./27-af-xdp.md)
+- [Ch 28 TC BPF：流量整形與分類](./28-tc-bpf.md)
+- [Ch 29 Socket BPF：sk_msg, sk_skb, sockmap](./29-socket-bpf.md)
+- [Ch 30 cgroup BPF：容器網路控制](./30-cgroup-bpf.md)
+- [Ch 31 BPF 與 Cilium：Kubernetes CNI](./31-cilium-kubernetes.md)
+- [Ch 32 BPF Load Balancer 設計](./32-bpf-load-balancer.md)
+- [Ch 33 BPF 與 Service Mesh](./33-bpf-service-mesh.md)
+- [練習 E：XDP stateful firewall](./practice-e-xdp-stateful-firewall.md)
 
-### Part 5 — Networking
-- [Ch 19 XDP：最快的封包處理路徑](./19-xdp.md)
-- [Ch 20 TC BPF：ingress/egress 流量控制](./20-tc-bpf.md)
-- [Ch 21 Socket-level BPF：sockops、sk_msg、sock_filter](./21-socket-level-bpf.md)
-- [練習 D：XDP 防火牆](./practice-d-xdp-firewall.md)
+### Part 6 — Security（Ch 34–38）
+- [Ch 34 seccomp-bpf：syscall 過濾](./34-seccomp-bpf.md)
+- [Ch 35 BPF-LSM：強制存取控制](./35-bpf-lsm.md)
+- [Ch 36 Falco & Tetragon](./36-falco-tetragon.md)
+- [Ch 37 Offensive eBPF：rootkit 技術](./37-offensive-ebpf.md)
+- [Ch 38 BPF 在容器與 Kubernetes 安全](./38-container-kubernetes-security.md)
 
-### Part 6 — Security
-- [Ch 22 seccomp-bpf：syscall 過濾](./22-seccomp-bpf.md)
-- [Ch 23 BPF LSM：kernel 級安全鉤子](./23-bpf-lsm.md)
-- [Ch 24 觀測派 vs 阻擋派：Falco / Tetragon 架構](./24-falco-tetragon.md)
+### Part 7 — 進階機制（Ch 39–44）
+- [Ch 39 Tail calls 與 BPF-to-BPF calls](./39-tail-calls-bpf-to-bpf.md)
+- [Ch 40 並發控制：spinlock, per-CPU maps, atomic](./40-concurrency-in-bpf.md)
+- [Ch 41 bpf_timer 與非同步事件](./41-bpf-timer.md)
+- [Ch 42 BPF Iterator 與批次操作](./42-bpf-iterator.md)
+- [Ch 43 Task/inode/sk local storage](./43-task-inode-sk-storage.md)
+- [Ch 44 Debugging：verifier 錯誤與 bpf_printk](./44-debugging-bpf.md)
+- [練習 F：生產用 observability agent](./practice-f-observability-agent.md)
 
-### Part 7 — 進階與生產
-- [Ch 25 Ring buffer vs perf buffer](./25-ringbuf-vs-perfbuf.md)
-- [Ch 26 Tail call、program chain、map-in-map](./26-tailcall-and-composition.md)
-- [Ch 27 Debug 技巧：verifier log、bpftool、bpf_printk](./27-debugging-bpf.md)
-- [Ch 28 效能、安全、生產部署考量](./28-production-considerations.md)
-
-### Part 8 — 整合專案
-- [Final Project：Mini observability + security agent](./final-project-mini-agent.md)
+### Final Project
+- [Final Project：生產級 eBPF agent](./final-project-production-ebpf-agent.md)
 
 ## 學習方式建議
 
-1. **每章親手敲過**：BPF 是「不跑就不會懂」的領域。verifier 的脾氣只有被它拒絕過才會記得。
-2. **故意觸發 verifier**：寫 unbounded loop、寫越界存取、忘記 NULL check — 把它逼到拒絕你，看 verifier log 怎麼罵。這是 debug 必備技能。
-3. **對照 kernel source**：很多 helper function 沒有完整文件，看 `tools/lib/bpf/`、`include/uapi/linux/bpf.h` 才是答案。本教材會在關鍵處給你檔案路徑。
-4. **慎選 kernel 版本**：BPF 演進極快，5.4、5.8、5.13、6.x 各自開放了不同 feature。本教材以 **kernel ≥ 5.15**（CO-RE、ringbuf、BPF LSM 都成熟）為基準。
-5. **善用 bpftool**：這是你最重要的調試工具，地位等同 `strace` 之於 syscall。Ch 0 就會裝起來，之後天天用。
+1. **讀完一章就動手**：每章的「動手練習」不是選做，是強制——BPF 的坑必須親身踩過才能建立直覺
+2. **故意把它弄壞**：改壞一個 BPF program，讀 verifier 的拒絕訊息；這比讀說明書更有教育意義
+3. **追 kernel source**：`kernel/bpf/verifier.c`、`kernel/bpf/syscall.c`、`net/core/filter.c`——每章都會給對應的 kernel 檔案路徑
 
-## 參考資料
+## 精選資料庫
 
-- 《Learning eBPF》— Liz Rice, O'Reilly（最新、最對口的入門書）
-- 《BPF Performance Tools》— Brendan Gregg, Addison-Wesley（observability 聖經）
-- 《Linux Observability with BPF》— David Calavera & Lorenzo Fontana, O'Reilly
-- ebpf.io 官方入口：<https://ebpf.io>
-- libbpf-bootstrap（最佳 libbpf 範例集）：<https://github.com/libbpf/libbpf-bootstrap>
-- Cilium eBPF 文件：<https://docs.cilium.io/en/stable/bpf/>
-- bpftrace 一行教學集：<https://github.com/bpftrace/bpftrace/blob/master/docs/tutorial_one_liners.md>
+### 必讀基礎
+
+- **《BPF Performance Tools》** — Brendan Gregg（Addison-Wesley, 2019）
+  - eBPF tracing 最完整的書；Ch 1–3 是架構通論，Ch 4 起是工具實戰；2019 年出版，以 BCC 為主，BPF skeleton 語法和現代 libbpf 有差距，注意版本差異
+
+- **[Linux kernel BPF documentation](https://www.kernel.org/doc/html/latest/bpf/)**
+  - 最終權威來源；`btf.rst`、`verifier.rst`、`maps.rst` 必讀；碰到 verifier reject 先來這裡查
+
+- **[eBPF.io — What is eBPF?](https://ebpf.io/what-is-ebpf/)**
+  - 官方生態系最好的非技術性入門；讀一遍建立概念全圖，約 15 分鐘
+
+### 推薦論文
+
+- **[The BSD Packet Filter: A New Architecture for User-level Packet Capture](https://www.tcpdump.org/papers/bpf-usenix93.pdf)** — McCanne & Jacobson, USENIX Winter 1993
+  - eBPF 的歷史起點；理解 Classic BPF 的設計動機，以及為什麼需要「extended」版本；讀 Section 2–4 即可
+
+- **[Fast Packet Processing with eBPF and XDP](https://dl.acm.org/doi/10.1145/3281411.3281443)** — Høiland-Jørgensen et al., ACM CoNEXT 2018
+  - XDP 的第一篇系統性評測；Section 3 解釋架構，Section 4–5 是和 DPDK 的效能對比
+
+### 推薦部落格 / 文章
+
+- **[Brendan Gregg's eBPF posts](https://brendangregg.com/ebpf.html)** — Brendan Gregg
+  - 全球最重要的 Linux performance 工程師的 eBPF 文章入口；`ebpf-future-of-observability.html` 首選
+
+- **[BPF and XDP Reference Guide](https://docs.cilium.io/en/stable/reference-guides/bpf/)** — Cilium docs
+  - 目前網路上最完整的 BPF 技術參考；比 kernel docs 更有系統，比書更新
+
+### 讀完本課之後
+
+- **《Systems Performance, 2nd ed.》** — Brendan Gregg（將本課 tracing 知識推到生產性能調優的完整框架）
+- **[Linux kernel source: kernel/bpf/](https://elixir.bootlin.com/linux/latest/source/kernel/bpf)**（直接讀 BPF subsystem；`verifier.c` 和 `syscall.c` 先讀）

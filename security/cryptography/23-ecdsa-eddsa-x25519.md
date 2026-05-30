@@ -1,257 +1,517 @@
-# Ch 23 — ECDSA / EdDSA / X25519：簽章與 ECDH 實務
+# Ch 23 — ECDSA / EdDSA / X25519
 
-> 目標：把 EC 群拿來做事 — ECDSA 簽章、EdDSA（Ed25519）為什麼比 ECDSA 更穩（deterministic nonce）、X25519 的 ECDH key agreement、ECDSA 的 nonce reuse 災難（Sony PS3、Bitcoin 早期錢包）。
+> 目標：能區分 ECDSA / EdDSA / X25519 的用途和安全差異，解釋 nonce reuse 對 ECDSA 的災難（Sony PS3 案例）。
 
-## ECDH = X25519 / X448
+---
 
-X25519 已 Ch 22 介紹，重點：
+## 為什麼需要這章
 
-- **Curve25519 的 Montgomery ladder ECDH**
-- 私鑰 32 byte，公鑰 32 byte，shared 32 byte
-- Const-time 天生
-- IETF RFC 7748
+Ch 22 建立了橢圓曲線的數學基礎。現在看三個實際應用：
+
+| 名稱 | 用途 | 重點 |
+|---|---|---|
+| **ECDSA** | 數位簽章 | TLS / X.509 / Bitcoin 的主力簽章 |
+| **EdDSA (Ed25519)** | 數位簽章 | Deterministic nonce，解決 ECDSA 的致命缺陷 |
+| **X25519** | 金鑰交換（ECDH） | TLS 1.3 / Signal / WireGuard 的 ECDH |
+
+三者都建立在 ECDLP 的困難性上，但用途和設計哲學差異很大。
+
+---
+
+## 先建立直覺
+
+數位簽章的概念：
+
+```
+Alice 有 private key（只有她知道）和 public key（所有人都知道）
+
+簽章：Alice 用 private key 對 message 產生 signature
+驗證：任何人用 Alice 的 public key 驗證 signature
+
+性質：
+  1. 只有 Alice 能產生合法 signature（因為只有她有 private key）
+  2. 任何人都能驗證（用 public key）
+  3. 無法偽造（EUF-CMA security）
+```
+
+ECDH 的概念（復習 Ch 18，但用橢圓曲線取代 Z_p*）：
+
+```
+DH over Z_p*：                    ECDH over E(GF(p))：
+  g^a mod p                        aG（scalar multiplication）
+  g^b mod p                        bG
+  g^(ab) mod p                     abG = a(bG) = b(aG)
+```
+
+---
+
+## 核心概念一：ECDSA
+
+### 簽章流程
+
+```
+曲線參數：G（基點，order n）
+Alice 的私鑰：d（隨機數 ∈ [1, n-1]）
+Alice 的公鑰：Q = dG
+
+簽章 message M：
+  1. 計算 hash：e = SHA-256(M)
+  2. 選隨機 nonce k ∈ [1, n-1]        ← 這個 k 極其關鍵！
+  3. 計算 R = kG，取 r = R.x mod n
+  4. 計算 s = k⁻¹ × (e + r × d) mod n
+  5. 簽章 = (r, s)
+
+驗證：
+  1. 計算 e = SHA-256(M)
+  2. 計算 u₁ = e × s⁻¹ mod n
+  3. 計算 u₂ = r × s⁻¹ mod n
+  4. 計算 R' = u₁G + u₂Q
+  5. 檢查 R'.x mod n == r
+
+正確性：
+  R' = u₁G + u₂Q
+     = (e × s⁻¹)G + (r × s⁻¹)(dG)
+     = s⁻¹ × (e + rd)G
+     = s⁻¹ × (k × s)G      （因為 s = k⁻¹(e + rd)）
+     = kG = R  ✓
+```
+
+### SageMath 實作
+
+```python
+# SageMath — ECDSA on secp256k1
+p = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+E = EllipticCurve(GF(p), [0, 7])
+n = E.order()
+G = E.lift_x(0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798)
+d = 12345; Q = d * G
+
+# 簽章
+import hashlib
+e = int(hashlib.sha256(b"Hello ECDSA").hexdigest(), 16) % n
+k = 98765
+R = k * G; r = int(R[0]) % n
+s = (inverse_mod(k, n) * (e + r * d)) % n
+
+# 驗證
+s_inv = inverse_mod(s, n)
+R_check = (e * s_inv % n) * G + (r * s_inv % n) * Q
+print(f"Valid: {int(R_check[0]) % n == r}")
+```
+
+---
+
+## 底層機制：Nonce Reuse 的數學災難
+
+### 如果 k 被重複使用
+
+假設 Alice 用同一個 k 簽了兩則不同的 message：
+
+```
+簽章 1：(r, s₁) where s₁ = k⁻¹(e₁ + r·d) mod n
+簽章 2：(r, s₂) where s₂ = k⁻¹(e₂ + r·d) mod n
+
+注意：r 相同（因為 r = (kG).x，k 相同 → r 相同）
+
+s₁ - s₂ = k⁻¹(e₁ - e₂) mod n
+
+→ k = (e₁ - e₂) × (s₁ - s₂)⁻¹ mod n
+
+已知 k 後：
+  d = (s₁ × k - e₁) × r⁻¹ mod n
+
+→ 私鑰 d 完全暴露！
+```
+
+**一次 nonce reuse = 私鑰洩露**。沒有 if、沒有 but。
+
+### Sony PS3 案例（2010）
+
+```
+時間線：
+  2006: Sony 發售 PS3，遊戲和系統更新用 ECDSA 簽章
+  2010: 黑客組 fail0verflow 在 CCC 大會上公開 PS3 的私鑰
+  原因: Sony 的 ECDSA 實作中，nonce k 是一個固定值
+
+Sony 的「隨機數生成器」：
+  int get_random(void) {
+      return 4;  // chosen by fair dice roll.
+                  // guaranteed to be random.
+  }
+
+  （這不是笑話——Sony 的實際 code 用了一個常數 k）
+
+後果：
+  - PS3 的安全模型徹底崩潰
+  - 任何人都可以簽署 custom firmware
+  - Homebrew 和盜版遊戲在 PS3 上執行
+  - Sony 無法透過軟體更新修復（私鑰已洩露）
+```
+
+### Python PoC：Nonce Reuse Attack
+
+```python
+"""ECDSA nonce reuse → 私鑰恢復"""
+import hashlib
+
+def nonce_reuse_attack(n, r, s1, s2, e1, e2):
+    """已知 (r,s1) 和 (r,s2)（同 k），恢復 d"""
+    k = ((e1 - e2) * pow(s1 - s2, -1, n)) % n
+    d = ((s1 * k - e1) * pow(r, -1, n)) % n
+    return k, d
+
+# secp256k1 order
+n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+d_real = 0xDEADBEEF12345678CAFEBABE87654321
+e1 = int(hashlib.sha256(b"msg 1").hexdigest(), 16) % n
+e2 = int(hashlib.sha256(b"msg 2").hexdigest(), 16) % n
+k = 0x4242424242424242  # Sony 式固定 nonce
+r = 0xABCDEF0123456789  # 模擬 r = (kG).x
+k_inv = pow(k, -1, n)
+s1 = (k_inv * (e1 + r * d_real)) % n
+s2 = (k_inv * (e2 + r * d_real)) % n
+
+k_found, d_found = nonce_reuse_attack(n, r, s1, s2, e1, e2)
+print(f"k correct: {k_found == k}, d correct: {d_found == d_real}")
+# 一次 nonce reuse = 私鑰完全暴露
+```
+
+---
+
+## 核心概念二：EdDSA (Ed25519)
+
+### 設計哲學：消除 nonce reuse 風險
+
+EdDSA 的核心改進：**nonce 是 deterministic 的**，從 private key 和 message 的 hash 派生。
+
+```
+EdDSA 簽章流程：
+
+  私鑰：seed（32 bytes）
+  h = SHA-512(seed)
+  a = h[0:32]（clamped：設定/清除特定 bit）→ scalar
+  prefix = h[32:64] → 用來生成 nonce
+
+  公鑰：A = aB（B 是基點）
+
+  簽章 message M：
+    1. r = SHA-512(prefix || M)          ← deterministic！
+    2. R = rB
+    3. S = (r + SHA-512(R || A || M) × a) mod l
+    4. 簽章 = (R, S)
+
+  驗證：
+    SB == R + SHA-512(R || A || M) × A ?
+```
+
+### 為什麼 deterministic nonce 更安全
+
+```
+ECDSA 的 nonce：
+  必須是真隨機數
+  任何偏差（bias）都可能被利用
+  RNG 壞了 → 私鑰洩露
+  k 重複 → 私鑰洩露
+
+EdDSA 的 nonce：
+  r = SHA-512(prefix || M)
+  prefix 是 private key 的一部分（外人不知道）
+  M 是 message
+  → 只要 SHA-512 沒被破，r 看起來是隨機的
+  → 同一個 message 永遠產生同一個 r（deterministic）
+  → 不依賴 RNG → 沒有 RNG 失敗的風險
+```
+
+### ECDSA vs EdDSA 比較
+
+| 面向 | ECDSA | EdDSA (Ed25519) |
+|---|---|---|
+| Nonce 生成 | 必須是真隨機 | Deterministic（from key + msg） |
+| Nonce reuse | 致命（洩露私鑰） | 不可能（same msg → same nonce） |
+| 依賴 RNG | 是（簽章時） | 否（只有 keygen 需要 RNG） |
+| 曲線 | P-256, secp256k1 等 | Curve25519 (Ed25519) |
+| 驗證速度 | 中等 | 快（batch verification 更快） |
+| Malleability | 有（s 可以被翻轉） | 有限制（可以排除） |
+| 標準 | FIPS 186-4, ANSI X9.62 | RFC 8032 |
+| 採用 | TLS, X.509, Bitcoin | SSH, Signal, Tor, Minisign |
+
+### Ed25519 的具體性能
+
+```
+Ed25519（在現代 x86_64 上）：
+  Keygen:      ~52 μs
+  Sign:        ~56 μs
+  Verify:      ~170 μs
+  Batch verify (64 sigs): ~2.1 ms（~33 μs/sig）
+
+對比 ECDSA P-256（OpenSSL）：
+  Sign:        ~40 μs
+  Verify:      ~130 μs
+```
+
+### RFC 6979：ECDSA 的 Deterministic Nonce 補丁
+
+ECDSA 後來也有了 deterministic nonce 的方案（RFC 6979）：
+
+```
+k = HMAC-DRBG(private_key, message_hash)
+
+跟 EdDSA 的思路一樣：用私鑰和 message 派生 nonce。
+但 EdDSA 從一開始就是這樣設計，而 ECDSA 是事後補丁。
+```
+
+---
+
+## 核心概念三：X25519（ECDH）
+
+### 協議流程
+
+```
+X25519 = ECDH 使用 Curve25519
+
+Alice                              Bob
+─────                              ────
+1. a = random 32 bytes            1. b = random 32 bytes
+   a = clamp(a)                      b = clamp(b)
+2. A = X25519(a, G)               2. B = X25519(b, G)
+   （只保留 x 座標）                  （只保留 x 座標）
+3. 發送 A ──────────────────────> 收到 A
+4. 收到 B <────────────────────── 發送 B
+5. shared = X25519(a, B)          5. shared = X25519(b, A)
+
+shared = a(bG) = b(aG) = abG  ✓
+```
+
+### X25519 的特殊設計
+
+```
+1. 只用 x 座標（Montgomery 曲線的優勢）
+   → 公鑰只有 32 bytes（不是 64）
+   → 加法和 doubling 只需要 x 座標
+
+2. Key clamping
+   key[0] &= 248     # 最低 3 bit 清零 → cofactor clearing
+   key[31] &= 127    # 最高 bit 清零
+   key[31] |= 64     # 第二高 bit 設為 1 → 確保 key 長度固定
+
+3. 所有 32-byte string 都是合法的公鑰
+   → 不需要驗證對方的公鑰（all-zero 除外）
+   → 簡化實作，減少出錯空間
+```
+
+### Python 使用 X25519
 
 ```python
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
-
-priv = X25519PrivateKey.generate()
-pub = priv.public_key()
-shared = priv.exchange(other_pub)
-```
-
-X448（Curve448）類似但更高安全（224-bit security）— 沒人用，Curve25519 夠。
-
-## ECDSA：Elliptic Curve DSA
-
-NIST FIPS 186-4 標準。**最廣用 EC 簽章** — Bitcoin、TLS 大部分證書、code signing 等。
-
-### 演算法
-
-```
-KeyGen:
-  d ∈ [1, n-1] 隨機（n = curve order）
-  Q = d × G   ← public key
-
-Sign(m, d):
-  k ∈ [1, n-1] 隨機 (nonce)
-  R = k × G = (x_R, y_R)
-  r = x_R mod n
-  s = k⁻¹ × (H(m) + r × d) mod n
-  return (r, s)
-
-Verify(m, (r, s), Q):
-  u_1 = H(m) × s⁻¹ mod n
-  u_2 = r × s⁻¹ mod n
-  P = u_1 × G + u_2 × Q
-  return P.x mod n == r
-```
-
-### Nonce reuse 災難
-
-```
-若兩個簽章 (r, s_1) 與 (r, s_2) 用同 k：
-  s_1 = k⁻¹ (H(m_1) + r × d)
-  s_2 = k⁻¹ (H(m_2) + r × d)
-  s_1 - s_2 = k⁻¹ (H(m_1) - H(m_2))
-  k = (H(m_1) - H(m_2)) / (s_1 - s_2)
-  d = (s_1 × k - H(m_1)) / r
-  
-attacker 直接拿到私鑰 d
-```
-
-### 真實案例
-
-**Sony PS3 (2010)**：fail0verflow 在 27c3 demo PS3 firmware 簽章用同 nonce。攻擊者算出 Sony 的私鑰 → 任意簽 firmware → 越獄成功。Sony 後來起訴 GeoHot、Hotz，最終庭外和解。**這是 ECDSA 史上最有名的實作災難**。
-
-**Bitcoin 早期錢包 (2013)**：Android 某個 RNG bug 讓多個簽章重複 k → 私鑰外洩 → 比特幣被盜。直接觸發 deterministic nonce 標準化討論。
-
-### Partial nonce leak
-
-更狠：**只洩漏 k 的幾個 bit** 也能用 lattice attack 還原 d（Howgrave-Graham-Smart 1999）。**timing side-channel 洩漏 k 的 LSB 就足以**。
-
-實務 mitigation：const-time scalar mult（Montgomery ladder）+ **deterministic nonce**。
-
-## RFC 6979：Deterministic ECDSA
-
-```
-k = HMAC-DRBG(d, H(m))
-```
-
-**從 d 與 m 確定地產生 k**，而非隨機。優點：
-
-- **不需 RNG**（嵌入式設備更安全）
-- **同 (m, d) 永遠同 sig**（可重現）
-- **沒 nonce reuse 災難**（k 由 m 決定，不同 m → 不同 k）
-
-但仍受 side-channel timing attack（k 是 secret）— 必配 const-time 實作。
-
-GnuPG、Ledger 硬體錢包、libsecp256k1 等都用 RFC 6979。
-
-## EdDSA / Ed25519：Bernstein 的更好簽章
-
-Bernstein 2011 提（curve25519 的 sister）。**設計目標：避開所有 ECDSA 已知坑**：
-
-```
-Ed25519 sign(m, sk):
-  h = SHA-512(sk)
-  s = h[:32]   (private scalar)
-  prefix = h[32:64]
-  
-  r = SHA-512(prefix || m)
-  R = r × G
-  
-  hashed = SHA-512(R || A || m)   where A = s × G (public key)
-  S = (r + hashed × s) mod ℓ      where ℓ = group order
-  
-  return (R, S)
-
-Verify (m, (R, S), A):
-  hashed = SHA-512(R || A || m)
-  return S × G == R + hashed × A
-```
-
-特點：
-
-- **deterministic 內建**（從 hash 算 r，不需 RNG）
-- **不需 modular inversion**（ECDSA 的 s = k⁻¹×... 是 timing 痛點）
-- **不需檢查 r ≠ 0**
-- **小 key + 小 sig**：32 byte sk、32 byte pk、64 byte sig
-- **const-time 容易實作**（Curve25519 Montgomery ladder）
-
-**Ed25519 比 ECDSA 在 Curve25519 上**：
-
-- 沒 nonce 洩漏風險
-- 沒 modular inversion side-channel
-- 工程上更難寫錯
-
-**新系統優先 Ed25519**。SSH、libsodium、Signal、WireGuard、Tor、modern OpenPGP 全用。
-
-```python
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-priv = Ed25519PrivateKey.generate()
-pub = priv.public_key()
-
-sig = priv.sign(b"hello world")
-pub.verify(sig, b"hello world")
-```
-
-## Ed448：更高安全
-
-curve448 上的 EdDSA。224-bit security（vs Ed25519 的 128-bit）。
-
-慢一點、key 大一點。**只在合規需求或極長期 key 場景用**。多數場景 Ed25519 夠。
-
-## ECDSA vs EdDSA 對照
-
-| | ECDSA (P-256) | Ed25519 |
-|---|---|---|
-| Nonce | 隨機 (or RFC 6979) | deterministic 內建 |
-| 私鑰 | 32 byte | 32 byte |
-| 公鑰 | 33 byte (compressed) | 32 byte |
-| 簽章 | 64-72 byte | 64 byte |
-| Modular inversion | 需要（s = k⁻¹×...） | 不需要 |
-| Curve | NIST P-256 | Curve25519 (Edwards form) |
-| 廣泛採用 | Bitcoin、TLS、Web | SSH、Signal、modern web |
-| 推薦 | 合規場景 | **新系統首選** |
-
-## Schnorr：另一種簽章（不在 NIST 標準但好）
-
-Bitcoin Taproot (2021) 引入 **Schnorr 簽章**：
-
-```
-Schnorr sign(m, d):
-  k 隨機
-  R = k × G
-  e = H(R || P || m)
-  s = k - e × d mod n
-  return (R, s)
-
-Verify(m, (R, s), P):
-  e = H(R || P || m)
-  return R == s × G + e × P
-```
-
-**簽章可線性組合**（multi-sig 自然）→ MuSig 等 protocol。Bitcoin 用 Schnorr 取代 ECDSA 為了：
-
-- 更小 multi-sig（n-of-n 可壓成單個簽章）
-- 更好 cryptanalysis（簡單，安全證明乾淨）
-
-但 NIST 沒納 Schnorr（歷史原因 + 專利顧慮，雖已過期）。
-
-## ECDH 應用：加密與密鑰封裝
-
-ECDH 一般不直接當「加密」，而是**生成一次性 key**：
-
-```python
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 
-# Alice 想加密訊息給 Bob，知道 Bob 的 X25519 公鑰
-ephemeral = X25519PrivateKey.generate()
-shared = ephemeral.exchange(bob_pub)
+# Key exchange
+alice_priv = X25519PrivateKey.generate()
+bob_priv = X25519PrivateKey.generate()
+alice_shared = alice_priv.exchange(bob_priv.public_key())
+bob_shared = bob_priv.exchange(alice_priv.public_key())
+assert alice_shared == bob_shared  # 32 bytes
 
-# Derive AES key
-aes_key = HKDF(
-    algorithm=hashes.SHA256(),
-    length=32, salt=None,
-    info=b"context"
-).derive(shared)
-
-# AES-GCM encrypt message
-nonce = os.urandom(12)
-ciphertext = aes_gcm_encrypt(aes_key, nonce, plaintext)
-
-# 送出 (ephemeral.public_key, nonce, ciphertext) 給 Bob
+# 永遠用 KDF 派生 key（shared secret 不是 uniform random）
+aes_key = HKDF(algorithm=hashes.SHA256(), length=32,
+               salt=None, info=b"handshake").derive(alice_shared)
 ```
 
-Bob 解：用自己的 X25519 私鑰 + ephemeral_pub 算 shared → 同 KDF → 同 AES key → 解密。
+---
 
-**這就是 ECIES (Elliptic Curve Integrated Encryption Scheme)** 的骨架。`libsodium` 提供 `crypto_box`（X25519 + XSalsa20-Poly1305）一條 API。
+## 對比與取捨
 
-## Curve 簽章 / 加密 cheat sheet
+### 三者的用途分工
 
 ```
-新系統推薦：
-  簽章：Ed25519
-  ECDH：X25519
-  Hybrid encryption：libsodium crypto_box (X25519 + XSalsa20-Poly1305)
-  
-合規 / NIST 場景：
-  簽章：ECDSA P-256（用 RFC 6979 deterministic）
-  ECDH：ECDH P-256
-  
-Bitcoin / 區塊鏈：
-  ECDSA secp256k1 / Schnorr
-  
-極長期 (50+ 年) key：
-  Ed448
-  或 SLH-DSA（post-quantum hash-based）
+                  簽章           金鑰交換
+                  ────           ────────
+  ECDSA           ✓               ✗
+  EdDSA           ✓               ✗
+  X25519          ✗               ✓
+
+在 TLS 1.3 中的角色：
+  handshake key exchange → X25519（或 P-256 ECDH）
+  server 身份認證        → Ed25519 簽章（或 ECDSA P-256）
+  certificate chain      → ECDSA P-256（目前主流，Ed25519 逐漸增加）
 ```
 
-## 一個常見誤解
+### 選擇指南
 
-「Ed25519 比 ECDSA 安全度高」
+| 你需要什麼 | 用什麼 | 理由 |
+|---|---|---|
+| ECDH key exchange | X25519 | 最快、最安全、最廣泛支持 |
+| 數位簽章（新系統） | Ed25519 | Deterministic nonce、不依賴 RNG |
+| 數位簽章（相容性） | ECDSA P-256 | X.509 / CA 生態系統的主力 |
+| 更高安全等級 | X448 / Ed448 | ~224-bit 安全 |
+| Bitcoin | ECDSA secp256k1 | 歷史原因（Schnorr via Taproot 逐步替代） |
 
-**不是**。兩者都 ~128-bit security。**Ed25519 比 ECDSA 工程上更難寫錯**，但**正確實作的 ECDSA 安全度等同 Ed25519**。
+### 各方案在 TLS 1.3 中的支援
 
-Ed25519 的 advantage 是：
+| 方案 | TLS 1.3 KeyShare | TLS 1.3 SignatureScheme |
+|---|---|---|
+| X25519 | ✓ (0x001D) | — |
+| P-256 ECDH | ✓ (0x0017) | — |
+| ECDSA P-256 SHA-256 | — | ✓ (0x0403) |
+| Ed25519 | — | ✓ (0x0807) |
 
-- 不需 RNG（deterministic）
-- 不需 modular inversion（少一個 timing 點）
-- 簡單規範（少出錯機會）
+---
 
-**「在現實工程下更難打爛自己腳」** ≠ 「algorithm 更強」。但工程上「更難打爛」就是足夠的選擇理由。
+## 踩雷集錦
+
+### 雷 1：ECDSA 的 malleability
+
+```
+ECDSA 簽章 (r, s) 中，(r, n-s) 也是合法簽章。
+→ 第三方可以「修改」簽章但仍通過驗證
+→ Bitcoin 的 transaction malleability 問題的根源之一
+
+防禦：要求 s ≤ n/2（low-s normalization）
+Bitcoin 從 BIP 62 / BIP 66 開始強制執行
+```
+
+### 雷 2：用 ECDSA 時不用 RFC 6979
+
+```python
+# 錯誤：自己生隨機 k
+k = random.randint(1, n-1)  # random 模組不是 CSPRNG！
+
+# 正確：用 RFC 6979
+# 或者直接用 Ed25519（從根本上解決問題）
+```
+
+即使用了 CSPRNG，只要 RNG 有微小偏差（bias），也可能被利用。Minerva 攻擊（2019）展示了 timing side-channel 導致 nonce 有偏差，可以用 lattice attack 恢復私鑰。
+
+### 雷 3：Ed25519 的 clamping 不能省略
+
+```python
+# 錯誤：直接用原始 seed 當 scalar
+a = int.from_bytes(seed, 'big')
+
+# 正確：clamping
+h = sha512(seed)
+a = h[:32]
+a[0] &= 248
+a[31] &= 127
+a[31] |= 64
+```
+
+Clamping 保證：(1) scalar 是 8 的倍數（cofactor clearing），(2) scalar 的 bit 長度固定（constant-time）。
+
+### 雷 4：X25519 的 shared secret 直接當 key
+
+```python
+# 錯誤
+aes_key = x25519_shared_secret[:16]
+
+# 正確
+aes_key = HKDF(SHA256, length=16, salt=..., info=...).derive(x25519_shared_secret)
+```
+
+X25519 的 shared secret 不是 uniform random——它是一個 x 座標。必須用 KDF 派生。
+
+### 雷 5：以為 Ed25519 和 X25519 的 key pair 可以互換
+
+Ed25519 和 X25519 用的是同一條曲線（birational equivalent），但 key format 不同。不能直接把 Ed25519 的 private key 拿來做 X25519。需要做座標轉換：
+
+```python
+# 有些 library 提供轉換
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+# 但 Python cryptography 不直接支援跨格式使用
+# Signal Protocol 和 libsodium 有 crypto_sign_ed25519_pk_to_curve25519()
+```
+
+---
+
+## 進階
+
+### Schnorr Signature
+
+Ed25519 本質上是 Schnorr 的變種。Schnorr 的優勢：可證明安全（ROM 下等同 ECDLP）、線性（可做 multi-sig / threshold sig）、batch verification、數學比 ECDSA 乾淨。Bitcoin 在 2021 Taproot 升級（BIP 340）加入 Schnorr，逐步取代 ECDSA。
+
+### Batch Verification
+
+Ed25519 支援 batch verification：n=64 時約 2-3x 加速。Signal 和 Tor 用此加速大量簽章驗證。
+
+### Minerva Attack（2019）
+
+ECDSA 的 nonce 若有微小 timing bias → 收集數千簽章 → lattice attack（Hidden Number Problem）恢復私鑰。受影響：OpenSSL 某些版本、Java Card、某些 HSM。EdDSA 的 deterministic nonce 完全免疫。
+
+---
+
+## 動手練習
+
+1. **ECDSA nonce reuse**：用 SageMath 在 secp256k1 上簽兩則 message（用同一個 k），然後從兩個簽章恢復私鑰。
+
+2. **Ed25519 簽章與驗證**：用 Python `cryptography` 套件做 Ed25519 的完整流程。
+   ```python
+   from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+   key = Ed25519PrivateKey.generate()
+   sig = key.sign(b"Hello Ed25519")
+   key.public_key().verify(sig, b"Hello Ed25519")
+   ```
+
+3. **X25519 key exchange**：實作完整的 ECDH key exchange + HKDF 派生 AES key + AES-GCM 加密 message。
+
+4. **比較簽章大小**：用 `cryptography` 套件分別做 RSA-2048、ECDSA P-256、Ed25519 簽章，比較簽章長度和速度。
+
+5. **Malleability 驗證**：在 ECDSA 簽章 (r, s) 中，驗證 (r, n-s) 也能通過驗證。
+
+---
+
+## 重點整理
+
+```
+ECDSA：
+  簽章 = (r, s)，r 從 nonce kG 的 x 座標來
+  致命弱點：nonce reuse → 私鑰洩露（Sony PS3 案例）
+  修補：RFC 6979（deterministic nonce）
+  仍在大量使用：TLS、X.509、Bitcoin
+
+EdDSA (Ed25519)：
+  Deterministic nonce = SHA-512(prefix || message)
+  從設計上消除 nonce reuse 風險
+  不依賴 RNG（簽章時）
+  Ed25519 = Schnorr variant on Curve25519
+
+X25519：
+  ECDH key exchange on Curve25519
+  Montgomery ladder → constant-time
+  只用 x 座標 → 公鑰 32 bytes
+  TLS 1.3 的首選 key exchange
+
+選擇優先順序（新系統）：
+  簽章 → Ed25519
+  金鑰交換 → X25519
+  相容性需求 → ECDSA P-256 / ECDH P-256
+```
+
+---
 
 ## 自我檢核
 
-- [ ] 我能寫 ECDSA sign / verify
-- [ ] 我能解釋 nonce reuse 怎麼洩漏私鑰（並算出 d）
-- [ ] 我能說出 RFC 6979 deterministic nonce 怎麼避免上述問題
-- [ ] 我能寫 Ed25519 sign / verify 步驟
-- [ ] 我能比較 ECDSA P-256 與 Ed25519 的工程差異
-- [ ] 我能用 X25519 + HKDF + AES-GCM 寫 ECIES 骨架
+- [ ] 我能寫出 ECDSA 簽章和驗證的數學流程
+- [ ] 我能從兩個 nonce reuse 的 ECDSA 簽章推導出私鑰
+- [ ] 我能解釋 EdDSA 如何消除 nonce reuse 風險
+- [ ] 我能區分 ECDSA / EdDSA / X25519 的用途
+- [ ] 我知道 Sony PS3 事件的技術細節
+- [ ] 我能解釋 X25519 的 key clamping 為什麼重要
+- [ ] 我知道 ECDSA 的 signature malleability 問題
 
-下一章看數位簽章與 PKI — 從演算法跳到「**整套信任體系**」。
+---
 
-→ [Ch 24 數位簽章與 PKI](./24-digital-signatures-pki.md)
+## 延伸閱讀
+
+- **RFC 8032**：EdDSA（Ed25519 / Ed448）的完整規範
+- **RFC 7748**：X25519 / X448 的完整規範
+- **RFC 6979**：ECDSA 的 deterministic nonce
+- **BIP 340**：Bitcoin 的 Schnorr signature 規範
+- **"Console Hacking 2010: PS3 Epic Fail"**（fail0verflow, CCC 2010）：Sony PS3 案例的完整演示
+- **CryptoHack ECDSA challenges**：https://cryptohack.org/challenges/ecdsa/
+
+---
+
+## 下一章連結
+
+[Ch 24 — 數位簽章與 PKI](./24-digital-signatures-pki.md)：你已經知道 ECDSA 和 EdDSA 怎麼運作了。但「數位簽章」只是拼圖的一半——另一半是「我怎麼知道這把公鑰是誰的？」。PKI、X.509 certificate、CA chain 就是解這個問題的。

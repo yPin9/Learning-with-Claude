@@ -1,338 +1,419 @@
-# Ch 8 — BPF maps：kernel 與 user space 共享狀態
+# Ch 8 — BPF Maps：所有資料結構
 
-> 目標：搞懂 maps 在 BPF 體系裡的角色、十幾種 map type 各自的取捨、percpu 的概念、kernel 端與 user 端的操作差異、以及 pinning 與生命週期。
+> **目標**：理解 BPF maps 的所有主要型別——每種型別的內部資料結構、適合的使用場景、效能特性、以及如何在 BPF 程式和 userspace 之間安全地共享資料。
 
-## 為什麼必須有 maps？
+## 為什麼需要這個？
 
-BPF program 的記憶體只有 **512 byte stack** 跟 **register**。沒有 heap，沒有 global 變數（其實有，但底層也是 map），更沒有跨呼叫的記憶體。
+BPF 程式本身是無狀態的——每次觸發執行，完成後狀態消失。Maps 是 BPF 程式和外部世界（其他 BPF 程式、userspace）共享持久狀態的唯一方式。
 
-但你寫 observability 工具八成要做這幾件事：
+不同的 map type 有根本性的效能和語意差異：選錯了 map type，你可能在 lock contention 上浪費大量 CPU（用 `HASH` 而不是 `PERCPU_HASH`），或在 consumer 跟不上時 drop events（用 `PERF_EVENT_ARRAY` 而不是 `RINGBUF`）。
 
-- 「累計每個 PID 的 read 字數」 — 需要 PID → counter 的對照
-- 「記住每個 connection 的開始時間」 — 需要 socket → timestamp
-- 「lookup IP 是否在 blocklist」 — 需要 IP set
-- 「把 event 串流送回 user space」 — 需要 producer/consumer queue
+> 如果你對 helper function 如何操作 map 還不熟，這章先看 map 型別；helper API 在 [Ch 11](./11-helper-functions.md) 詳細說明。
 
-**沒有 maps，這些事都做不了**。
+## 先建立直覺：Map = 共享記憶體 + 型別化的存取介面
 
-Maps 解決三個問題：
+```
+BPF program（kernel context）
+       │
+       │  bpf_map_lookup_elem()
+       │  bpf_map_update_elem()
+       │  bpf_map_delete_elem()
+       ▼
+  ┌──────────────────────────────┐
+  │          BPF Map             │
+  │  kernel allocated memory     │
+  │  + type-specific operations  │
+  └──────────────────────────────┘
+       ▲
+       │  bpf(BPF_MAP_LOOKUP_ELEM, ...)
+       │  bpf(BPF_MAP_UPDATE_ELEM, ...)
+       │  bpf(BPF_MAP_GET_NEXT_KEY, ...)
+       │
+userspace（透過 map fd）
+```
 
-1. **跨 BPF program 呼叫保留狀態**（同一個 BPF program 多次觸發之間共享）
-2. **跨不同 BPF program 共享狀態**（一個 program 寫、另一個讀）
-3. **kernel ↔ user space 雙向通訊**（user 空間用 syscall 操作同一份 map）
+Map 是 reference counted 的 kernel object，透過 fd 引用。BPF filesystem 的 pin 讓 map 在 userspace 程式退出後繼續存在。
 
-## Map 的本質
+## 定義 Map（BPF 程式側）
 
-Map 就是一個**有 type 的 key-value store**。建立時要決定五件事：
+現代 libbpf 用 BTF-typed map definition（用特殊 struct 定義）：
 
 ```c
+#include <linux/bpf.h>
+#include <bpf/bpf_helpers.h>
+
+/* BTF-typed map definition（現代方式，推薦）*/
 struct {
-    __uint(type,        BPF_MAP_TYPE_HASH);   // 哪種 map
-    __type(key,         u32);                 // key 型別
-    __type(value,       u64);                 // value 型別
-    __uint(max_entries, 10240);               // 容量上限
-    __uint(map_flags,   0);                   // 額外 flag
-} my_map SEC(".maps");
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, u32);        /* key 是 u32（PID）*/
+    __type(value, u64);      /* value 是 u64（count）*/
+} pid_count SEC(".maps");
 ```
 
-`SEC(".maps")` 告訴 libbpf「這是個 map 宣告」，會在 BPF object 載入時把 map 建好、給你個 fd。
-
-操作：
+舊式的 map definition（仍然有效，但不推薦）：
 
 ```c
-// kernel 端
-u64 *val = bpf_map_lookup_elem(&my_map, &key);
-bpf_map_update_elem(&my_map, &key, &value, BPF_ANY);
-bpf_map_delete_elem(&my_map, &key);
-
-// user 端（透過 libbpf）
-bpf_map__lookup_elem(map, &key, sizeof(key), &val, sizeof(val), 0);
-bpf_map__update_elem(map, &key, sizeof(key), &val, sizeof(val), BPF_ANY);
+/* 舊式：沒有 BTF type info */
+struct bpf_map_def SEC("maps") pid_count_old = {
+    .type        = BPF_MAP_TYPE_HASH,
+    .key_size    = sizeof(u32),
+    .value_size  = sizeof(u64),
+    .max_entries = 10240,
+};
 ```
 
-兩邊看到的是**同一份 kernel-managed memory**，沒有複製。
+## HASH（`BPF_MAP_TYPE_HASH`）
 
-## Map type 全景
+**內部結構**：Hash table with chaining。key 的 hash 決定 bucket；同 bucket 的 entry 用 linked list 串接。
 
-按用途分四類，最常用的列出來：
+**存取**：`bpf_map_lookup_elem`、`bpf_map_update_elem`、`bpf_map_delete_elem`，平均 O(1)。
 
-### 1. 一般 key-value 儲存
-
-| Type | 特性 | 典型用途 |
-|---|---|---|
-| `BPF_MAP_TYPE_HASH` | 任意 key 大小、hash 查表 | PID → counter、IP → metadata |
-| `BPF_MAP_TYPE_ARRAY` | key 必為 u32 index，固定大小 | 全域常數、preallocated buckets |
-| `BPF_MAP_TYPE_PERCPU_HASH` | 每個 CPU 一份，無 lock | **高頻計數器（首選）** |
-| `BPF_MAP_TYPE_PERCPU_ARRAY` | 同上，array 版 | per-CPU 統計 |
-| `BPF_MAP_TYPE_LRU_HASH` | hash + LRU 淘汰 | 滿了會自動踢舊的 |
-| `BPF_MAP_TYPE_LRU_PERCPU_HASH` | 結合 LRU + percpu | 高頻 + 容量受限 |
-
-### 2. 特殊查找結構
-
-| Type | 特性 | 典型用途 |
-|---|---|---|
-| `BPF_MAP_TYPE_LPM_TRIE` | longest prefix match | IP 路由、CIDR 比對 |
-| `BPF_MAP_TYPE_QUEUE` | FIFO | task queue |
-| `BPF_MAP_TYPE_STACK` | LIFO | 較少用 |
-| `BPF_MAP_TYPE_BLOOM_FILTER` | 機率成員測試（5.16+） | 大型 set 快速排除 |
-
-### 3. user/kernel 通訊
-
-| Type | 特性 | 典型用途 |
-|---|---|---|
-| `BPF_MAP_TYPE_RINGBUF` | 多生產者、單消費者 ring buffer | event 串流（**現代首選**） |
-| `BPF_MAP_TYPE_PERF_EVENT_ARRAY` | per-CPU perf buffer | event 串流（舊） |
-
-### 4. 程式組合（Ch 26 詳述）
-
-| Type | 特性 | 典型用途 |
-|---|---|---|
-| `BPF_MAP_TYPE_PROG_ARRAY` | value 是 BPF program fd | tail call |
-| `BPF_MAP_TYPE_ARRAY_OF_MAPS` | value 是 map fd | 動態 dispatch |
-| `BPF_MAP_TYPE_HASH_OF_MAPS` | value 是 map fd | 同上 |
-
-### 5. 網路特化（Part 5 細講）
-
-| Type | 用途 |
-|---|---|
-| `BPF_MAP_TYPE_SOCKMAP` | socket 重新導向 |
-| `BPF_MAP_TYPE_SOCKHASH` | 同上 hash 版 |
-| `BPF_MAP_TYPE_DEVMAP` | XDP 跨 device redirect |
-| `BPF_MAP_TYPE_CPUMAP` | XDP 跨 CPU redirect |
-
-完整列表：`enum bpf_map_type` in `include/uapi/linux/bpf.h`，目前 30+ 種。
-
-## 三大主力：HASH / ARRAY / PERCPU
-
-90% 場景靠這三家。逐個看。
-
-### HASH
+**鎖**：全域 spinlock（kernel 5.1 之前是 per-bucket spinlock）。多個 CPU 並發 update 時有 lock contention。
 
 ```c
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
     __type(key, u32);
     __type(value, u64);
-    __uint(max_entries, 10240);
-} pid_counts SEC(".maps");
+} syscall_count SEC(".maps");
 
-// kernel 端
-u32 pid = bpf_get_current_pid_tgid() >> 32;
-u64 *count = bpf_map_lookup_elem(&pid_counts, &pid);
-if (count) {
-    __sync_fetch_and_add(count, 1);   // 原子加，多核安全
-} else {
-    u64 init = 1;
-    bpf_map_update_elem(&pid_counts, &pid, &init, BPF_NOEXIST);
+SEC("tracepoint/raw_syscalls/sys_enter")
+int count_syscalls(struct trace_event_raw_sys_enter *ctx)
+{
+    u32 syscall_nr = ctx->id;
+    u64 *cnt = bpf_map_lookup_elem(&syscall_count, &syscall_nr);
+    if (cnt) {
+        (*cnt)++;  /* 注意：這裡有 TOCTOU，生產環境用 atomic */
+    } else {
+        u64 init = 1;
+        bpf_map_update_elem(&syscall_count, &syscall_nr, &init, BPF_NOEXIST);
+    }
+    return 0;
 }
 ```
 
-**注意 race condition**：lookup 跟 update 不是原子的。兩個 CPU 同時 lookup 都拿不到、都 update — 後 update 的會贏（BPF_ANY 模式）。
+**適合場景**：key 集合不固定（動態新增 / 刪除 key）；key 分布稀疏。
 
-要解決 race，要嘛用 `BPF_NOEXIST`（已存在就失敗），要嘛用 percpu map（下面會講）。
+**不適合場景**：高頻 update 且 key 集合已知 → 改用 ARRAY；需要高並發 update → 改用 PERCPU_HASH。
 
-### ARRAY
+## ARRAY（`BPF_MAP_TYPE_ARRAY`）
+
+**內部結構**：固定大小的陣列，key 是 index（0 ~ max_entries-1）。
+
+**存取**：O(1)，比 HASH 快得多（只是 pointer offset）。
+
+**特性**：
+- 不能刪除 entry（只能把 value 清零）
+- 整個 array 在分配時就預先分配好，map 大小固定
+- key 必須是 32-bit unsigned integer
 
 ```c
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 256);  /* 支援 256 個 syscall nr */
     __type(key, u32);
-    __type(value, struct config);
-    __uint(max_entries, 1);   // 常見 idiom：用 1-element array 當 global 變數
-} cfg SEC(".maps");
+    __type(value, u64);
+} syscall_stats SEC(".maps");
+
+SEC("tracepoint/raw_syscalls/sys_enter")
+int fast_count(struct trace_event_raw_sys_enter *ctx)
+{
+    u32 key = ctx->id & 0xFF;  /* 只取低 8 bits，確保 in-bounds */
+    u64 *val = bpf_map_lookup_elem(&syscall_stats, &key);
+    if (val)
+        __sync_fetch_and_add(val, 1);  /* 原子加（lock xadd）*/
+    return 0;
+}
 ```
 
-Array 最大特色：**所有 entry 在 map 建立時就分配記憶體**，lookup 永遠 success。沒有「key 不存在」的概念 — 用 BPF_MAP_TYPE_ARRAY 拿到的指標一定不是 NULL，但 verifier 仍要求你檢查（為了通用性）。
+**適合場景**：key 是固定範圍的整數（syscall nr、port number、CPU id）；需要最高存取速度。
 
-常見用法：把一個 struct 當「全域 config」放 1-entry array 裡。
+## PERCPU_HASH 和 PERCPU_ARRAY
 
-### PERCPU 系列
-
-**這是 BPF 高效計數器的關鍵設計**。Percpu map 為**每個 CPU 各分配一份 value**：
-
-```
-PERCPU_HASH 內部結構（key=K 為例）：
-                ┌──────────┐
-key K  ──→  CPU 0: value_0  │
-            ├──────────┤
-            CPU 1: value_1   │
-            ├──────────┤
-            CPU 2: value_2   │
-            ├──────────┤
-            CPU 3: value_3   │
-            └──────────┘
-```
-
-意思是：
-
-- BPF kernel 端 lookup K，**只看到自己這顆 CPU 的那份**
-- 累加完全無 lock、無 atomic — 因為單一 CPU 自己跟自己沒競爭
-- user space 讀的時候會拿到 array of values（每顆 CPU 一個），自己加總
-
-**對「高頻寫入、最終彙總」的場景，percpu 比 hash 快非常多**。execsnoop 之類的計數器都用 percpu。
-
-```c
-// kernel 端
-u64 *cnt = bpf_map_lookup_elem(&pcpu_counts, &key);
-if (cnt) (*cnt)++;   // 不用 atomic，單 CPU 安全
-
-// user 端拿到的是 array
-u64 vals[nr_cpus];
-bpf_map__lookup_elem(map, &key, sizeof(key), vals, sizeof(vals), 0);
-u64 total = 0;
-for (int i = 0; i < nr_cpus; i++) total += vals[i];
-```
-
-## LPM_TRIE：IP 路由 / CIDR 比對
-
-普通 hash 不能做「`192.168.0.0/16` 比對所有屬於這段的 IP」。LPM_TRIE 專門解這個：
+Per-CPU 版本：每個 CPU core 有自己獨立的一份 map 資料，**不需要跨 CPU 加鎖**，大幅降低 lock contention。
 
 ```c
 struct {
-    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
-    __type(key, struct {
-        u32 prefixlen;     // 前綴長度
-        u32 addr;          // IP
-    });
-    __type(value, u32);    // 例如 action
-    __uint(max_entries, 1024);
-    __uint(map_flags, BPF_F_NO_PREALLOC);   // LPM 必須加這個 flag
-} acl SEC(".maps");
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, u64);
+} dropped_pkts SEC(".maps");
+
+SEC("xdp")
+int count_drops(struct xdp_md *ctx)
+{
+    u32 key = 0;
+    u64 *val = bpf_map_lookup_elem(&dropped_pkts, &key);
+    if (val)
+        (*val)++;  /* 不需要 atomic，每個 CPU 有自己的 copy */
+    return XDP_PASS;
+}
 ```
 
-lookup 時 kernel 會找「最長 prefix match」 — 跟路由表 / firewall ACL 相同邏輯。Ch 19 寫 XDP 防火牆會用到。
+**在 userspace 讀取 per-CPU map**：
 
-## RINGBUF：上報 event 的現代方式
+```c
+/* userspace 讀取 per-CPU array */
+int ncpus = libbpf_num_possible_cpus();
+u64 *values = calloc(ncpus, sizeof(u64));
+u32 key = 0;
 
-5.8 加入。`PERF_EVENT_ARRAY`（perf buffer）的取代品：
+bpf_map_lookup_elem(map_fd, &key, values);
+/* values[0] 是 CPU 0 的值，values[1] 是 CPU 1 的值，... */
+
+u64 total = 0;
+for (int i = 0; i < ncpus; i++)
+    total += values[i];
+
+free(values);
+```
+
+**適合場景**：高頻 counter 或統計（每個 packet、每個 syscall）；不需要跨 CPU 的 per-key 資料一致性。
+
+## LRU_HASH（`BPF_MAP_TYPE_LRU_HASH`）
+
+Hash table with LRU eviction：當 map 滿了，自動淘汰最少使用的 entry，不需要手動管理容量。
+
+```c
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 100000);
+    __type(key, u32);         /* 連線的 dest IP */
+    __type(value, u64);       /* 最後看到的 timestamp */
+} active_connections SEC(".maps");
+```
+
+**適合場景**：追蹤活躍連線、活躍 process 等集合大小不固定但有上限的場景。
+
+**注意**：LRU eviction 在高並發下會有鎖競爭。`BPF_MAP_TYPE_LRU_PERCPU_HASH` 是 per-CPU LRU，鎖競爭更少。
+
+## RINGBUF（`BPF_MAP_TYPE_RINGBUF`）（kernel 5.8+，推薦）
+
+**取代 PERF_EVENT_ARRAY**。單個 ring buffer，所有 CPU 的 BPF 程式都可以寫入，userspace 一個 consumer 讀取。
+
+**優點**：
+- 不會因為 consumer 慢而 drop events（只要 ring 夠大，或 consumer 跟得上）
+- 記憶體效率好（不是 per-CPU）
+- 支援 reservation API（先 reserve，寫完再 commit，避免 drop）
 
 ```c
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 256 * 1024);   // 256 KB ring
+    __uint(max_entries, 256 * 1024);  /* 256 KB ring buffer */
 } events SEC(".maps");
 
-// 寫入（kernel 端）
-struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-if (!e) return 0;
-e->pid = pid;
-e->ts  = bpf_ktime_get_ns();
-bpf_ringbuf_submit(e, 0);
-```
+/* ringbuf 要傳送的事件結構 */
+struct event {
+    u32 pid;
+    char comm[16];
+    u64 timestamp;
+};
 
-特性對照（Ch 25 會深入比較）：
+SEC("tracepoint/syscalls/sys_enter_execve")
+int trace_exec(struct trace_event_raw_sys_enter *ctx)
+{
+    /* 方法一：reserve + 填寫 + submit（零拷貝）*/
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e)
+        return 0;  /* ring 滿了，drop */
 
-| | perf buffer | ring buffer |
-|---|---|---|
-| 結構 | per-CPU | 全域共享（多生產者單消費者） |
-| 順序 | 各 CPU 自己有序 | **全域有序** |
-| 記憶體 | 每 CPU 都要分 buffer | 一份就好 |
-| Wake-up | 每事件都會 | 自適應，效率較好 |
-| Kernel 版本 | 4.3+ | 5.8+ |
+    e->pid = bpf_get_current_pid_tgid() >> 32;
+    bpf_get_current_comm(&e->comm, sizeof(e->comm));
+    e->timestamp = bpf_ktime_get_ns();
 
-**寫新 code 一律用 ringbuf**。perfbuf 還在 BCC 老工具裡常見。
+    bpf_ringbuf_submit(e, 0);
 
-## Map operations from user space
+    /* 方法二：output（有一次拷貝，但更簡單）*/
+    /* struct event ev = {...}; */
+    /* bpf_ringbuf_output(&events, &ev, sizeof(ev), 0); */
 
-User space 透過 libbpf API 或裸 `bpf()` syscall 操作 map：
-
-```c
-// libbpf style
-struct bpf_map *map = bpf_object__find_map_by_name(obj, "pid_counts");
-
-u32 key = 1234;
-u64 value;
-bpf_map__lookup_elem(map, &key, sizeof(key), &value, sizeof(value), 0);
-
-// 遍歷 map
-u32 prev = 0, cur;
-while (bpf_map__get_next_key(map, &prev, &cur, sizeof(cur)) == 0) {
-    bpf_map__lookup_elem(map, &cur, sizeof(cur), &value, sizeof(value), 0);
-    printf("pid=%u count=%llu\n", cur, value);
-    prev = cur;
+    return 0;
 }
 ```
 
-或從 command line：
+**Userspace 消費（libbpf）**：
 
-```bash
-sudo bpftool map list
-sudo bpftool map dump id <map_id>
-sudo bpftool map update id <map_id> key 0x12 0x34 value 0x56 0x78
+```c
+/* ring_buffer__poll 等待事件，呼叫 handle_event */
+static int handle_event(void *ctx, void *data, size_t size)
+{
+    struct event *e = data;
+    printf("pid=%u comm=%s ts=%llu\n", e->pid, e->comm, e->timestamp);
+    return 0;
+}
+
+struct ring_buffer *rb = ring_buffer__new(bpf_map__fd(map), handle_event, NULL, NULL);
+
+while (1)
+    ring_buffer__poll(rb, 1000);  /* 最多等 1000ms */
 ```
 
-## Pinning：讓 map 活過 user process
+## PERF_EVENT_ARRAY（`BPF_MAP_TYPE_PERF_EVENT_ARRAY`）
 
-預設 map 跟 BPF program 一起載入、user process 死掉就 map 沒了。但有時你要：
+Ring buffer 出現之前的標準事件傳輸機制。per-CPU ring buffer，每個 CPU 一個，userspace 需要 poll 每個 CPU 的 buffer。
 
-- user process 重啟，map 內容保留
-- 多個獨立 process 共享同一個 map
-
-解法：把 map **pin 到 bpffs**（一個 kernel 提供的虛擬檔案系統）：
-
-```bash
-sudo mount -t bpf bpf /sys/fs/bpf   # 通常已經 mounted
-sudo bpftool map pin id <map_id> /sys/fs/bpf/my_pinned_map
-```
-
-或在 BPF C 裡直接宣告 pinned：
+**現在推薦用 RINGBUF，但要看懂舊 code 所以要知道這個**：
 
 ```c
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);   // 自動 pin to /sys/fs/bpf/<map_name>
-    ...
-} my_map SEC(".maps");
+    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+    __uint(key_size, sizeof(int));   /* key 是 CPU id */
+    __uint(value_size, sizeof(u32)); /* value 是 perf event fd */
+    __uint(max_entries, 0);          /* libbpf 會設定成 CPU 數 */
+} pb SEC(".maps");
+
+SEC("kprobe/vfs_read")
+int perf_output_example(struct pt_regs *ctx)
+{
+    u64 data = bpf_ktime_get_ns();
+    bpf_perf_event_output(ctx, &pb, BPF_F_CURRENT_CPU, &data, sizeof(data));
+    return 0;
+}
 ```
 
-之後別的 process 可以 `bpf_obj_get("/sys/fs/bpf/my_map")` 拿到同一份 map。
+PERF_EVENT_ARRAY 的問題：每個 CPU 獨立的 buffer，userspace 要 poll N 個 fd（N = CPU 數）；consumer 跟不上時 drop events；每次 output 都是拷貝。
 
-**Cilium 等大型 BPF 系統大量靠 pinning** 做組件解耦 — daemon 重啟時 dataplane 不掉。
+## STACK_TRACE（`BPF_MAP_TYPE_STACK_TRACE`）
 
-## 容量限制與記憶體預算
+儲存 call stack trace。key 是 stack id（由 `bpf_get_stackid()` 回傳），value 是一組 instruction pointer。
 
-`max_entries` 不只是上限，**它決定 kernel 預先分配多少記憶體**（除非加 `BPF_F_NO_PREALLOC`）。
+```c
+struct {
+    __uint(type, BPF_MAP_TYPE_STACK_TRACE);
+    __uint(key_size, sizeof(u32));
+    __uint(value_size, 127 * sizeof(u64));  /* 最多 127 frames */
+    __uint(max_entries, 10000);
+} stacks SEC(".maps");
 
-例：`HASH` map、key 8 byte、value 32 byte、max_entries 100 萬 — 記憶體大概 100MB+（hash bucket 額外開銷）。
+SEC("perf_event")
+int profile(struct bpf_perf_event_data *ctx)
+{
+    u32 pid = bpf_get_current_pid_tgid() >> 32;
+    /* 取得 kernel stack trace，回傳 stack id */
+    long stack_id = bpf_get_stackid(ctx, &stacks, 0);
+    if (stack_id < 0)
+        return 0;
+    /* 可以把 (pid, stack_id) 存入另一個 map 做計數 */
+    return 0;
+}
+```
 
-這些記憶體會算到 `memlock` 限額。新 kernel 改用 cgroup memory accounting，舊的還會卡 ulimit。Cilium 之類大型系統會調 sysctl 讓 BPF 能拿夠記憶體。
+Flamegraph 工具（如 bcc 的 `profile`）就是用這個 map type 收集 CPU profile。
 
-## 一個常見誤解
+## QUEUE 和 STACK（kernel 4.20+）
 
-「map 操作都是 thread-safe」 — **不全然**。
+FIFO queue 和 LIFO stack，用於 BPF 程式之間傳遞資料。
 
-- `bpf_map_lookup_elem` + 修改回傳指標 — **不是 atomic**。多 CPU 同時改要用 `__sync_fetch_and_add` 或 percpu。
-- `bpf_map_update_elem` 本身是 atomic 的（kernel 內有 lock），但「讀-改-寫」三步驟不是。
-- LRU map 的 LRU bookkeeping 在高並發下可能有 race，導致「應該保留的被踢掉」 — 這是已知 trade-off。
+```c
+struct {
+    __uint(type, BPF_MAP_TYPE_QUEUE);
+    __uint(max_entries, 100);
+    __type(value, u32);  /* queue 沒有 key */
+} work_queue SEC(".maps");
+
+/* push（enqueue）*/
+u32 item = 42;
+bpf_map_push_elem(&work_queue, &item, 0);
+
+/* pop（dequeue）*/
+u32 result;
+bpf_map_pop_elem(&work_queue, &result);
+
+/* peek（不移除）*/
+bpf_map_peek_elem(&work_queue, &result);
+```
+
+## SOCKHASH 和 SOCKMAP
+
+儲存 socket 的 reference，用於 socket redirection（sk_msg / sk_skb）。
+
+```c
+struct {
+    __uint(type, BPF_MAP_TYPE_SOCKHASH);
+    __uint(max_entries, 65536);
+    __type(key, u32);
+    __type(value, u32);
+} sock_map SEC(".maps");
+```
+
+詳細用法在 [Ch 29 Socket BPF](./29-socket-bpf.md)。
+
+## Map Types 總覽
+
+| 型別 | 內部結構 | 適合場景 | 鎖 |
+|---|---|---|---|
+| `HASH` | Hash table | 稀疏 key 集合，動態插入/刪除 | Global spinlock |
+| `ARRAY` | 固定陣列 | Dense key（0~N），最快存取 | 無（CAS for atomics）|
+| `PERCPU_HASH` | Per-CPU hash | 高並發 hash lookup | 無 |
+| `PERCPU_ARRAY` | Per-CPU array | 高並發 counter | 無 |
+| `LRU_HASH` | Hash + LRU eviction | 活躍集合，不超過上限 | LRU spinlock |
+| `RINGBUF` | Shared ring buffer | 事件流，取代 perf event | Wait-free write |
+| `PERF_EVENT_ARRAY` | Per-CPU ring | 事件流（老方式）| Per-CPU |
+| `STACK_TRACE` | Stack id → frames | CPU profiling | Bucket lock |
+| `QUEUE` | FIFO queue | BPF-to-BPF 任務佇列 | Spinlock |
+| `STACK` | LIFO stack | 同上 | Spinlock |
+| `SOCKHASH` / `SOCKMAP` | Socket reference | Socket redirect | RCU |
+| `DEVMAP` | XDP redirect table | XDP port redirect | RCU |
+| `CPUMAP` | CPU redirect table | XDP remote CPU exec | RCU |
+| `BLOOM_FILTER` | Bloom filter | 快速 membership check（有 false positive）| 無 |
+
+## 踩雷集錦
+
+1. **HASH map 在高並發下效能崩潰**：HASH 有 global lock；如果每個封包都 update 同一個 key，鎖競爭很嚴重。改用 PERCPU_HASH，在 userspace 把 per-CPU 的值加總
+
+2. **ARRAY map 的值不能刪除**：`bpf_map_delete_elem` 對 ARRAY 無效（回傳 -EINVAL）。如果你需要「刪除」，要把 value 設成 sentinel（例如 0）
+
+3. **RINGBUF 的 `max_entries` 必須是 2 的冪次**：如果你給了非 2 的冪次，`bpf_map_create` 會回傳 -EINVAL
+
+4. **Per-CPU map 的 userspace 讀取 buffer 大小**：userspace 讀 per-CPU map 時，提供的 buffer 必須是 `value_size * ncpus`；只給 `value_size` 的空間會 segfault
+
+5. **`bpf_ringbuf_reserve` 失敗時不能再 output**：`reserve` 失敗（ring 滿）時，你只能 `return 0`，不能改用 `bpf_ringbuf_output`（因為 output 也需要空間）；要增大 `max_entries` 或加速 consumer
+
+6. **STACK_TRACE 的 `bpf_get_stackid` 在 NMI context 不可靠**：在 perf event program 裡，某些 stack 會因 NMI 中斷被採到不完整的 frame，stack_id 可能是 -EEXIST（已有相同 stack）或 -ENOMEM
 
 ## 動手練習
 
-1. **看你機器上有哪些 map**：
-   ```bash
-   sudo bpftool map list
-   ```
-2. **dump 一個 map 的內容**（找個 systemd 的 array map 之類）：
-   ```bash
-   sudo bpftool map dump id <id>
-   ```
-3. **pin 一個 map 試試**：先用 bpftrace 跑個 one-liner 創 map，再 pin：
-   ```bash
-   sudo bpftrace -e 'kprobe:vfs_read { @[comm] = count(); }' &
-   sleep 2
-   sudo bpftool map list | grep -i bpftrace   # 找 map id
-   sudo bpftool map pin id <id> /sys/fs/bpf/test_map
-   ls -la /sys/fs/bpf/
-   ```
-4. **算記憶體**：宣告一個 HASH map、key u32、value 一個 1024 byte 的 struct、max_entries 1 萬 — 估算記憶體用量（提示：bucket 開銷約 1.5–2x value size）。
+1. 寫一個 BPF 程式，用 PERCPU_ARRAY 統計每個 CPU 觸發了多少次 `sys_enter_read`。在 userspace 讀取所有 CPU 的值並加總，每秒輸出一次
+
+2. 把上面的程式改用 HASH 而不是 PERCPU_ARRAY，用 `bpftool prog profile` 或 `perf stat` 比較兩個版本在高 syscall rate 下的 CPU 使用率差異
+
+3. 寫一個用 RINGBUF 傳輸事件的 BPF 程式：每次 execve 把 `{pid, comm, timestamp}` 送到 ringbuf，userspace 的 consumer 每秒輸出接收到的事件數
+
+## 本章重點整理
+
+- Maps 是 BPF 程式保存狀態和與 userspace 通訊的唯一方式
+- ARRAY 最快（pointer offset）；HASH 最靈活（動態 key）；PERCPU_* 解決鎖競爭
+- RINGBUF 是現代的事件傳輸機制，優於 PERF_EVENT_ARRAY（更省記憶體、更少 drop）
+- Per-CPU map 在 userspace 讀取時需要 `value_size * ncpus` 大小的 buffer
 
 ## 自我檢核
 
-- [ ] 我能說出 maps 解決 BPF 的三大痛點
-- [ ] 我能解釋 PERCPU map 為什麼比一般 HASH 快
-- [ ] 我能說出 ringbuf 跟 perfbuf 的核心差別
-- [ ] 我能解釋什麼時候要 pin map
-- [ ] 我能說出至少一個 map 操作的 race condition 場景
+- [ ] 能說出選擇 HASH vs ARRAY vs PERCPU_ARRAY 的決策依據
+- [ ] 知道 RINGBUF 和 PERF_EVENT_ARRAY 的核心差異，以及什麼時候 RINGBUF 可能 drop events
+- [ ] 能寫出正確讀取 per-CPU map 的 userspace 程式碼（buffer 大小正確）
+- [ ] 知道 ARRAY map 的「刪除」是什麼意思（沒有真正的刪除）
 
-下一章我們進 BPF 最痛苦也最有特色的東西：**verifier**。為什麼你的 code 一直被拒絕、verifier log 怎麼讀、bounded loop 是什麼。讀完之後，你的 BPF debug 能力會升級一個檔次。
+## 延伸閱讀
 
-→ [Ch 9 Verifier 深入：為什麼你的 BPF 會被拒絕](./09-verifier-deep-dive.md)
+### 官方文件
+
+- **[Linux kernel: BPF maps](https://www.kernel.org/doc/html/latest/bpf/maps.html)**
+  - **讀哪裡**：每個 map type 的描述；`BPF_MAP_TYPE_RINGBUF` 那一節特別重要
+  - **學什麼**：所有 map type 的 kernel 版本需求、key/value 限制、特殊操作
+
+### 部落格
+
+- **[BPF ring buffer](https://nakryiko.com/posts/bpf-ringbuf/)** — Andrii Nakryiko（libbpf 主要作者）, 2020
+  - **這篇說什麼**：深入解釋 RINGBUF 的設計動機、實作細節、和 PERF_EVENT_ARRAY 的對比
+  - **讀哪裡**：整篇；特別是 "Why ringbuf?" 那一節
+  - **為什麼值得讀**：作者就是 RINGBUF 的設計者和 libbpf API 的作者；這是最直接的設計文件
+
+- **[BPF maps and their design considerations](https://arthurchiao.art/blog/ebpf-maps-and-their-design-zh/)** — ArthurChiao, 2021
+  - **這篇說什麼**：對比各 map type 的效能測試和選擇指南
+  - **讀哪裡**：整篇；特別是 performance comparison 那一節
+  - **為什麼值得讀**：有實測數字，幫助你在選 map type 時有量化根據
+
+→ [Ch 9 BTF：BPF Type Format 深入](./09-btf-deep-dive.md)

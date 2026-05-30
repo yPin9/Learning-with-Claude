@@ -49,7 +49,7 @@
 
 ### security/
 - [gdb](./security/gdb/README.md)
-  - 從基本 break/run 到自寫 ptrace + DWARF mini debugger
+  - 從會用到能改：精通 GDB 全功能 + ptrace/DWARF 底層 + Python API，自寫 mini debugger 與 gef 風格插件，43 章 + 7 練習 + 插件套件 final
 - [ida_pro](./security/ida_pro/README.md)
   - IDA 9.x，從只敢按 F5 到寫 IDAPython 自動化
 - [afl_plus_plus](./security/afl_plus_plus/README.md)

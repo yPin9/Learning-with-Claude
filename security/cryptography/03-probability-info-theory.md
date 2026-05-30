@@ -1,254 +1,405 @@
 # Ch 3 — 機率與資訊論速覽
 
-> 目標：補密碼學的另一根支柱。Shannon entropy、unicity distance、PRG / PRF / PRP、IND-CPA / IND-CCA 安全定義的直覺。為後面所有安全證明與攻擊章節打底。
+> **目標**：理解 entropy、Shannon 的完美保密定義、PRG/PRF 的概念、IND-CPA 直覺——這些是密碼學所有安全定義的根基。
 
-## 為什麼密碼學需要資訊論
+> 這章的數學比 Ch 2 輕，但概念更抽象。每個定義都會配一個「如果你的系統不滿足這個定義，會被怎麼打」的具體場景。
 
-**密碼學是「攻擊者能拿到多少資訊」的學問**。Eve 看到 ciphertext 後她**對 plaintext 多了多少 information**？理想情況：**0 bit**。
+## Entropy（熵）
 
-要量化「資訊」，要有 entropy。Shannon 1948 開創資訊論，他自己 1949 就把它套到密碼學（A Mathematical Theory of Communication 與 Communication Theory of Secrecy Systems 是同年代姐妹篇）。
+### 定義
 
-## Shannon Entropy
-
-```
-H(X) = -Σ p(x) × log₂ p(x)
-       x∈X
-```
-
-讀「H 等於負 sigma p log p」。直覺：**X 的「不確定度」**，越不確定 entropy 越高。
-
-例：
+給定一個隨機變數 X，它的值域是 {x₁, x₂, ..., xₙ}，每個值的機率是 P(xᵢ)。Shannon entropy 定義為：
 
 ```
-公正硬幣：H = -(0.5 × log 0.5 + 0.5 × log 0.5) = 1 bit
-作弊硬幣（90% 正面）：H ≈ 0.469 bit
-六面骰子：H = log 6 ≈ 2.585 bit
-英文字母 plain text：H ≈ 4.5 bit/char（理論 log 26 = 4.7）
-                     考慮拼字、語法後實際 ~1.5 bit/char
+H(X) = -Σ P(xᵢ) × log₂(P(xᵢ))
 ```
 
-對密碼學的意義：**密鑰 entropy 決定攻擊者的最小工作量**。256-bit 真隨機 key → entropy = 256 bit → 暴力搜尋要 2²⁵⁶ 次。但用「12345678」當 8 byte key → 雖然儲存 64 bit，**entropy 只有約 25 bit**（猜成本，從常見密碼字典中選一個）。
+單位是 bit。
+
+### 直覺
+
+Entropy 衡量的是**不確定性**——「需要幾個 bit 才能描述這個隨機事件的結果」。
+
+```
+公正硬幣: P(正) = P(反) = 1/2
+H(X) = -(1/2)log₂(1/2) - (1/2)log₂(1/2) = 1 bit
+→ 需要 1 bit 描述結果（0 或 1）
+
+偏斜硬幣: P(正) = 0.99, P(反) = 0.01
+H(X) = -(0.99)log₂(0.99) - (0.01)log₂(0.01) ≈ 0.081 bit
+→ 結果幾乎確定是「正」，不確定性很低
+
+均勻骰子: P(1) = P(2) = ... = P(6) = 1/6
+H(X) = -6 × (1/6)log₂(1/6) = log₂(6) ≈ 2.585 bit
+```
+
+**關鍵性質**：在給定值域大小 n 下，均勻分佈的 entropy 最大，為 log₂(n)。
+
+Python 計算：
 
 ```python
 import math
 
-def shannon_entropy(data: bytes) -> float:
-    if not data:
-        return 0.0
-    counts = [0] * 256
-    for b in data:
-        counts[b] += 1
-    total = len(data)
-    return -sum((c/total) * math.log2(c/total) for c in counts if c > 0)
+def entropy(probs):
+    """計算 Shannon entropy (bits)"""
+    return -sum(p * math.log2(p) for p in probs if p > 0)
 
-print(shannon_entropy(b"AAAAAAAA"))            # 0.0（全 A，無不確定度）
-print(shannon_entropy(b"\x00\x01\x02\x03"))    # 2.0
-print(shannon_entropy(open("/dev/urandom", "rb").read(1024)))  # ≈ 7.99
+# 公正硬幣
+print(f"公正硬幣: {entropy([0.5, 0.5]):.3f} bit")        # 1.000
+
+# 偏斜硬幣
+print(f"偏斜硬幣: {entropy([0.99, 0.01]):.3f} bit")       # 0.081
+
+# 均勻骰子
+print(f"均勻骰子: {entropy([1/6]*6):.3f} bit")            # 2.585
+
+# 英文字母（不均勻——e 最常見，z 最少見）
+# 大約 4.0 bit（而 log₂(26) ≈ 4.7——因為不均勻，entropy 比最大值低）
 ```
 
-**測 RNG 品質常用 entropy 估計**：好 CSPRNG 的輸出 entropy 應該 ≈ 8 bit/byte。差的 RNG 重複 pattern entropy 會明顯低。
+### Entropy 在密碼學的意義
 
-## Min-Entropy：更悲觀的測量
+一把 128-bit 的 AES key 如果是從均勻隨機分佈產生的，entropy 是 128 bit——攻擊者平均需要嘗試 2^128 次才能猜到。
 
-Shannon entropy 是平均，**密碼學常用更保守的 min-entropy**：
+但如果你的 key 是從 8 個英文小寫字母的密碼導出的：
+- 每個字母的 entropy 上界是 log₂(26) ≈ 4.7 bit
+- 8 個字母最多 37.6 bit entropy
+- 但實際的密碼通常更低（常用詞、重複字母），大概 20–30 bit
 
-```
-H_min(X) = -log₂ max p(x)
-              x
-```
+這就是 KDF（Key Derivation Function）存在的原因：用 Argon2 或 scrypt 把低 entropy 的 password 拉慢暴力搜索的速度（Ch 17）。
 
-考慮「最壞情況：攻擊者最容易猜的那個值」。
+## Shannon 的完美保密（Perfect Secrecy）
 
-例：作弊硬幣 90% 正面：
-- Shannon H = 0.469
-- Min-entropy H_min = -log₂(0.9) ≈ 0.152
+### 定義
 
-**安全估計用 min-entropy** 比較紮實。NIST SP 800-90B（隨機數標準）用 min-entropy。
-
-## Unicity Distance：要多少 ciphertext 才能唯一解出
-
-Shannon 1949 計算：給定密碼系統，攻擊者需要多少 ciphertext 才能**唯一**確定 key？
+一個加密系統滿足完美保密，當且僅當：
 
 ```
-U = H(K) / D
+P(M = m | C = c) = P(M = m)    對所有 m, c
 ```
 
-H(K) = key entropy；D = plaintext 冗餘（redundancy，每 char 比 max entropy 少多少）。
+翻譯：**看到密文 c 之後，攻擊者對明文 m 的猜測和之前一樣好——密文不洩漏任何關於明文的資訊。**
 
-英文：max H per char = log 26 ≈ 4.7，實際 ~1.5 → D ≈ 3.2 bit/char。
-
-對 simple substitution cipher：H(K) = log(26!) ≈ 88.4 bit → U ≈ 28 chars。
-
-意思：**只要 28 個英文字母 ciphertext 就能（理論上）唯一還原**。實際攻擊用頻率分析很容易 — Ch 4 古典密碼會展開。
-
-對 AES-256：H(K) = 256 bit → U 對純隨機 plaintext 是 ∞（永遠無法唯一確定）；對英文 plaintext 也要極大量 ciphertext。**這就是現代密碼學的安全感來源**。
-
-## 隨機與偽隨機
+等價定義（更直覺）：
 
 ```
-真隨機 (True Random)
-  熱噪聲、放射衰變、量子源
-  /dev/random（Linux）有時、/dev/urandom 多數時候
-  Intel RDRAND（CPU 內建）
-  
-偽隨機 (Pseudo-Random)
-  CSPRNG（密碼學偽隨機）：seed 後產生看起來像隨機的 bit stream
-  非密碼學 PRNG（Mersenne Twister 等）：給統計用，**不要用密碼學**
+P(C = c | M = m₁) = P(C = c | M = m₂)    對所有 m₁, m₂, c
 ```
 
-**CSPRNG 必滿足**：
+翻譯：不管明文是什麼，產生特定密文 c 的機率相同。攻擊者看到 c，無法判斷明文是 m₁ 還是 m₂。
 
-1. **預測抵抗**：知道前面所有輸出，仍無法預測下一個 bit
-2. **後向安全**：state 被洩漏，無法回推之前輸出（forward secrecy）
+### Shannon 的定理
 
-實作：HMAC-DRBG、CTR-DRBG、ChaCha20-DRBG、Linux `getrandom()`。
+Shannon 在 1949 年證明：滿足完美保密的加密系統，key space 的大小必須 ≥ message space 的大小。
 
-不要用：`rand()`、`mt19937`、`std::default_random_engine`、`Math.random()` — 全部**非密碼學**，攻擊者收集少量輸出就能預測。
+直白地說：**key 至少要和明文一樣長**。
 
-## PRG, PRF, PRP：三層抽象
+這就是為什麼 One-Time Pad（OTP）是唯一滿足完美保密的實用系統——而它要求 key 和明文等長。AES-256 的 key 只有 256 bit，但可以加密任意長度的明文，所以 AES 不滿足完美保密。AES 的安全性是建立在「計算上不可行」的假設上，而非「資訊論上不可能」。
 
-```
-PRG (Pseudo-Random Generator)
-  輸入：短 seed (n bit)
-  輸出：長 stream (m bit, m >> n)
-  例：Stream cipher 的 keystream 生成
+## One-Time Pad（OTP）
 
-PRF (Pseudo-Random Function)
-  輸入：key + 任意長 input
-  輸出：固定長 output
-  保證：對不同 input，output 統計上看起來獨立
-  例：HMAC 是 PRF
+### 為什麼 OTP 滿足完美保密
 
-PRP (Pseudo-Random Permutation)
-  輸入：key + n-bit input
-  輸出：n-bit output
-  保證：對固定 key，是 {0,1}^n 上的 bijection（雙射）
-  例：AES 是 PRP
-```
+OTP 的加密：C = M ⊕ K（明文 XOR key）
 
-**block cipher 是 PRP，hash 是 PRF（或 random oracle 假設）**。這些抽象讓我們**在不知道具體實作**時，仍能討論「這個構造安全嗎」。
-
-## IND-CPA：對稱密碼的安全定義
-
-「ciphertext 看起來像隨機」太模糊。學術上用 **game 定義**：
-
-```
-IND-CPA Game (Indistinguishability under Chosen-Plaintext Attack)
-─────────────────────────────────────────────────────────
-1. Challenger 隨機產 key k
-2. Attacker A 任意傳 m → Challenger 回 Enc(k, m)（多次）
-3. A 選兩個 m0, m1（同長度）
-4. Challenger 擲銅板選 b ∈ {0, 1}，回 c* = Enc(k, m_b)
-5. A 看 c* 後猜 b' ∈ {0, 1}
-6. A 贏：b' = b
-
-Encryption scheme 安全 iff 任何 polynomial-time A 贏的機率 < 1/2 + negligible
-```
-
-直覺：**就算讓 Eve 自己選明文加密看（chosen-plaintext），她仍無法區分兩個密文是哪個明文加的**。
-
-對應的攻擊：能看到密文 + 能控制部分明文的場景（Web 表單、JSON API）。**所有現代對稱密碼必達 IND-CPA**。
-
-**ECB 不滿足 IND-CPA**（同 plaintext 永遠對應同 ciphertext，A 選 m0 = m1 一定贏）— 這就是 Ch 11 為什麼 ECB 死路。
-
-## IND-CCA：更強的安全
-
-CPA 不夠強。Eve 還能 **要求 challenger 解密任意她選的 ciphertext**（chosen-ciphertext attack）：
-
-```
-IND-CCA Game
-──────────────
-1. ... (同 IND-CPA 1-3)
-4. Challenger 回 c* = Enc(k, m_b)
-5. A 可繼續傳 c ≠ c* 給 challenger 解密（**新增能力**）
-6. A 猜 b'
-```
-
-CPA：攻擊者只能看 / 加密
-CCA：還能解密（除了 challenge ciphertext 本身）
-
-對應現實：**Bleichenbacher / Vaudenay padding oracle** 全屬 CCA 攻擊（攻擊者觀察 server 的解密錯誤訊息）。
-
-**現代密碼學要求 IND-CCA2**（adaptive，Eve 看 challenge 後仍能繼續查詢）— 但純加密達不到，必須加 MAC（這就是 Part 6 AEAD 的存在理由）。
-
-## 生日悖論與安全 bit
-
-「23 個人裡有兩個同生日的機率超過 50%」 — 因為配對數是 C(23, 2) = 253。
-
-對 hash function：**找碰撞的成本 ≈ 2^(n/2)，不是 2^n**：
-
-```
-SHA-256 (256-bit) → 找碰撞約需 2^128 次嘗試（生日攻擊）
-SHA-1 (160-bit) → 約 2^80 → Google 2017 用 2^63 找到（用 differential attack 加速）
-MD5 (128-bit) → 2^64 已破很久（2004 學術，2008 production 攻擊）
-```
-
-**設計時 hash 要 2× 安全比特**：要 128-bit 安全，hash 用 256-bit。對稱密碼則 1:1（128-bit AES 抵抗 2^128 嘗試，因為沒有 birthday-style 攻擊）。
-
-## Negligible Function：「實質上 0」的形式定義
-
-「破解機率小到忽略」要嚴格定義：
-
-```
-function f(n) is negligible iff for every polynomial p(n),
-  exists N s.t. for all n > N, |f(n)| < 1/p(n)
-```
-
-直白：**比任何多項式倒數都小**。例：
-
-- `2⁻ⁿ` negligible
-- `1/n^100` 不 negligible（仍是多項式）
-
-密碼學證明常結構：「假設 X 困難，破我系統的優勢是 negligible」。實務上 negligible = **2⁻⁸⁰ 以下**（80-bit security 是底線、現在多用 128-bit）。
-
-## Random Oracle Model
-
-理論模型：**hash function 行為是「真正的隨機函式」**。即每次 query 一個新 input，回應從均勻隨機選一個 output（但同 input 永遠回同 output）。
-
-**ROM 證明** 比 standard model 弱（hash 不是真的 random oracle），但工程上夠用。RSA-OAEP、Schnorr 簽章、HMAC 多數安全證明都在 ROM 下進行。
-
-## 動手體會
+其中 K 是和 M 等長的均勻隨機 key，且只使用一次。
 
 ```python
 import os
-import math
 
-# CSPRNG entropy 測試
-data = os.urandom(10000)
-print(shannon_entropy(data))    # ≈ 7.99
+def otp_encrypt(plaintext: bytes) -> tuple[bytes, bytes]:
+    key = os.urandom(len(plaintext))  # key 和明文等長，完全隨機
+    ciphertext = bytes(p ^ k for p, k in zip(plaintext, key))
+    return ciphertext, key
 
-# 對比 mt19937
-import random
-mt = random.Random()
-mt.seed(42)
-weak = bytes(mt.randint(0, 255) for _ in range(10000))
-print(shannon_entropy(weak))    # ≈ 7.99 — 看起來隨機
-                                 # 但 entropy 只測 distribution，不測 predictability！
-                                 # 知道 seed = 42 就能 predict 全部
+def otp_decrypt(ciphertext: bytes, key: bytes) -> bytes:
+    return bytes(c ^ k for c, k in zip(ciphertext, key))
+
+# 演示
+msg = b"ATTACK AT DAWN"
+ct, key = otp_encrypt(msg)
+pt = otp_decrypt(ct, key)
+print(f"明文: {msg}")
+print(f"密鑰: {key.hex()}")
+print(f"密文: {ct.hex()}")
+print(f"解密: {pt}")
+assert pt == msg
 ```
 
-**重點**：entropy 高不代表安全。CSPRNG 安全在於 **不可預測**，不在 distribution。Mersenne Twister 看起來隨機，但 624 個輸出後 attacker 能完整推 internal state。
+完美保密的直覺證明：
 
-## 一個常見誤解
+對任意密文 c 和任意明文 m，存在唯一的 key k = c ⊕ m 使得加密 m 得到 c。因為 key 是均勻隨機的，每個 k 出現的機率相同。所以不管明文是什麼，密文 c 出現的機率都一樣——符合完美保密的定義。
 
-「我的密碼有 entropy 70 bit，安全嗎？」
+### OTP 的致命限制
 
-要看你**比的是什麼**：
-- 對暴力 brute-force：70-bit 約 2^70 ≈ 10²¹ 嘗試 — 大規模 GPU 集群幾年能跑完
-- 對 NIST 80-bit 底線：剛好 below
-- 對 modern 128-bit 標準：嚴重不足
+1. **key 必須和明文等長**：加密 1 GB 的檔案需要 1 GB 的 key。key 的分配和儲存成本等於直接分配明文
+2. **key 不可重用**：「One-Time」是關鍵——如果同一把 key 加密兩段明文：
 
-**密碼底線是 2024 年起 128-bit security**。70-bit 對抗 nation-state 級攻擊不夠；對個人攻擊者（單機 GPU）也只值幾個月。
+```python
+# 重用 key 的災難
+key = os.urandom(14)
+m1 = b"ATTACK AT DAWN"
+m2 = b"DEFEND AT DUSK"
+
+c1 = bytes(p ^ k for p, k in zip(m1, key))
+c2 = bytes(p ^ k for p, k in zip(m2, key))
+
+# 攻擊者計算 c1 ⊕ c2 = m1 ⊕ m2（key 被消掉了）
+leak = bytes(a ^ b for a, b in zip(c1, c2))
+print(f"c1 ⊕ c2 = {leak}")
+print(f"m1 ⊕ m2 = {bytes(a ^ b for a, b in zip(m1, m2))}")
+# 兩者相同——攻擊者拿到了兩段明文的 XOR
+# 對英文文本，用頻率分析可以從 m1 ⊕ m2 還原出兩段原文
+```
+
+這就是為什麼實務上不用 OTP——而是用 PRG 把短 key「展開」成長的偽隨機序列。
+
+## PRG（Pseudorandom Generator）
+
+### 定義
+
+PRG 是一個確定性函式 G: {0,1}^s → {0,1}^n，其中 n >> s（輸出比輸入長很多）。
+
+安全的 PRG 滿足：G(seed) 和真隨機的 n-bit 字串**在多項式時間內不可區分**。
+
+也就是說：沒有高效的演算法能判斷你手上的 n-bit 字串是 G(seed) 產生的還是真隨機的。
+
+### 直覺
+
+PRG 是 OTP 的「便宜替代品」：
+
+```
+OTP:  C = M ⊕ K           （K 是真隨機，和 M 等長）
+PRG:  C = M ⊕ G(seed)     （seed 是短的 key，G 展開成和 M 等長）
+```
+
+AES-CTR（counter mode）就是這個思路：用 AES 加密遞增的 counter 來產生偽隨機序列，再 XOR 明文。seed 是 AES key（128/256 bit），輸出可以任意長。
+
+```python
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+# AES-CTR 就是一個 PRG
+key = os.urandom(32)       # 256-bit seed
+nonce = os.urandom(16)     # counter 初始值
+
+cipher = Cipher(algorithms.AES(key), modes.CTR(nonce))
+encryptor = cipher.encryptor()
+
+# 加密就是 PRG(key, nonce) ⊕ plaintext
+plaintext = b"This is a much longer message than the key itself."
+ciphertext = encryptor.update(plaintext) + encryptor.finalize()
+print(f"AES-CTR 加密: {ciphertext.hex()[:40]}...")
+```
+
+PRG 不滿足完美保密（key 比明文短），但滿足**計算安全性**——破解需要的計算量超過攻擊者的能力。
+
+### PRG 不是隨便寫的
+
+一個常見錯誤是用 `random.random()` 或 `rand()` 來產生加密用的偽隨機數。Python 的 `random` 模組用 Mersenne Twister——觀察 624 個 32-bit 輸出就能完全預測後續所有輸出。它是統計用的 PRNG，不是密碼學用的 PRG。
+
+```python
+# 錯誤：用 random 產生 key
+import random
+key_bad = bytes([random.randint(0, 255) for _ in range(32)])
+# Mersenne Twister 可預測——key 不安全
+
+# 正確：用 os.urandom 或 secrets
+import secrets
+key_good = secrets.token_bytes(32)
+# 來自 OS 的 CSPRNG（Cryptographically Secure PRG）
+```
+
+## PRF（Pseudorandom Function）
+
+### 定義
+
+PRF 是一個 keyed function F: K × X → Y，對隨機選擇的 key k，F(k, ·) 和從 X 到 Y 的所有函式中均勻隨機選的一個函式**在多項式時間內不可區分**。
+
+### 直覺
+
+PRG 產生一長串偽隨機 bits。PRF 是一個「查詢式」的偽隨機——給任意輸入 x，回傳一個偽隨機的輸出 F(k, x)。
+
+AES 本身就是一個 PRF：
+
+```
+AES(key, block) → 128-bit output
+```
+
+給定 key，AES 把任意 128-bit block 映射到一個看起來隨機的 128-bit output。如果 AES 是安全的 PRF，攻擊者不能區分 AES(key, ·) 和一個真正的隨機函式。
+
+PRF 是 MAC 的基礎——HMAC 就是建立在 PRF 性質上。
+
+### PRG 和 PRF 的關係
+
+```
+PRG: seed → 長隨機序列         （固定輸入，長輸出）
+PRF: (key, x) → 隨機值         （可查詢，多輸入）
+
+一個安全的 PRF 可以建構 PRG（把 counter 當 x）
+一個安全的 PRG 可以建構 PRF（GGM construction）
+```
+
+## IND-CPA（Indistinguishability under Chosen Plaintext Attack）
+
+### 直覺
+
+IND-CPA 是衡量加密方案安全性的標準定義。用一個遊戲（game）來描述：
+
+```
+IND-CPA 遊戲:
+
+1. 攻擊者選兩段等長的明文 m₀ 和 m₁，交給 challenger
+2. Challenger 隨機選 b ∈ {0, 1}，加密 m_b，把密文 c 交給攻擊者
+3. 攻擊者可以要求 challenger 加密任意其他明文（chosen plaintext）
+4. 攻擊者猜 b 是 0 還是 1
+
+如果攻擊者猜對的機率不比 1/2 好（除了 negligible 的優勢），
+加密方案是 IND-CPA 安全的。
+```
+
+翻譯成白話：**攻擊者自己選了兩段明文，拿到其中一段的密文，而且還可以要求加密任意其他明文——在這麼大的優勢下，仍然猜不出密文對應哪段明文。**
+
+### 哪些方案滿足 IND-CPA，哪些不滿足
+
+**不滿足 IND-CPA：ECB mode**
+
+```python
+from Crypto.Cipher import AES
+import os
+
+key = os.urandom(16)
+
+# ECB mode：相同明文 → 相同密文
+cipher = AES.new(key, AES.MODE_ECB)
+block = b'YELLOW SUBMARINE'   # 16 bytes
+
+c1 = cipher.encrypt(block)
+c2 = cipher.encrypt(block)
+print(f"c1 == c2: {c1 == c2}")  # True!
+
+# IND-CPA 攻擊：
+# 攻擊者選 m0 = "AAAAAAAAAAAAAAAA" 和 m1 = "BBBBBBBBBBBBBBBB"
+# 收到密文 c
+# 要求加密 m0，拿到 c0
+# 如果 c == c0 → b = 0，否則 b = 1
+# 猜對機率 = 100%
+```
+
+ECB 的問題：確定性加密（deterministic encryption）永遠不可能 IND-CPA 安全——相同明文永遠產生相同密文，攻擊者可以用 chosen plaintext 直接比對。
+
+**滿足 IND-CPA：CTR mode、CBC mode（with random IV）**
+
+```python
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+key = os.urandom(32)
+
+# CTR mode：每次加密用不同 nonce
+nonce1 = os.urandom(16)
+nonce2 = os.urandom(16)
+
+cipher1 = Cipher(algorithms.AES(key), modes.CTR(nonce1)).encryptor()
+cipher2 = Cipher(algorithms.AES(key), modes.CTR(nonce2)).encryptor()
+
+block = b'YELLOW SUBMARINE'
+c1 = cipher1.update(block) + cipher1.finalize()
+c2 = cipher2.update(block) + cipher2.finalize()
+print(f"c1 == c2: {c1 == c2}")  # False!——不同 nonce 產生不同密文
+```
+
+隨機化（random nonce/IV）是達到 IND-CPA 的關鍵。
+
+### IND-CPA vs IND-CCA
+
+IND-CPA 的遊戲裡，攻擊者可以要求**加密**任意明文。IND-CCA（Chosen Ciphertext Attack）更強——攻擊者還可以要求**解密**任意密文（除了 challenge 密文本身）。
+
+```
+IND-CPA: 攻擊者有 encryption oracle
+IND-CCA: 攻擊者有 encryption oracle + decryption oracle
+```
+
+AEAD 方案（AES-GCM、ChaCha20-Poly1305）滿足 IND-CCA。單純的 AES-CBC 不滿足 IND-CCA——Padding Oracle attack（Ch 11）就是利用 decryption oracle 來破解。
+
+這就是為什麼現代做法是 AEAD 而非單獨的加密模式：AEAD 在 IND-CCA 下安全，比 IND-CPA 強。
+
+## 為什麼這些概念重要
+
+密碼學的所有安全聲明都建立在這些概念上：
+
+| 概念 | 用在哪裡 | 如果忽略會怎樣 |
+|---|---|---|
+| Entropy | key 的強度評估、密碼強度評估 | 用低 entropy 的 key → 暴力破解可行 |
+| Perfect Secrecy | OTP 的安全證明 | 理解為什麼 OTP 以外的方案都依賴計算假設 |
+| PRG | stream cipher、CTR mode | 用非密碼學 PRNG → key 可預測 |
+| PRF | block cipher（AES）、MAC | AES 的安全假設就是「AES 是 PRF」 |
+| IND-CPA | 所有加密方案的最低標準 | 用 ECB mode → 密文洩漏明文的模式 |
+| IND-CCA | AEAD 的安全標準 | 只有 IND-CPA → Padding Oracle 打穿 |
+
+如果你跳過這章，後面每次看到「這個方案是 IND-CPA 安全的」你都不知道這句話在說什麼。花時間把 IND-CPA 的遊戲理解透——它是密碼學安全定義的範本，後面的 IND-CCA、EUF-CMA（簽章安全性）、PRF 安全性都是同一個框架的變體。
+
+## 踩雷集錦
+
+### 1. 「Entropy 高 = 安全」
+
+Entropy 衡量不確定性，不直接等於安全強度。一把 256-bit key 的 entropy 是 256 bit——如果它是均勻隨機的。但如果這把 key 是用 `hash("password123")` 產生的，entropy 只有 password 本身的 entropy（大約 20 bit），即使輸出是 256 bit。
+
+Entropy 是必要條件（低 entropy 一定不安全），但不是充分條件（高 entropy 的 key 還可以被 side-channel 或 protocol misuse 打穿）。
+
+### 2. 「PRG 只要通過統計測試就安全」
+
+NIST SP 800-22 定義了一套統計隨機性測試（frequency test、runs test、serial test 等）。通過這些測試是**必要不充分條件**——一個 PRG 如果連統計測試都過不了，它一定不安全。但通過統計測試不代表它是密碼學安全的。
+
+Mersenne Twister 通過幾乎所有統計測試，但它不是密碼學安全的 PRG——觀察 624 個輸出就能預測之後的全部輸出。
+
+### 3. IND-CPA 和 IND-CCA 的區別
+
+容易搞混。記住：
+
+- **IND-CPA**：攻擊者只能加密 → AES-CTR 夠用
+- **IND-CCA**：攻擊者還能解密 → 需要 AEAD
+
+實務上的差別：如果你的系統會在解密失敗時回傳錯誤訊息（例如 web server 回 "Padding error"），攻擊者就有了 decryption oracle。這時你需要 IND-CCA 安全——也就是 AEAD。
+
+Padding Oracle（Ch 11）是最經典的「只有 IND-CPA 不夠」的案例。
+
+## 本章重點整理
+
+- Entropy H(X) = -Σ p(x) log₂ p(x)——衡量不確定性，均勻分佈最大
+- Perfect Secrecy：密文不洩漏明文的任何資訊；Shannon 證明 key 必須 ≥ 明文長度
+- OTP 是唯一滿足完美保密的實用系統，但 key 等長且不可重用
+- PRG：短 seed → 長偽隨機序列（AES-CTR 就是 PRG）
+- PRF：keyed 偽隨機函式（AES 就是 PRF）
+- IND-CPA：攻擊者選兩段明文，拿到其中一段的密文，猜不出是哪一段
+- IND-CCA 比 IND-CPA 強——攻擊者還有 decryption oracle；AEAD 滿足 IND-CCA
 
 ## 自我檢核
 
-- [ ] 我能算簡單分布的 Shannon entropy
-- [ ] 我能解釋 min-entropy 與 Shannon entropy 的差別
-- [ ] 我能說出 IND-CPA 與 IND-CCA 的差別
-- [ ] 我能解釋為什麼 ECB mode 不滿足 IND-CPA
-- [ ] 我能說出 PRG / PRF / PRP 各自抽象什麼
-- [ ] 我能解釋生日攻擊為什麼讓 hash 安全度減半
+- [ ] 能解釋為什麼 8 個英文字母的密碼的 entropy 不是 64 bit（8 × 8）
+- [ ] 能用自己的話說 perfect secrecy 的定義，並解釋為什麼 AES 不滿足它
+- [ ] 能解釋為什麼 OTP 的 key 重用會洩漏 m₁ ⊕ m₂
+- [ ] 能區分 PRG 和 PRF，並各舉一個對應的密碼學方案
+- [ ] 能描述 IND-CPA 遊戲的流程，並解釋為什麼 ECB mode 不是 IND-CPA 安全的
+- [ ] 能解釋為什麼 Padding Oracle 攻擊意味著 AES-CBC 不是 IND-CCA 安全的
 
-下一章進 Part 2 古典密碼，用真實 cipher（Caesar / Vigenère）感受 entropy 與頻率分析在攻擊上的應用。
+## 延伸閱讀
 
-→ [Ch 4 古典密碼](./04-classical-ciphers.md)
+### 論文
+
+- **"Communication Theory of Secrecy Systems"（Shannon, 1949）**
+  - **讀哪裡**：Section 1–3（secrecy systems 的定義、perfect secrecy 的證明）
+  - **學什麼**：密碼學的數學奠基——所有現代安全定義的起點
+  - **前提**：基礎機率論
+
+### 書籍
+
+- **《A Graduate Course in Applied Cryptography》— Ch 2, Ch 3** — Boneh & Shoup
+  - **讀哪裡**：Ch 2（Encryption）講 IND-CPA 的完整形式化定義和 reduction；Ch 3（Message Integrity）講 PRF 和 MAC 的安全模型
+  - **學什麼**：本章所有概念的嚴格數學版本——game-based security definition 的完整寫法
+  - **前提**：本章的直覺理解 + 基礎離散數學
+
+- **《Serious Cryptography》— Ch 1, Ch 2** — Aumasson
+  - **讀哪裡**：Ch 1（Encryption）的 security notion 部分、Ch 2（Randomness）
+  - **學什麼**：更偏工程角度的安全定義解釋，配合真實案例
+  - **前提**：無
+
+→ [Ch 4 古典密碼：Caesar、Vigenère、頻率分析](./04-classical-ciphers.md)

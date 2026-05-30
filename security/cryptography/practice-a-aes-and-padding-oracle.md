@@ -1,421 +1,523 @@
-# 練習 A — 手刻 AES-128 + padding oracle 解密
+# 練習 A — 手刻 AES-128 + Padding Oracle 攻擊
 
-> 目標：把 Part 3 的 GF(2⁸)、Rijndael、CBC、padding 全部串起來。手刻 AES-128（Python 教學版 + C 性能版）、產 ECB penguin 圖，最後實作 CBC padding oracle attack — 給定一個會回 "padding error" 的 server，把任意密文還原成 plaintext。
+> 目標：從零手刻 AES-128-ECB encrypt（不用任何 crypto library），用它搭 CBC mode，建一個有 padding oracle 漏洞的 server，最後寫攻擊 client 在不知道 key 的情況下解密整段密文。整合 Ch 9–11 所有內容。
 
-## 任務規格
+## 題目規格
 
-| Part | 內容 | 語言 |
-|---|---|---|
-| 1 | AES-128 ECB encrypt/decrypt + NIST test vector 通過 | Python 為主 |
-| 2 | 把 BMP 圖片用 ECB 加密，肉眼看到 penguin pattern | Python |
-| 3 | AES-128 CBC encrypt/decrypt + PKCS#7 padding | Python |
-| 4 | C 版本 AES-128 ECB 實作（用 GCC、與 OpenSSL 比對） | C |
-| 5 | 寫一個 padding oracle server（HTTP，回不同 status 給 padding 對 / 錯） | Python |
-| 6 | 寫 padding oracle attacker：給目標 ciphertext，還原 plaintext | Python |
+四個 Phase，逐步遞進。**禁止在 Phase 1-2 使用 `cryptography` 或任何 crypto library** — 全部手刻。Phase 3-4 可以用 `flask`。
 
-## 期望輸出
+最終驗收：你的攻擊 client 能解出一段被 AES-128-CBC 加密的明文（你不知道 key）。
 
-### Part 1
+## Phase 1：手刻 AES-128-ECB Encrypt
 
-```bash
-$ python aes.py test
-Test vector NIST FIPS-197 ✓
-1000 random tests vs cryptography library ✓
-```
+### 要求
 
-### Part 2
+從零實作完整的 AES-128-ECB encrypt。需要手刻的部分：
 
-```
-[輸入]  tux.bmp
-[輸出]  tux_ecb_encrypted.bmp
-肉眼能看出企鵝形狀
-```
+1. GF(2⁸) 乘法（`gf_mul`）和 `xtime`
+2. S-box 生成（GF(2⁸) 逆元 + affine transform）— 或直接用預計算表
+3. Key expansion（RotWord, SubWord, Rcon）
+4. 四個 round 操作：SubBytes, ShiftRows, MixColumns, AddRoundKey
+5. 10-round encrypt 主迴圈（最後一輪無 MixColumns）
 
-### Part 6
-
-```bash
-$ python attacker.py http://localhost:8000 <ciphertext_hex>
-[*] decrypting block 1/3
-[*] decrypting block 2/3
-[*] decrypting block 3/3
-plaintext: "the secret message is hidden here in CBC"
-```
-
-## 實作步驟建議
-
-### Step 1：AES-128 Python 教學版
-
-從 Ch 10 的 `sub_bytes` `shift_rows` `mix_columns` `add_round_key` 開始，組成完整 `aes128_encrypt`。
-
-**測試 NIST FIPS-197 Appendix B**：
+### 骨架
 
 ```python
-key = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
-pt  = bytes.fromhex("00112233445566778899aabbccddeeff")
-expected_ct = bytes.fromhex("69c4e0d86a7b0430d8cdb78070b4c55a")
-```
+# aes_handmade.py
 
-通過 → 進 step 2。
+# ─── GF(2⁸) 運算 ───
+def xtime(a):
+    """GF(2⁸) 中乘以 x"""
+    # TODO: 實作
+    pass
 
-### Step 2：ECB penguin
+def gf_mul(a, b):
+    """GF(2⁸) 乘法"""
+    # TODO: 實作
+    pass
 
-需要 BMP 圖（uncompressed format）：
+# ─── S-box ───
+SBOX = []  # TODO: 手刻生成或填入 256 bytes
 
-```bash
-# 隨便找一張 Tux 圖，轉 BMP
-convert tux.png tux.bmp
-```
+# ─── State 操作 ───
+def bytes_to_state(b):
+    """16 bytes → 4x4 state (column-major!)"""
+    # TODO: 注意是 column-major 不是 row-major
+    pass
 
-```python
-def ecb_penguin(input_bmp, output_bmp, key):
-    with open(input_bmp, 'rb') as f:
-        data = f.read()
-    # BMP header 一般 54 byte，留著不加密
-    header = data[:54]
-    pixels = data[54:]
-    # padding 到 16 倍數
-    pixels += b'\x00' * (16 - len(pixels) % 16)
-    encrypted = b''
-    for i in range(0, len(pixels), 16):
-        encrypted += aes128_encrypt(pixels[i:i+16], key)
-    with open(output_bmp, 'wb') as f:
-        f.write(header + encrypted[:len(data)-54])
-```
+def state_to_bytes(s):
+    """4x4 state → 16 bytes"""
+    pass
 
-打開輸出 BMP，仍能看到企鵝。
-
-### Step 3：CBC + padding
-
-實作 `cbc_encrypt`、`cbc_decrypt`、PKCS#7 `pad` / `unpad`：
-
-```python
-def pkcs7_pad(data, block_size=16):
-    pad_len = block_size - (len(data) % block_size)
-    return data + bytes([pad_len] * pad_len)
-
-def pkcs7_unpad(data):
-    pad_len = data[-1]
-    if pad_len < 1 or pad_len > 16:
-        raise ValueError("invalid padding")
-    if data[-pad_len:] != bytes([pad_len] * pad_len):
-        raise ValueError("invalid padding")
-    return data[:-pad_len]
-```
-
-用 `cryptography` library 對照驗證。
-
-### Step 4：C 版 AES
-
-更貼近 production，用 lookup table 加速：
-
-```c
-#include <stdint.h>
-#include <string.h>
-
-static const uint8_t SBOX[256] = { 0x63, 0x7c, ... };  /* 256 values */
-
-void sub_bytes(uint8_t state[16]) {
-    for (int i = 0; i < 16; i++) state[i] = SBOX[state[i]];
-}
-
-void shift_rows(uint8_t state[16]) {
-    uint8_t t;
-    /* row 1 */
-    t = state[1]; state[1] = state[5]; state[5] = state[9];
-    state[9] = state[13]; state[13] = t;
-    /* row 2 */
-    t = state[2]; state[2] = state[10]; state[10] = t;
-    t = state[6]; state[6] = state[14]; state[14] = t;
-    /* row 3 */
-    t = state[3]; state[3] = state[15]; state[15] = state[11];
-    state[11] = state[7]; state[7] = t;
-}
-
-uint8_t xtime(uint8_t b) {
-    return (b << 1) ^ (((b >> 7) & 1) * 0x1b);
-}
-
-void mix_columns(uint8_t state[16]) {
-    for (int c = 0; c < 4; c++) {
-        uint8_t s0 = state[c*4], s1 = state[c*4+1];
-        uint8_t s2 = state[c*4+2], s3 = state[c*4+3];
-        uint8_t t = s0 ^ s1 ^ s2 ^ s3;
-        state[c*4]   ^= t ^ xtime(s0 ^ s1);
-        state[c*4+1] ^= t ^ xtime(s1 ^ s2);
-        state[c*4+2] ^= t ^ xtime(s2 ^ s3);
-        state[c*4+3] ^= t ^ xtime(s3 ^ s0);
-    }
-}
-
-void add_round_key(uint8_t state[16], const uint8_t round_key[16]) {
-    for (int i = 0; i < 16; i++) state[i] ^= round_key[i];
-}
-
-void aes128_encrypt(const uint8_t in[16], const uint8_t key[16], uint8_t out[16]) {
-    uint8_t round_keys[176];
-    key_expansion(key, round_keys);
-    memcpy(out, in, 16);
-    add_round_key(out, &round_keys[0]);
-    for (int r = 1; r < 10; r++) {
-        sub_bytes(out);
-        shift_rows(out);
-        mix_columns(out);
-        add_round_key(out, &round_keys[r * 16]);
-    }
-    sub_bytes(out);
-    shift_rows(out);
-    add_round_key(out, &round_keys[160]);
-}
-```
-
-編譯：
-
-```bash
-gcc -O2 -Wall aes.c main.c -o aes_test
-```
-
-### Step 5：Padding oracle server
-
-簡單 HTTP server 接受 ciphertext，解密看 padding，回 200/400：
-
-```python
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import binascii
-
-KEY = b"YELLOW SUBMARINE"  # 16 byte
-SECRET = b"the secret message is hidden here in CBC"
-
-class OracleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        # path = /check?ct=<hex>
-        try:
-            from urllib.parse import urlparse, parse_qs
-            qs = parse_qs(urlparse(self.path).query)
-            ct = bytes.fromhex(qs['ct'][0])
-            iv, blocks = ct[:16], ct[16:]
-            pt = cbc_decrypt(blocks, KEY, iv)
-            try:
-                pkcs7_unpad(pt)
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"OK")
-            except ValueError:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(b"Invalid padding")
-        except Exception as e:
-            self.send_response(500)
-            self.end_headers()
-
-def serve():
-    HTTPServer(('localhost', 8000), OracleHandler).serve_forever()
-```
-
-啟動後可用 curl 試：
-
-```bash
-curl -i "http://localhost:8000/check?ct=00...00"
-```
-
-### Step 6：Padding oracle attacker
-
-實作 `padding_oracle_attack`：
-
-```python
-import requests
-
-def oracle(ciphertext_hex):
-    r = requests.get(f"http://localhost:8000/check?ct={ciphertext_hex}")
-    return r.status_code == 200
-
-def attack(target_ct):
-    blocks = [target_ct[i:i+16] for i in range(0, len(target_ct), 16)]
-    plaintext = b''
-    for i in range(1, len(blocks)):
-        decrypted_block = decrypt_block(blocks[i-1], blocks[i], oracle)
-        plaintext += decrypted_block
-        print(f"[*] block {i}/{len(blocks)-1}: {decrypted_block}")
-    return plaintext
-```
-
-`decrypt_block` 用 Ch 11 提的 byte-by-byte logic。
-
-完整攻擊預計 10-30 秒（取決於 server 速度）。
-
-## 完整參考解答
-
-**先寫過再看**。
-
-<details>
-<summary>AES-128 完整 Python 解答骨架</summary>
-
-```python
-import struct
-
-SBOX = [...]  # FIPS 197 完整 256 值
-INV_SBOX = [...]
-RCON = [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36]
-
-def xtime(b):
-    return ((b << 1) ^ 0x1b) & 0xFF if b & 0x80 else (b << 1) & 0xFF
-
-def sub_bytes(state): return [SBOX[b] for b in state]
-def inv_sub_bytes(state): return [INV_SBOX[b] for b in state]
+# ─── Round 操作 ───
+def sub_bytes(state):
+    """每個 byte 查 S-box"""
+    pass
 
 def shift_rows(state):
-    s = state.copy()
-    s[1], s[5], s[9], s[13] = s[5], s[9], s[13], s[1]
-    s[2], s[6], s[10], s[14] = s[10], s[14], s[2], s[6]
-    s[3], s[7], s[11], s[15] = s[15], s[3], s[7], s[11]
-    return s
-
-def inv_shift_rows(state):
-    s = state.copy()
-    s[1], s[5], s[9], s[13] = s[13], s[1], s[5], s[9]
-    s[2], s[6], s[10], s[14] = s[10], s[14], s[2], s[6]
-    s[3], s[7], s[11], s[15] = s[7], s[11], s[15], s[3]
-    return s
+    """Row 0 不移, Row 1 左移 1, Row 2 左移 2, Row 3 左移 3"""
+    pass
 
 def mix_columns(state):
-    s = state.copy()
-    for c in range(4):
-        s0, s1, s2, s3 = s[c*4], s[c*4+1], s[c*4+2], s[c*4+3]
-        s[c*4]   = xtime(s0) ^ (xtime(s1) ^ s1) ^ s2 ^ s3
-        s[c*4+1] = s0 ^ xtime(s1) ^ (xtime(s2) ^ s2) ^ s3
-        s[c*4+2] = s0 ^ s1 ^ xtime(s2) ^ (xtime(s3) ^ s3)
-        s[c*4+3] = (xtime(s0) ^ s0) ^ s1 ^ s2 ^ xtime(s3)
-    return s
+    """MDS 矩陣乘法 (GF(2⁸))"""
+    pass
 
-def inv_mix_columns(state):
-    def gf_mul(a, b):
-        result = 0
-        for _ in range(8):
-            if b & 1:
-                result ^= a
-            a = xtime(a)
-            b >>= 1
-        return result
-    s = state.copy()
-    for c in range(4):
-        s0, s1, s2, s3 = s[c*4], s[c*4+1], s[c*4+2], s[c*4+3]
-        s[c*4]   = gf_mul(s0, 0x0e) ^ gf_mul(s1, 0x0b) ^ gf_mul(s2, 0x0d) ^ gf_mul(s3, 0x09)
-        s[c*4+1] = gf_mul(s0, 0x09) ^ gf_mul(s1, 0x0e) ^ gf_mul(s2, 0x0b) ^ gf_mul(s3, 0x0d)
-        s[c*4+2] = gf_mul(s0, 0x0d) ^ gf_mul(s1, 0x09) ^ gf_mul(s2, 0x0e) ^ gf_mul(s3, 0x0b)
-        s[c*4+3] = gf_mul(s0, 0x0b) ^ gf_mul(s1, 0x0d) ^ gf_mul(s2, 0x09) ^ gf_mul(s3, 0x0e)
-    return s
+def add_round_key(state, round_key_bytes):
+    """State XOR round key (column-major!)"""
+    pass
 
-def add_round_key(state, key):
-    return [s ^ k for s, k in zip(state, key)]
+# ─── Key Expansion ───
+RCON = [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36]
 
 def key_expansion(key):
-    words = [list(key[i*4:(i+1)*4]) for i in range(4)]
-    for i in range(4, 44):
-        temp = words[i-1].copy()
-        if i % 4 == 0:
-            temp = temp[1:] + temp[:1]
-            temp = [SBOX[b] for b in temp]
-            temp[0] ^= RCON[i // 4]
-        new_word = [words[i-4][j] ^ temp[j] for j in range(4)]
-        words.append(new_word)
-    return [bytes(b for w in words[r*4:(r+1)*4] for b in w) for r in range(11)]
+    """16 bytes key → 176 bytes expanded key"""
+    pass
 
-def aes128_encrypt(pt, key):
-    rks = key_expansion(key)
-    state = list(pt)
-    state = add_round_key(state, rks[0])
-    for r in range(1, 10):
-        state = sub_bytes(state)
-        state = shift_rows(state)
-        state = mix_columns(state)
-        state = add_round_key(state, rks[r])
-    state = sub_bytes(state)
-    state = shift_rows(state)
-    state = add_round_key(state, rks[10])
-    return bytes(state)
-
-def aes128_decrypt(ct, key):
-    rks = key_expansion(key)
-    state = list(ct)
-    state = add_round_key(state, rks[10])
-    for r in range(9, 0, -1):
-        state = inv_shift_rows(state)
-        state = inv_sub_bytes(state)
-        state = add_round_key(state, rks[r])
-        state = inv_mix_columns(state)
-    state = inv_shift_rows(state)
-    state = inv_sub_bytes(state)
-    state = add_round_key(state, rks[0])
-    return bytes(state)
+# ─── 主函數 ───
+def aes128_encrypt_block(plaintext, key):
+    """加密一個 16-byte block，回傳 16-byte ciphertext"""
+    assert len(plaintext) == 16 and len(key) == 16
+    # TODO
+    pass
 ```
 
-</details>
+### 驗收標準
 
-<details>
-<summary>Padding oracle attack 完整解答</summary>
+用 FIPS-197 附錄 B 的測試向量驗證：
 
 ```python
-import requests
+def test_fips197():
+    key = bytes.fromhex('2b7e151628aed2a6abf7158809cf4f3c')
+    pt  = bytes.fromhex('3243f6a8885a308d313198a2e0370734')
+    expected_ct = bytes.fromhex('3925841d02dc09fbdc118597196a0b32')
+    
+    ct = aes128_encrypt_block(pt, key)
+    assert ct == expected_ct, f"FAIL: got {ct.hex()}"
+    print("[Phase 1] FIPS-197 Appendix B: PASS")
 
-def oracle(ciphertext: bytes) -> bool:
-    r = requests.get(f"http://localhost:8000/check?ct={ciphertext.hex()}")
-    return r.status_code == 200
-
-def decrypt_block(prev: bytes, target: bytes) -> bytes:
-    """用 padding oracle 解一個 block"""
-    intermediate = bytearray(16)
-    for byte_pos in range(15, -1, -1):
-        pad_value = 16 - byte_pos
-        for guess in range(256):
-            fake_prev = bytearray(16)
-            for k in range(byte_pos+1, 16):
-                fake_prev[k] = intermediate[k] ^ pad_value
-            fake_prev[byte_pos] = guess
-            if oracle(bytes(fake_prev) + target):
-                # 排除「正巧 byte_pos 在 plaintext 中是 pad_value-1」的 false positive
-                # 改 byte_pos-1 看是否仍 OK
-                if byte_pos > 0:
-                    fake_prev[byte_pos - 1] ^= 1
-                    if not oracle(bytes(fake_prev) + target):
-                        continue
-                intermediate[byte_pos] = guess ^ pad_value
-                break
-    return bytes(a ^ b for a, b in zip(intermediate, prev))
-
-def attack(ciphertext: bytes) -> bytes:
-    blocks = [ciphertext[i:i+16] for i in range(0, len(ciphertext), 16)]
-    plaintext = b''
-    for i in range(1, len(blocks)):
-        print(f"[*] block {i}/{len(blocks)-1}")
-        plaintext += decrypt_block(blocks[i-1], blocks[i])
-    # 去掉 PKCS#7 padding
-    return plaintext[:-plaintext[-1]]
-
-if __name__ == '__main__':
-    import sys
-    ct = bytes.fromhex(sys.argv[1])
-    pt = attack(ct)
-    print(f"plaintext: {pt}")
+# 額外測試：NIST AES Known Answer Test
+def test_nist_kat():
+    # ECB-AES128 的 Known Answer Test
+    key = bytes.fromhex('00000000000000000000000000000000')
+    pt  = bytes.fromhex('f34481ec3cc627bacd5dc3fb08f273e6')
+    expected_ct = bytes.fromhex('0336763e966d92595a567cc9ce537f5e')
+    
+    ct = aes128_encrypt_block(pt, key)
+    assert ct == expected_ct, f"FAIL: got {ct.hex()}"
+    print("[Phase 1] NIST KAT: PASS")
 ```
 
-</details>
+### 常見卡關點
 
-## 測試用例
+| 症狀 | 原因 | 修法 |
+|------|------|------|
+| 結果完全錯 | state 用 row-major | 改成 column-major |
+| Round 10 結果錯 | 最後一輪有 MixColumns | 拿掉 |
+| Key expansion 不對 | Rcon 只 XOR 到 word 的第一 byte | 確認 Rcon 格式 |
+| S-box 某些值錯 | affine 忘了 XOR 0x63 | 加上 |
 
-1. **AES-128 一致性**：與 `cryptography` library 對照 1000 次隨機測試
-2. **CBC + 解密**：自己 encrypt 再 decrypt 還原原文
-3. **ECB penguin**：肉眼看 BMP 仍能辨識企鵝
-4. **Padding oracle 攻擊速度**：48-byte ciphertext 在 localhost 應 30 秒內解完
-5. **修復後測試**：把 server 的 padding error 統一回 200（不洩漏） → 攻擊應失敗
+## Phase 2：搭 CBC Mode
 
-## 自我檢核
+### 要求
 
-- [ ] 我能寫完整 AES-128 encrypt + decrypt 並通過 NIST test vector
-- [ ] 我用 ECB 加密圖片仍能看到形狀
-- [ ] 我能寫 CBC + PKCS#7 padding 並對照 library
-- [ ] 我寫的 C 版本與 Python 版本一致
-- [ ] 我能寫 padding oracle server 與對應 attacker
-- [ ] 我能解釋為什麼 oracle 即使只回 200/400 就讓 attacker 完全解密
+用 Phase 1 的 `aes128_encrypt_block` 加上 CBC mode：
 
-下一個 Part 進 hash 與 MAC 世界。
+1. 實作 PKCS#7 padding
+2. 實作 AES-128-CBC encrypt
+3. 實作 AES-128-CBC decrypt（需要手刻 `aes128_decrypt_block`）
 
-→ [Ch 13 Hash 函式](./13-hash-functions.md)
+### 骨架
+
+```python
+# cbc_mode.py
+from aes_handmade import aes128_encrypt_block
+import os
+
+# ─── AES Decrypt（需要逆操作） ───
+INV_SBOX = []  # TODO: 從 SBOX 反推
+
+def inv_sub_bytes(state):
+    pass
+
+def inv_shift_rows(state):
+    """Row 1 右移 1, Row 2 右移 2, Row 3 右移 3"""
+    pass
+
+def inv_mix_columns(state):
+    """用逆矩陣 [0E,0B,0D,09; 09,0E,0B,0D; 0D,09,0E,0B; 0B,0D,09,0E]"""
+    pass
+
+def aes128_decrypt_block(ciphertext, key):
+    """解密一個 16-byte block"""
+    pass
+
+# ─── PKCS#7 Padding ───
+def pkcs7_pad(data, block_size=16):
+    """加 PKCS#7 padding"""
+    pass
+
+def pkcs7_unpad(data, block_size=16):
+    """移除 PKCS#7 padding，invalid 時 raise ValueError"""
+    pass
+
+# ─── CBC Mode ───
+def aes_cbc_encrypt(key, plaintext, iv=None):
+    """AES-128-CBC 加密，回傳 IV + ciphertext"""
+    if iv is None:
+        iv = os.urandom(16)
+    padded = pkcs7_pad(plaintext)
+    # TODO: CBC chain
+    pass
+
+def aes_cbc_decrypt(key, data):
+    """AES-128-CBC 解密（data = IV + ciphertext），回傳 plaintext"""
+    iv, ct = data[:16], data[16:]
+    # TODO: CBC unchain + unpad
+    pass
+```
+
+### 驗收標準
+
+```python
+def test_cbc_roundtrip():
+    key = os.urandom(16)
+    messages = [
+        b'',
+        b'A',
+        b'Hello, World!',
+        b'Exactly 16 bytes',   # 剛好 16 bytes
+        b'A' * 31,              # 31 bytes
+        b'A' * 32,              # 32 bytes（剛好 2 blocks）
+        b'A' * 100,             # 100 bytes
+    ]
+    for msg in messages:
+        ct = aes_cbc_encrypt(key, msg)
+        pt = aes_cbc_decrypt(key, ct)
+        assert pt == msg, f"FAIL for len={len(msg)}: got {pt!r}"
+    print("[Phase 2] CBC roundtrip: ALL PASS")
+
+def test_cbc_against_openssl():
+    """用 cryptography 套件驗證手刻結果"""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import padding
+    
+    key = bytes.fromhex('2b7e151628aed2a6abf7158809cf4f3c')
+    iv  = bytes.fromhex('000102030405060708090a0b0c0d0e0f')
+    pt  = b'This is a test message for CBC!'
+    
+    # OpenSSL 版
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(pt) + padder.finalize()
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+    enc = cipher.encryptor()
+    ct_openssl = enc.update(padded) + enc.finalize()
+    
+    # 手刻版
+    ct_handmade = aes_cbc_encrypt(key, pt, iv=iv)
+    ct_handmade = ct_handmade[16:]  # 去掉 prepend 的 IV
+    
+    assert ct_openssl == ct_handmade, f"Mismatch!\nOpenSSL:  {ct_openssl.hex()}\nHandmade: {ct_handmade.hex()}"
+    print("[Phase 2] CBC vs OpenSSL: PASS")
+```
+
+## Phase 3：建一個有 Padding Oracle 的 Server
+
+### 要求
+
+用 Flask 建一個 HTTP server，提供兩個 endpoint：
+
+1. `POST /encrypt`：接收 JSON `{"plaintext": "base64..."}` → 加密後回傳 `{"ciphertext": "base64..."}`
+2. `POST /decrypt`：接收 JSON `{"ciphertext": "base64..."}` → **如果 padding valid，回傳 200；如果 padding invalid，回傳 400** ← 這就是 oracle
+
+### 骨架
+
+```python
+# oracle_server.py
+from flask import Flask, request, jsonify
+import base64
+import os
+
+# 用 Phase 2 的手刻 AES 或 cryptography 套件都行
+# 這裡用 cryptography 比較快（Phase 3 的重點是 server，不是 AES）
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+app = Flask(__name__)
+SECRET_KEY = os.urandom(16)
+
+@app.route('/encrypt', methods=['POST'])
+def encrypt():
+    """加密明文"""
+    data = request.get_json()
+    pt = base64.b64decode(data['plaintext'])
+    
+    # PKCS7 pad
+    pad_len = 16 - (len(pt) % 16)
+    padded = pt + bytes([pad_len] * pad_len)
+    
+    # AES-CBC encrypt
+    iv = os.urandom(16)
+    cipher = Cipher(algorithms.AES(SECRET_KEY), modes.CBC(iv))
+    enc = cipher.encryptor()
+    ct = enc.update(padded) + enc.finalize()
+    
+    result = base64.b64encode(iv + ct).decode()
+    return jsonify({'ciphertext': result})
+
+@app.route('/decrypt', methods=['POST'])
+def decrypt():
+    """解密 — padding oracle 在這裡！"""
+    data = request.get_json()
+    raw = base64.b64decode(data['ciphertext'])
+    iv, ct = raw[:16], raw[16:]
+    
+    if len(ct) == 0 or len(ct) % 16 != 0:
+        return jsonify({'error': 'invalid ciphertext length'}), 400
+    
+    cipher = Cipher(algorithms.AES(SECRET_KEY), modes.CBC(iv))
+    dec = cipher.decryptor()
+    pt = dec.update(ct) + dec.finalize()
+    
+    # 檢查 PKCS7 padding — 這裡洩漏資訊！
+    pad_len = pt[-1]
+    if pad_len < 1 or pad_len > 16:
+        return jsonify({'error': 'invalid padding'}), 400     # ← ORACLE
+    
+    for i in range(1, pad_len + 1):
+        if pt[-i] != pad_len:
+            return jsonify({'error': 'invalid padding'}), 400  # ← ORACLE
+    
+    return jsonify({'status': 'ok'}), 200                       # ← ORACLE
+
+if __name__ == '__main__':
+    print(f"[!] Secret key (for debugging): {SECRET_KEY.hex()}")
+    app.run(host='127.0.0.1', port=5000, debug=False)
+```
+
+### 執行
+
+```bash
+# Terminal 1: 啟動 server
+python3 oracle_server.py
+
+# Terminal 2: 測試
+# 加密
+curl -s -X POST http://127.0.0.1:5000/encrypt \
+  -H 'Content-Type: application/json' \
+  -d '{"plaintext": "'$(echo -n "The quick brown fox" | base64)'"}' | python3 -m json.tool
+
+# 解密（valid padding）
+# 把上面得到的 ciphertext 貼過來
+curl -s -X POST http://127.0.0.1:5000/decrypt \
+  -H 'Content-Type: application/json' \
+  -d '{"ciphertext": "PASTE_HERE"}'
+# 應該回傳 200
+
+# 修改 ciphertext 一個 byte 再送
+# 應該回傳 400（padding invalid）
+```
+
+### 驗收標準
+
+- Server 能正常 encrypt/decrypt
+- 相同 plaintext 每次 encrypt 結果不同（random IV）
+- 修改 ciphertext 的任意 byte 後 decrypt 回傳 400
+
+## Phase 4：Padding Oracle Attack Client
+
+### 要求
+
+寫一個 attack client：
+
+1. 從 server 的 `/encrypt` 取得一段密文
+2. **不知道 key**，只靠 `/decrypt` 的 200/400 回應
+3. 逐 byte 解密整段密文
+4. 顯示攻擊進度和最終解密結果
+
+### 骨架
+
+```python
+# oracle_attack.py
+import requests
+import base64
+import sys
+
+SERVER = 'http://127.0.0.1:5000'
+
+def oracle(ciphertext_bytes):
+    """送 ciphertext 給 server，回傳 padding 是否 valid"""
+    ct_b64 = base64.b64encode(ciphertext_bytes).decode()
+    resp = requests.post(f'{SERVER}/decrypt', json={'ciphertext': ct_b64})
+    return resp.status_code == 200
+
+def attack_block(prev_block, target_block):
+    """解密一個 block（16 bytes）"""
+    intermediate = [0] * 16
+    
+    for byte_pos in range(15, -1, -1):
+        pad_value = 16 - byte_pos
+        
+        # 構造 crafted block
+        crafted = bytearray(16)
+        for k in range(byte_pos + 1, 16):
+            crafted[k] = intermediate[k] ^ pad_value
+        
+        found = False
+        for guess in range(256):
+            crafted[byte_pos] = guess
+            
+            # 送 crafted + target 給 oracle
+            test_ct = bytes(crafted) + target_block
+            if oracle(test_ct):
+                # 防 false positive（最後一 byte 特殊處理）
+                if byte_pos == 15:
+                    verify = bytearray(crafted)
+                    verify[14] ^= 0x01
+                    if not oracle(bytes(verify) + target_block):
+                        continue
+                
+                intermediate[byte_pos] = guess ^ pad_value
+                found = True
+                
+                # 進度顯示
+                solved = 16 - byte_pos
+                sys.stdout.write(f'\r  Block progress: {solved}/16 bytes')
+                sys.stdout.flush()
+                break
+        
+        if not found:
+            raise RuntimeError(f"Failed at byte_pos={byte_pos}")
+    
+    print()  # 換行
+    
+    # 算出 plaintext
+    pt_block = bytes([intermediate[i] ^ prev_block[i] for i in range(16)])
+    return pt_block
+
+def padding_oracle_attack(ciphertext):
+    """完整的 padding oracle 攻擊"""
+    blocks = [ciphertext[i:i+16] for i in range(0, len(ciphertext), 16)]
+    num_ct_blocks = len(blocks) - 1  # 第一個是 IV
+    
+    print(f"[*] Ciphertext: {len(ciphertext)} bytes = IV + {num_ct_blocks} blocks")
+    print(f"[*] Starting padding oracle attack...")
+    
+    plaintext = b''
+    total_queries = 0
+    
+    for block_idx in range(1, len(blocks)):
+        print(f"[*] Attacking block {block_idx}/{num_ct_blocks}...")
+        pt_block = attack_block(blocks[block_idx - 1], blocks[block_idx])
+        plaintext += pt_block
+    
+    # 去 padding
+    pad_len = plaintext[-1]
+    if 1 <= pad_len <= 16:
+        plaintext = plaintext[:-pad_len]
+    
+    return plaintext
+
+def main():
+    # Step 1: 讓 server 加密一段祕密訊息
+    secret = b'The magic words are Squeamish Ossifrage -- RSA challenge 1977'
+    ct_b64 = requests.post(
+        f'{SERVER}/encrypt',
+        json={'plaintext': base64.b64encode(secret).decode()}
+    ).json()['ciphertext']
+    
+    ciphertext = base64.b64decode(ct_b64)
+    print(f"[*] Got ciphertext ({len(ciphertext)} bytes)")
+    
+    # Step 2: 攻擊
+    recovered = padding_oracle_attack(ciphertext)
+    
+    print(f"\n[+] Recovered plaintext: {recovered}")
+    print(f"[+] Match: {recovered == secret}")
+
+if __name__ == '__main__':
+    main()
+```
+
+### 進階挑戰
+
+如果 Phase 4 基本版太快寫完：
+
+1. **加速**：用多線程同時攻擊多個 block（block 之間互相獨立）
+2. **Timing oracle**：把 server 的 400 response 改成都回 200，但 padding valid 時 `time.sleep(0.01)`。攻擊 client 改用 response time 判斷。
+3. **統計**：記錄每個 byte 用了多少次 query，算平均和最差情況。
+
+### 驗收標準
+
+```
+$ python3 oracle_server.py &
+[!] Secret key (for debugging): a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6
+
+$ python3 oracle_attack.py
+[*] Got ciphertext (80 bytes)
+[*] Ciphertext: 80 bytes = IV + 4 blocks
+[*] Starting padding oracle attack...
+[*] Attacking block 1/4...
+  Block progress: 16/16 bytes
+[*] Attacking block 2/4...
+  Block progress: 16/16 bytes
+[*] Attacking block 3/4...
+  Block progress: 16/16 bytes
+[*] Attacking block 4/4...
+  Block progress: 16/16 bytes
+
+[+] Recovered plaintext: b'The magic words are Squeamish Ossifrage -- RSA challenge 1977'
+[+] Match: True
+```
+
+## 完成後的自我檢核
+
+### Phase 1
+- [ ] AES-128 手刻 encrypt 通過 FIPS-197 測試向量
+- [ ] 能解釋 key expansion 的每一步
+- [ ] 知道 state 是 column-major 排列
+
+### Phase 2
+- [ ] CBC encrypt/decrypt roundtrip 正確
+- [ ] 手刻結果和 OpenSSL 一致
+- [ ] PKCS#7 padding 正確處理邊界情況（空字串、剛好對齊）
+
+### Phase 3
+- [ ] Server 能 encrypt/decrypt
+- [ ] 修改 ciphertext 任一 byte → 400 response
+- [ ] 相同 plaintext 每次 encrypt 不同（random IV）
+
+### Phase 4
+- [ ] Padding oracle attack 成功解密整段密文
+- [ ] 能解釋攻擊的每一步數學（intermediate value、pad_value、XOR 關係）
+- [ ] 知道 false positive 的問題和如何處理
+
+## 防禦方法（做完攻擊後回顧）
+
+你剛做完的攻擊在真實世界造成過重大漏洞。防禦方法：
+
+1. **用 AEAD（AES-GCM / ChaCha20-Poly1305）**：先驗證 MAC tag，tag 不對就直接 reject，不走到 padding 檢查
+2. **Encrypt-then-MAC**：如果必須用 CBC，先加密再算 HMAC，驗證 HMAC 再解密
+3. **Constant-time padding check**：即使做了 MAC，padding 檢查也要 constant-time（防 Lucky Thirteen）
+4. **不要回傳不同的 error**：padding error 和 decryption error 回傳一樣的 generic error
+
+```python
+# 錯誤示範（你的 oracle server）
+if padding_invalid:
+    return 400, "invalid padding"    # ← 洩漏資訊
+
+# 正確做法
+if mac_invalid or padding_invalid:
+    return 400, "decryption failed"  # ← 統一 error，且 constant-time check
+```
+
+## 時間預估
+
+| Phase | 預估時間 | 難度 |
+|-------|----------|------|
+| Phase 1（手刻 AES） | 2-4 小時 | ★★★ 最難（GF(2⁸)、column-major） |
+| Phase 2（CBC mode） | 1-2 小時 | ★★ |
+| Phase 3（Oracle server） | 30 分鐘 | ★ |
+| Phase 4（Attack client） | 1-2 小時 | ★★（數學推導是關鍵） |
+
+---
+
+> **下一個練習**：[練習 B — Hash 與 Length Extension Attack](practice-b-hash-length-extension.md)
