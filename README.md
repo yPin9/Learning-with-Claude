@@ -13,7 +13,7 @@
 - [ai_applications](./ai/ai_applications/README.md)
   - Claude 深度應用 + 用 Claude 生態做產品 + 通用 LLM 工程（RAG / eval / observability）
 - [harness_engineering](./ai/harness_engineering/README.md)
-  - 打造 AI agent 執行框架：agent loop + context 管理 + 工具系統 + subagent + permission + eval，41 章 + 5 練習 + 自刻 mini harness final
+  - 打造 AI agent 執行框架：agent loop + context 管理 + 工具系統 + subagent + permission + eval + 導入落地，44 章 + 6 練習 + 自刻 mini harness final
 
 ### architecture/
 - [riscv](./architecture/riscv/README.md)

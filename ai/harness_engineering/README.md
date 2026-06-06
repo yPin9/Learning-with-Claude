@@ -82,6 +82,13 @@
 ### Part 6 — 整合專案
 - [Final Project：自己刻一個 mini agent harness](./final-project-mini-harness.md)
 
+### Part 7 — 導入與落地（Adoption）
+> 前六個 Part 教你「怎麼把一個可靠的 agent harness 做出來」。這個 Part 換軸：當你已經會刻了，怎麼判斷該不該上、怎麼漸進放權、怎麼把它織進團隊既有流程而不出事。技術之外的工程決策。
+- [Ch 41 該不該上 agent：任務選型與導入決策](./41-when-to-agentify.md)
+- [Ch 42 漸進式落地：從輔助到自主的信任階梯](./42-gradual-rollout-trust.md)
+- [Ch 43 把 agent 織進團隊工作流](./43-agents-in-team-workflow.md)
+- [練習 F：為一個真實任務寫導入評估 + 落地計畫](./practice-f-adoption-assessment.md)
+
 ## 學習方式建議
 
 1. **每章親手跑過**：所有範例打開編輯器跑一次，不要只讀。agent 的行為常常違反直覺，看輸出比看說明有用。
