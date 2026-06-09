@@ -34,6 +34,8 @@
 ### dev_tools/
 - [git](./dev_tools/git/README.md)
   - 給已經會 add/commit/push、想真正熟練的人，hooks + worktree + 真實踩坑
+- [open_source](./dev_tools/open_source/README.md)
+  - 從會 commit 到能跟全世界一起寫程式：中階 git（rebase/衝突/reflog）+ fork/PR/review/CI + 貢獻開源（含真實 PR）+ 團隊協作 + 維護者視角，38 章 + 6 練習 + 真實貢獻 final
 - [cicd](./dev_tools/cicd/README.md)
   - Docker + GitHub Actions，把 FastAPI + Postgres 服務做成可交付 pipeline
 - [docker](./dev_tools/docker/README.md)
@@ -94,6 +96,10 @@
 ### embedded/
 - [protocols](./embedded/protocols/README.md)
   - ESP32 嵌入式通訊協議：SPI/I2C/UART/RS-485/Modbus/CAN/BLE/LoRa/Zigbee/USB/Ethernet，全程 register-level，不靠 HAL，26 章 + 3 練習 + 工業閘道器 final
+
+### interview/
+- [mtk_firmware](./interview/mtk_firmware/README.md)
+  - MTK（聯發科）韌體工程師面試衝刺：C/嵌入式/OS/計組/資料結構考古題詳解 + 概念複習，44 章 + 5 練習 + 模擬面試 final
 
 ### scripting/
 - [powershell](./scripting/powershell/README.md)
