@@ -147,6 +147,8 @@ out = rec.call("tool", {"name": tool_name, "input": tool_input},
 
 > 一句話：**模型層你只能「降低」非確定，程式層你該「消除」可消除的非確定。** 別把「反正模型本來就非確定」當藉口，放任程式層的雜訊——那些是你能修、也該修的。
 
+> **真實案例**：Sim Francisco（`tejasprabhune/simfrancisco`，用 eval 分數驅動迭代的選舉模擬 harness）兩個點都踩到、也都解了。**程式層非確定（⑤）**：它的迭代帳 `NOTES.md` 記了一個 **HashMap 迭代順序的 determinism bug**，會讓 `validate` 算分不可重現——正是上面說的「`dict`/`set` 迭代順序」那種雜訊；修掉它，「同樣輸入跑出同樣分數」才成立（否則你分不清分數變動是改動的功勞還是雜訊）。**record/replay（第二節）**：它的 `validate` 用 sqlite 以 `(model, 完整 prompt)` 當 key 快取模型輸出，clean-mode 重跑直接命中快取、**可重現又免費**——把本章第二節的「錄一次、之後離線重放」做進了 eval 本身，讓 [Ch 34](./34-eval.md) 講的「eval 進 CI、改動前後各跑」能跑得又穩又便宜（否則每次 eval 都真打 API，既貴又因非確定而抖動）。
+
 ## 四、可恢復：checkpoint 與 resume
 
 這是**另一個**目標（不是重現，是中斷後接續）。長任務（跑幾十回合、幾分鐘到幾小時）一定會遇到中斷：process 被殺、機器重啟、rate limit、`pause_turn`。要能 resume，核心是**把「執行到哪了」變成可持久化的狀態，並在恢復時從那個狀態接續**。

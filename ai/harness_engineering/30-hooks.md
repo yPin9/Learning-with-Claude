@@ -195,7 +195,8 @@ Hook 的威力來自「它執行你寫的任意程式碼」，而這正是它的
 
 - **Hook 作為可觀測性的骨幹**：在 PreToolUse / PostToolUse 掛日誌 hook，你就有了「agent 做過的每個動作 + 結果」的完整稽核軌跡——這是 Ch 35 可觀測性的基礎。多 agent 系統尤其需要（Ch 27 提過：worker 過程不進 lead context，靠 hook 記 trace 才看得到）。
 - **Hook 注入 context（UserPromptSubmit）**：每次使用者送訊息時，hook 可以自動把「當前分支、未提交變更、目前時間、相關 ticket」塞進去，讓模型不必自己去查。這是「用確定性程式碼餵 context」的好例子。
-- **Stop hook 強制完成標準**：模型說「做完了」時，Stop hook 可以檢查「測試真的過了嗎？todo 真的清空了嗎？」，不滿足就擋下、要它繼續——把「完成的定義」變成確定性的把關（接 Ch 7 停止條件、Ch 28 todo）。
+- **Stop hook 強制完成標準**：模型說「做完了」時，Stop hook 可以檢查「測試真的過了嗎？todo 真的清空了嗎？」，不滿足就擋下、要它繼續——把「完成的定義」變成確定性的把關（接 Ch 7 停止條件、Ch 28 todo）。這是把 [Ch 34 §七](./34-eval.md) 的 **machine-checkable done** 落到 hook 上：done 不是模型自稱，而是一個 verifier 程式回 exit 0。
+  > **真實案例：verifier 當「不可繞過的閘」**。同樣的概念在開源 harness 裡有兩種落點。**Tekton**（`tangxiya-star/Tekton`）把它放在 **build 步驟**：`package.json` 的 `build` 串起 `derive → verify → next build`，`scripts/verify.mjs` 跑一組程式化斷言（結構幾何、來源稽核、像素檢查等），**verify 回非零就中止整條 build、擋下出貨**——出貨閘不靠人記得跑，而是 build 本身保證跑。**Sim Francisco**（`tejasprabhune/simfrancisco`）把它放在 **pre-push githook**（`git config core.hooksPath .githooks`）：push 前固定跑 `cargo test`，並在有 API key 時再跑一個快速的 `validate --smoke`（沒 key 就略過 smoke），失敗就 push 不出去。兩者的共通點正是本章的核心——**把「一定要驗」從「拜託誰記得」變成 harness／流程保證會跑的確定性閘**，agent 與人都繞不過去。
 - **PreCompact 保存狀態**：context 要被壓縮前（Ch 13），hook 先把關鍵狀態寫到檔案/記憶體，避免重要資訊在壓縮中流失。這跟 Practice B 的記憶體機制可以結合。
 - **Hook vs 中介層（middleware）**：概念上 hook 就是 agent 迴圈的 middleware——熟悉 web 框架 middleware 的人會很有親切感。差別是 hook 掛的點是「agent 生命週期事件」，而非「HTTP 請求/回應」。
 - **這是 Claude Code 的 hooks 系統**：上述事件名稱、exit code 語義、JSON 輸出格式都是 Claude Code 的具體實作。不同 harness 的 hook 機制細節各異（事件集合、溝通協定），但「在生命週期固定點插入確定性程式碼」的核心概念是通用的。延伸閱讀的官方文件是權威細節來源。

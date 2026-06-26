@@ -244,6 +244,48 @@ def run_eval(cases: list[EvalCase], runs_per_case: int = 1) -> dict:
 
 關鍵不是這段程式多完整，而是**這個迴圈跑得起來、跑得夠勤**——它讓「改 agent」從賭博變成有護欄的迭代。
 
+## 七、守住 eval 的誠信：別讓 agent（或你）對著它作弊
+
+上一節把 eval 變成「改動前要過的關卡」。但這帶來一個新風險：**一旦 eval 變成「要刷高的分數」，它就很容易被鑽。** 這是 Goodhart's law 的 agent 版——**當一個測量變成優化目標，它就不再是個好測量**。
+
+想清楚這件事：你的迭代迴圈（改 prompt → 跑 eval → 分數漲了就留）本身就是一台**對著 eval 最佳化的機器**。它不在乎「真的變好」，只在乎「分數變高」。這兩件事一旦脫鉤，你的 eval 就從護欄變成幻覺——你以為有護欄，其實在裸奔。而當迭代是 **agent 自己在跑**（自動改 prompt、自動重測，見 Ch 27 的自我迭代迴圈）時，這個風險更大：它會非常有效率地找到「讓分數變高但任務沒變好」的捷徑。
+
+三種典型的「分數漲但沒真的變好」：
+
+- **背答案（overfit）**：調到剛好過 eval 那幾題，換一批真實輸入就垮。
+- **知識洩漏（leakage）**：答案的線索從某處漏進了 prompt / context——例如把「正確結果」的暗示寫進任務描述，或模型用上了它本不該拿到的資訊（如它知識 cutoff 之後才存在的事實）。
+- **鑽分數機制（gaming the metric）**：鑽匯總方式、權重、評分公式的漏洞，分數漲了，但不是因為任務做得更好。
+
+對應三道防線：
+
+### (1) 凍結答案，只動旋鈕
+
+把 eval 切成兩類東西，且**只准動其中一類**：
+
+- **不可碰的「答案」**：ground-truth targets、容差、評分權重、held-out slice。定下來就**不准在迭代中改**。
+- **可調的「旋鈕」**：prompt、persona、彙整方法、cache、工具描述。隨便你調。
+
+最常見、最危險的作弊是：「分數不夠？那就把及格門檻調低、把過不了的難題從 set 裡移掉。」——這等於**改考卷答案**，當下分數漂亮，但你已經把護欄拆了還不自知。紀律是：要動 targets/權重，必須有「**它本身錯了**」這種獨立理由（而非「因為過不了」），而且要留 log。**分數該去逼近答案，不是答案去遷就分數。**
+
+### (2) Held-out split：留一刀只驗不調
+
+把案例分成 **train**（拿來看、拿來調）與 **held-out**（藏起來，只在最後驗一次）。一個 prompt 改動在 train 上贏**不算數**，要 **held-out 也贏才 promote**。
+
+為什麼：你在 train 上每一次「看了失敗案例再改」，都在悄悄把資訊從那批案例餵進 agent，train 分數遲早會**虛高**。held-out 沒被你看過、沒被你調過，它的分數才是「對**沒見過**的輸入」的誠實估計。這比前面講的「eval set 持續成長」更進一步——**成長的是 train；held-out 要保持乾淨、用過就換新，絕不拿來調。**
+
+### (3) 對抗式 critic：請一個專門找碴的
+
+最後一道防線是一個**獨立角色**，它的任務不是「確認進步」，而是反過來**證明這次的進步是假的**——主動去找 leakage、overfit、gaming 的證據。關鍵是它要跟「產出改動的那個 agent」**分開**（不同 context、最好不同 prompt 甚至不同模型）：自己檢查自己幾乎一定放水。這在 agent 自動迭代裡尤其重要，是 Ch 27「verifier + 對抗式 critic」拓樸的核心——這裡先記住概念，實作見該章。
+
+### 把這些撐起的原則：machine-checkable done
+
+上面三道防線共同支撐一個更根本的原則——**「做完」要能被機器判定，不是人說了算**。done 的定義應該是「斷言全綠 / verifier 回傳 exit 0 / 部署過 health check」這種**確定性、可重跑**的東西，而不是「看起來不錯」。再把這個判定接成**不可繞過的閘**（CI、pre-push hook、build 的其中一步，見 Ch 30），agent 就無法「自己宣布完成」蒙混過關。**verifier 是整個自我改進迴圈的脊椎；它的誠信（不可被作弊）是上面一切的地基**——Part 7 的信任階梯之所以敢「用 eval 通過率放權」（[Ch 42](./42-gradual-rollout-trust.md)），前提正是這個通過率沒被鑽。
+
+> **真實案例：兩個把 verifier 當骨幹的開源 harness**
+>
+> - **Sim Francisco**（舊金山選舉模擬，`tejasprabhune/simfrancisco`）幾乎把三道防線做齊了。`cargo run --bin validate` 算加權分數、**過 `rubric.yaml` 設定的門檻（`weighted_score_min: 0.70`）才 `exit 0`**；targets 來自官方計票結果與已結算的預測市場、**凍結不動**，迭代「只准碰 prompt/persona/彙整/turnout，從不碰 targets」；prompt 調校用 K 個 variant + **train/held-out split，held-out 也贏才 promote**；每個里程碑都過一個**獨立 verifier + 對抗式 critic**（專抓 leakage/overfit/gaming）。它的 `NOTES.md` 是一份難得的真實迭代帳：baseline 0.5336 → 0.6703 → 0.8171 → 0.8408 →（critic 抓到一行知識洩漏、修正後）**0.8490**。那行洩漏是把 SF 的 GOP 得票率寫成「六分之一」——那是 **2024 的真實結果**（模型 cutoff 之後才知道），不是 cutoff 前該用的歷史值（NOTES 記 2016 約 9%、2020 約 13%，概括成「約十分之一」）；critic 把它揪出來、改回「約十分之一」才算數。**這就是「分數漲 ≠ 真的變好」與對抗式 critic 的活教材。**
+> - **Tekton**（古建築結構重建，`tangxiya-star/Tekton`）示範 machine-checkable done。`scripts/verify.mjs` 跑一組**程式化斷言**（結構幾何、來源稽核、像素檢查等；確切檢哪些依重建的建物而定）——是本章第三節「程式化斷言」一路推到底、而非 LLM-as-judge。關鍵在 `package.json` 的 `build` 把 `derive → verify → next build` 串起來——**`verify` 回非零就中止 build、擋下出貨**；出貨閘不靠人記得跑，而是 build 本身保證跑。它的 `demo:corrupt`（故意把重建結構往「後世的理想化範式」推、偏離實測值）→ `verify` 拒絕 → `demo:restore` → `verify` 通過，是「verifier 作為不可繞過的閘」最乾淨的示範（接 [Ch 30](./30-hooks.md)）。
+
 ## 對比與取捨
 
 | 設計選擇 | 選項 A | 選項 B | 怎麼選 |
@@ -274,7 +316,7 @@ def run_eval(cases: list[EvalCase], runs_per_case: int = 1) -> dict:
 - **軌跡評分（trajectory eval）**：除了看最終狀態，也可以對「動作序列」打分——它有沒有先讀再改、有沒有重複呼叫、步數是否爆增。對「結果對但路徑危險/浪費」的問題特別有用（接 Ch 38 失敗模式）。
 - **判 multi-agent 系統更難（Ch 27）**：orchestrator-worker 的失敗可能在「拆題拆爛」「某個 subagent 退化」「彙整漏掉衝突」——要能分層 eval（子問題層 + 整體層），不然只知道「整體變差」卻定位不到。
 - **judge 的偏見要主動對抗**：位置偏好（先看到的較高分）、長度偏好、自我偏好（偏好同模型風格）。對策：隨機化呈現順序、rubric 明確扣「冗長」、用不同模型當 judge、定期拿人工校準。
-- **別讓 eval 變成「對著測試寫程式」**：eval set 若一成不變，你會無意識地把 agent 調到剛好過那幾題。保持 eval set 成長、保留一部分「不拿來調、只拿來最後驗」的 held-out 案例。
+- **別讓 eval 變成「對著測試寫程式」**：eval 一旦變成要刷的分數就會被鑽（Goodhart）。守住它的誠信靠凍結答案、held-out split、對抗式 critic——本章第七節整段在講這件事。
 - **成本意識**：跑一輪 eval（尤其每題多跑 + LLM-as-judge）本身要花錢花時間。分層：每次 commit 跑小而快的 smoke set，每次發版跑完整 set。
 
 ## 動手練習
@@ -295,6 +337,7 @@ def run_eval(cases: list[EvalCase], runs_per_case: int = 1) -> dict:
 - 非確定性要**看分布**：成功率、每題多跑、分清 **pass@k（能力）與 pass^k（穩定性）**。
 - 不只量成功率，**一起量成本/延遲/步數/工具錯誤率**，並**按 tag 分群**——總分會蓋掉某類退化。
 - 把 eval 接成**回歸測試 / CI 關卡**：改動前後各跑、設門檻、沒過別上線。
+- **守住 eval 的誠信**（第七節）：迭代迴圈會對著 eval 最佳化、把它鑽穿（Goodhart）。靠**凍結答案（只動旋鈕別動 targets）**、**held-out split（留一刀只驗不調）**、**對抗式 critic（獨立角色專門證明進步是假的）**，並把 done 定義成**機器可判定、不可繞過的閘**。
 
 ## 自我檢核
 
@@ -305,6 +348,7 @@ def run_eval(cases: list[EvalCase], runs_per_case: int = 1) -> dict:
 - [ ] 我能解釋 pass@k 與 pass^k 的差別，以及為什麼上線更在乎後者
 - [ ] 我知道除了成功率還要量哪些指標，以及為什麼要分群看
 - [ ] 我能描述怎麼把 eval 接成回歸測試、且讓 eval set 持續成長
+- [ ] 我能說出為什麼「對著 eval 最佳化」會把它鑽穿（Goodhart），以及凍結答案 / held-out / 對抗式 critic 各擋住哪一種作弊
 
 ## 延伸閱讀
 
@@ -325,6 +369,17 @@ def run_eval(cases: list[EvalCase], runs_per_case: int = 1) -> dict:
   - **這篇說什麼**：建有效 agent 的原則，其中反覆強調「**先能評估、再加複雜度**」——別在沒 eval 的情況下堆功能。
   - **讀哪裡**：關於「measure performance」與「iteratively improve」的段落。
   - **為什麼值得讀**：把 eval 放回 agent 開發流程的位置——它不是事後加的，是迭代的前提。
+
+### 真實案例（開源 harness）
+
+- **[Sim Francisco（`tejasprabhune/simfrancisco`）](https://github.com/tejasprabhune/simfrancisco)** — 一個用 verifier 驅動迭代的選舉模擬 harness（Rust）
+  - **讀哪裡**：`rubric.yaml`（看 `weighted_score_min: 0.70` 與凍結的 targets）、`README.md` 描述的 `sf-hillclimb`／`sf-tune-prompts` workflow（README 文字，非可開啟的實作檔）、`NOTES.md` 整份迭代帳（baseline 0.5336 → final 0.8490，看 iter 4 critic 抓 leakage 那段）。（README 散文另有一處把 gate 寫成 ~0.85，以機器讀的 `rubric.yaml` 0.70 為準。）
+  - **學什麼**：本章第七節三道防線的完整實作——`validate` exit-0 當 done、凍結 targets、train/held-out promote、獨立 verifier + 對抗式 critic。NOTES 是「分數漲 ≠ 真的變好」最好的真實教材。
+  - **前提知識**：本章第六、七節；Ch 27（多 agent 拓樸）。
+- **[Tekton（`tangxiya-star/Tekton`）](https://github.com/tangxiya-star/Tekton)** — 用程式化幾何斷言當出貨閘的古建築重建 harness（Node/Next.js）
+  - **讀哪裡**：`scripts/verify.mjs`（程式化斷言：結構幾何／來源稽核／像素）、`package.json` 的 `build` 怎麼把 `verify` 串進出貨、`artifacts/verifier-report.json`。
+  - **學什麼**：machine-checkable done 與「verify 不過就擋下 build」的不可繞過閘；把本章「程式化斷言 > LLM-as-judge」推到極致的範例。
+  - **前提知識**：本章第三、七節；Ch 30（hook/build gate）。
 
 下一章 **Ch 35 Observability**：eval 要評的「一次跑」到底發生了什麼？你得先能**看見** agent 內部——每一步的 prompt、工具呼叫、token、決策。沒有觀測，eval 抓到「變差了」你也查不出為什麼，dataset 也沒地方撈。
 

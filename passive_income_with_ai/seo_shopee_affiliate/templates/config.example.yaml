@@ -1,0 +1,26 @@
+# cp 成 config.yaml 後填你自己的設定。腳本目前各自吃參數；這份檔是給你集中記錄用，
+# 也方便之後把腳本串成一條 pipeline 時統一讀。
+
+niche: "平價 3C 配件"          # 你的利基；越聚焦越容易建立權威（E-E-A-T）
+site_url: "https://example.tw"
+
+affiliate:
+  program: "蝦皮官方分潤計畫"   # 或 "Involve Asia" 等；以你實際加入的為準
+  affiliate_id: "YOUR_ID"
+  # sub_id 命名規則：建議用文章 slug，方便在後台對帳到是哪篇帶來的單
+  subid_scheme: "article-slug"
+
+# keyword_scorer.py 的建議門檻（目前寫在腳本裡；這裡記錄你採用的值）
+keyword:
+  min_score: 55               # 低於這分先別做
+  max_competition: 0.8        # 競爭度上限（硬門檻）
+
+# content_qa.py 的門檻（同上，記錄用）
+content:
+  min_chars: 800
+  max_affiliate_links: 12
+  keyword_density_max: 0.03
+
+# 淘汰標準（見 README 第五節）
+review_policy:
+  kill_after_days_no_traffic: 180      # 上線半年仍無自然流量 → 重寫或砍

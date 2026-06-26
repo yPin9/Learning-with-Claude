@@ -1,0 +1,25 @@
+# cp 成 config.yaml 後填你自己的設定。腳本目前各自吃參數；這份檔是集中記錄＋之後串 pipeline 用。
+
+niche: "平價 3C / 通勤好物"      # 利基越聚焦，帳號定位越清楚，演算法越知道推給誰
+threads_handle: "@your_handle"
+
+affiliate:
+  program: "蝦皮官方分潤計畫"     # 或 Involve Asia 等；以你實際加入的為準
+  affiliate_id: "YOUR_ID"
+  subid_scheme: "post-code"      # 建議用貼文代號當 sub_id，方便對帳是哪篇帶來的單
+  # ⚠️ 實測過再大量用：確認你的連結型態不會被「導購/開 App」跳轉覆蓋掉分潤追蹤
+  verified_tracking: false
+
+post_qa:                          # 對應 post_qa.py（目前寫在腳本裡，這裡記錄你採用的值）
+  body_min_chars: 30
+  body_max_chars: 600
+  body_must_have_no_link: true    # 內文禁外連（連結放留言）
+  comment_must_have_disclosure: true
+
+cadence:
+  posts_per_day: 2                # Threads 要高頻；但別洗版/別買假互動（違反 Meta 規範）
+  note: "AI 出草稿，真人挑選＋補心得＋手動發佈；不要做全自動帳號農場"
+
+review_policy:
+  keep_if: "看『觸及→留言連結點擊→分潤』，不是看讚數"
+  kill_hook_after: "同一鉤子連續多篇高觸及但零連結點擊 → 換鉤子或換選品"

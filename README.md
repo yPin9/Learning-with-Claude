@@ -109,6 +109,13 @@
 - [local_llm](./ml/local_llm/README.md)
   - 地端 LLM 全端工程：pre-training 原理 + QLoRA fine-tuning + Ollama 部署，CPU 跑得動，34 章 + 4 練習 + 地端繁中小模型 final
 
+### passive_income_with_ai/
+- [threads_shopee_affiliate](./passive_income_with_ai/threads_shopee_affiliate/README.md)
+  - ⭐主力：Threads × 蝦皮分潤可操作 playbook + 腳本，含「拆解別人爆文」判讀框架（post_teardown）與自產貼文 pipeline（鉤子產生器/留言連結/QA 閘/追蹤）
+- [seo_shopee_affiliate](./passive_income_with_ai/seo_shopee_affiliate/README.md)
+  - 長線輔助：SEO 內容站 × 蝦皮分潤，關鍵字選題打分 + AI 產文 + 上線品質閘 + 成效追蹤
+- 註：此分類是「可操作 playbook + 腳本」，不是教學課程；誠實面對「不是真被動」與平台合規
+
 ### systems/
 - [bpf](./systems/bpf/README.md)
   - classic BPF 到 eBPF（verifier / CO-RE / libbpf），最後寫一個 agent

@@ -191,6 +191,8 @@ multi-agent 的帳跟單 agent 很不一樣，編排前要會算：
 - **共享工作區（blackboard 模式）**：當 worker 真的需要看到彼此的部分成果，比「互傳訊息」更好的做法是一個**共享檔案/資料結構**：每個 worker 把結果寫進去、需要時讀別人寫的。這把 N² 的溝通降成「都讀寫同一塊黑板」（Ch 21 的檔案系統正好當這塊黑板，但要注意並發寫入，Ch 21 進階）。
 - **動態 vs 靜態拆解**：第二節把 `subtasks` 當成已拆好。真正的 orchestrator-workers 是 **lead agent 自己拆**——它先用一次模型呼叫產出子任務清單（可能是 structured output，Ch 32），再 fan-out。要不要讓拆解動態，取決於「你事先知不知道會有哪些子任務」。
 - **evaluator-optimizer 迴圈**：generator 產出、evaluator（另一個 agent，可能用不同模型）打分+給修改意見、generator 再改，迴圈到「夠好」或回合上限。關鍵是 evaluator 要有**明確的停止標準**，否則會無限自我批評。適合翻譯、寫作、有測試訊號的程式。
+- **獨立 verifier + 對抗式 critic（驗證驅動的迭代）**：evaluator-optimizer 是「評審打分、產生器改」的品質迴圈；但當這個迴圈**由 agent 自動在跑、而且目標是去過一個 eval / verifier** 時，光有 evaluator 不夠——它會學會作弊（背答案、知識洩漏、鑽分數機制，[Ch 34 §七](./34-eval.md)）。要再加兩個**獨立於 generator** 的角色：**verifier** 獨立重跑那個確定性檢查（測試、`validate`、contract test），確認「進步可重現」而不是某次運氣好；**對抗式 critic** 的任務不是確認進步，而是反過來**證明進步是假的**——主動找 leakage / overfit / gaming 的證據。兩者都要跟產出改動的 generator 用**不同 context、最好不同 prompt/模型**——自己驗自己幾乎一定放水。這把 orchestrator-workers（拆→派→彙整）升級成一個**會自我把關的迭代迴圈**：`診斷失敗 → fan-out 修正 → 獨立 verify + critic 反駁 → 重複`。注意它仍是星狀拓撲：修正 worker 彼此不對話，verifier 與 critic 也各自獨立。
+  > **真實案例**：Sim Francisco（`tejasprabhune/simfrancisco`）的自動迭代 workflow 正是這條。`cargo run --bin validate`（確定性計分、過 `rubric.yaml` 的門檻 `weighted_score_min: 0.70` 才 `exit 0`）找出失敗項 → **每個失敗項 fan-out 一個修正 agent**（本章第二節的 fan-out）→ 一個**獨立 verifier** 重跑 validate + contract tests 確認可重現 → 一個**對抗式 critic** 專抓 leakage/overfit/gaming → 過了才算數、否則再來一輪。它最有名的一次是 critic 揪出 prompt 裡「GOP 得票率六分之一」其實是模型 cutoff 後才知道的 2024 真實結果（知識洩漏），改掉才 promote。這是「星狀拓撲 + 獨立把關角色」在真實 harness 裡的樣子。
 - **可觀測性是 multi-agent 的命門**：worker 過程不進 lead 的 context（Ch 26），出錯時你從 lead 看只是「某個 worker 回了怪東西」。必須把每個 worker 的完整 trace 記到 log、能單獨重放（Ch 35 observability、Ch 39 可重現）。多 agent 系統不做 tracing，等於閉著眼睛開車。
 - **這就是 Anthropic 的 multi-agent research 系統**：一個 lead agent 拆研究問題、並行派多個 subagent 查、用共享記憶體與檔案協調、最後彙整成報告。它的工程筆記把本章許多取捨（拆解品質、並行、成本約 15 倍、協調複雜度、什麼任務適合廣度搜尋）用真實經驗講了一遍——是本章最好的延伸。
 
@@ -220,12 +222,13 @@ multi-agent 的帳跟單 agent 很不一樣，編排前要會算：
 - [ ] 不看本章，我能寫出「一個 worker 逾時/失敗時 orchestrator 該怎麼降級」
 - [ ] 我能舉出一個「該上 multi-agent」和一個「該用單一 agent」的任務，並說明依據
 - [ ] 我能分辨「workflow（寫死路徑）」和「動態 agent 編排」，並知道該先試哪個
+- [ ] 我能說出「獨立 verifier + 對抗式 critic」跟 evaluator-optimizer 的差別，以及為什麼把關角色要獨立於 generator
 
 ## 延伸閱讀
 
 ### 官方文件
 
-- **[Anthropic — Building Effective Agents](https://www.anthropic.com/research/building-effective-agents)** — Anthropic
+- **[Anthropic — Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)** — Anthropic
   - **讀哪裡**：workflow vs agent 的定義，以及五種型態（prompt chaining / routing / parallelization / orchestrator-workers / evaluator-optimizer）各自的圖與適用場景。
   - **能學到什麼**：本章第一節那張地圖的權威來源，以及「能用 workflow 就別上 agent」這個核心判斷。
   - **前提知識**：讀過 Ch 26 更有感。
@@ -236,6 +239,13 @@ multi-agent 的帳跟單 agent 很不一樣，編排前要會算：
   - **這篇說什麼**：一個 lead agent 怎麼拆研究問題、並行派 subagent、怎麼協調與彙整、token 成本（約 15 倍）、什麼任務適合/不適合多 agent。
   - **讀哪裡**：「orchestrator-worker 架構」「prompt 工程與評估」「什麼任務適合多 agent」幾節——對應本章第二、三、四節。
   - **為什麼值得讀**：把本章許多取捨放進真實大型系統、用第一手經驗與數據（如約 15 倍 token）佐證的工程筆記。Ch 26→27 的核心參考。
+
+### 真實案例（開源 harness）
+
+- **[Sim Francisco（`tejasprabhune/simfrancisco`）](https://github.com/tejasprabhune/simfrancisco)** — orchestrator-workers + 獨立 verifier + 對抗式 critic 的選舉模擬 harness（Rust）
+  - **讀哪裡**：`README.md` 描述的 `sf-hillclimb` workflow（診斷失敗 → fan-out 修正 agent → verify + critic）與 `sf-tune-prompts`（K variant + held-out promote）——這些是 README 記載的 workflow，非 repo 裡可開啟的實作檔；`NOTES.md` 看 critic 抓 leakage 的實例。
+  - **能學到什麼**：本章「fan-out」與進階「verifier + 對抗式 critic」拓撲在真實 harness 裡長什麼樣，以及它怎麼跟 [Ch 34 §七](./34-eval.md) 的防作弊三道防線扣在一起。
+  - **前提知識**：本章第二、四節；Ch 34（eval）。
 
 下一章換個維度：不管是單一 agent 還是一群 agent，要做複雜任務都需要**先規劃、再執行、邊做邊追蹤進度**。下一章談 planning 與 todo 管理——agent 怎麼把一個大任務拆成步驟、記住做到哪、不迷路。
 
