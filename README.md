@@ -80,6 +80,8 @@
   - Windows 核心驅動開發 + 核心安全研究雙線：WDM/KMDF/Minifilter/WFP + BYOVD/Token 竊取/Pool 利用/Anti-EDR/VBS-HVCI，40 章 + 3 練習 + NanoEDR final
 - [binary_exploitation](./security/binary_exploitation/README.md)
   - Userland pwn 地基（接 kernel_pwn）：stack smashing → ROP 全譜 → format string → glibc heap 深挖（tcache/House of X）→ 現代無 hook 世界（FSOP/exit handler）+ seccomp 沙箱逃逸/反調試，全程 WSL glibc 2.39 實測，41 章 + 7 練習 + 復刻 pwnable.tw 題鏈 final
+- [browser_pwn](./security/browser_pwn/README.md)
+  - V8 一條到底的瀏覽器 pwn（pwn 天梯頂端，接 binary_exploitation/kernel_pwn）：物件模型（Map/elements kind/pointer compression）→ Ignition/TurboFan/Maglev 管線 → addrof/fakeobj/任意讀寫原語 → TurboFan type confusion 五大家族（CVE-2018-17463/Math.expm1/JSON hole）→ 找洞（patch-diff + Fuzzilli）→ 任意 R/W 繞 V8 Sandbox/CET（data-only）→ CTF+full chain 全景，自編 V8 15.3 真跑驗證，41 章 + 6 練習 + 真實 CVE 到 exploit final
 
 ### soft_skills/
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
