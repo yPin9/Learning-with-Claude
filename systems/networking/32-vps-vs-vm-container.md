@@ -1,214 +1,178 @@
-# Ch 32 — VPS vs VM vs 容器 vs dedicated
+# Ch 32 — VPS vs VM vs 容器
 
-> 目標：搞清楚 hosting 4 個層級的差異，知道何時選 VPS。
+> **目標**：理解雲端運算的基礎概念——VPS（虛擬私人伺服器）是什麼、它和 VM（虛擬機）、容器、實體伺服器的關係、虛擬化的層次（hypervisor vs 容器）、以及為什麼自架服務/VPN 選 VPS。Part 8 要買 VPS 部署服務，這章先建立「VPS 到底是什麼」的理解，串起 Ch 20（netns/容器）的虛擬化知識，為買 VPS（Ch 33）打底。
 
-## 4 個層級
+> **環境**：概念章。為 Part 8 的實務（買 VPS、部署）建立基礎。
 
-```
-   實體設備               (你買 / 租機房)
-       │
-       │ ←─────  Dedicated server (整台租)
-       ▼
-   Hypervisor             (虛擬化層，如 KVM / Xen)
-       │
-       │ ←─────  VPS (Virtual Private Server，租其中 1 個 VM)
-       ▼
-   Linux kernel
-       │
-       │ ←─────  Container (LXC / Docker)
-       ▼
-   Application
-```
+## 為什麼先搞懂 VPS 是什麼？
 
-每層更輕量、隔離更弱。
+Part 8 要你買一台 VPS（每月幾美元）來部署服務、架 VPN（練習 C/D、Final）。但「VPS 到底是什麼」常模糊——它和虛擬機一樣嗎？和雲伺服器、容器有什麼關係？為什麼這麼便宜？
 
-## 各層級對比
+理解 VPS 回答這些，也讓你在買的時候（Ch 33）知道自己買的是什麼、該選什麼規格。VPS 的核心是**虛擬化**——一台實體伺服器被切成多個「虛擬伺服器」，每個租給不同的人。這串起了 Ch 20 的虛擬化知識（netns 是網路虛擬化、VPS 是整台機器的虛擬化）。搞懂虛擬化的層次（hypervisor 的 VM vs 容器），你就理解了現代雲端的基礎。
 
-| 項目 | Dedicated | VPS / VM | Container |
-|---|---|---|---|
-| 隔離 | 完全（不同硬體） | 強（不同 kernel） | 弱（共 kernel） |
-| 性能 | 最強（無 overhead） | 強（少 overhead） | 強（幾乎無 overhead） |
-| 開機時間 | 分鐘 | 秒 | 毫秒 |
-| 資源 | 整台 | 配額 | 配額 |
-| 成本 | 高（$100-1000/月） | 中（$5-100/月） | 低（共享主機） |
-| Self-managed | 完全 | 完全 | 視 host |
-| 適合 | 高 throughput / DB | 一般 web / VPN | 微服務 / dev |
-
-## VPS 的本質
-
-**1 台物理 server 跑 N 個 VM，賣給 N 個用戶**。
+## 先建立直覺:一棟樓切成多間套房
 
 ```
- ┌────────────────────────────────────┐
- │ 物理 server: 32 cores, 128GB RAM   │
- │                                    │
- │  ┌──────┬──────┬──────┬──────┐    │
- │  │ VPS A│ VPS B│ VPS C│ VPS D│    │
- │  │ 1 c  │ 2 c  │ 4 c  │ 8 c  │    │
- │  │ 1 G  │ 2 G  │ 8 G  │ 16 G │    │
- │  └──────┴──────┴──────┴──────┘    │
- │       ↑                            │
- │   Hypervisor (KVM / Xen)           │
- └────────────────────────────────────┘
+虛擬化的層次（從實體到容器）：
+
+  實體伺服器（dedicated）：一整棟樓
+    你獨佔整台機器（貴、但完全掌控、效能最好）
+        │
+  VM / VPS（虛擬機）：把一棟樓切成多間「獨立公寓」
+    hypervisor（虛擬化層）把實體機切成多個 VM
+    每個 VM 有「自己的作業系統」（獨立 kernel）
+    像獨立公寓：有自己的水電、廚房（完整隔離）
+    VPS = 賣給你的一個 VM（虛擬私人伺服器）
+        │
+  容器（container）：一間公寓裡隔出多個「房間」
+    共享一個 OS kernel（Ch 20 的 namespace 隔離）
+    像合租：共用水電（kernel），但各自房間隔離
+    更輕量（不用每個都裝完整 OS）但隔離較弱
+        │
+  → 隔離強度：實體 > VM/VPS > 容器
+    資源效率：容器 > VM/VPS > 實體
+    VPS 是「夠隔離又夠便宜」的甜蜜點
 ```
 
-每個 VPS：
+關鍵心智：虛擬化分層次——**實體伺服器**（獨佔整台，貴）、**VM/VPS**（hypervisor 把實體機切成多個有獨立 OS 的虛擬機，像獨立公寓）、**容器**（共享一個 kernel，用 namespace 隔離，像合租房間，Ch 20）。隔離強度：實體 > VM > 容器；資源效率反過來。**VPS 是賣給你的一個 VM**——「夠隔離又夠便宜」的甜蜜點。
 
-- 獨立 Linux kernel
-- 獨立 IP（公網）
-- 獨立 root access
-- 配額限制（CPU / RAM / disk / 頻寬）
+> VPS 的虛擬化和 Ch 20 的 netns 相關——netns 是「網路 stack 的虛擬化」（容器用），VM/VPS 是「整台機器的虛擬化」（有獨立 kernel）。如果對容器/namespace 不熟，回看 [Ch 20](./20-network-namespaces.md)。
 
-## VPS 種類
-
-### Shared VPS
-
-主流個人用。多用戶共享物理機，**配額限制嚴**。
-
-廠商：Vultr, Linode, DigitalOcean, Hetzner（最便宜）。
-
-### Dedicated CPU VPS
-
-CPU 不共享（vs shared 是「**burst**」CPU）。**穩定 high CPU 場景**。
-
-貴 2-3x。
-
-### High-Memory VPS
-
-RAM 大、CPU 少。資料庫 / cache 用。
-
-### Spot / Preemptible VPS
-
-雲廠商出（AWS Spot, GCP Preemptible）。**便宜 70-90%**，但**隨時可能被收回**。
-
-適合：批次運算、CI、非關鍵服務。
-
-## VPS vs 雲（AWS / GCP / Azure）
-
-| 項目 | 純 VPS（Vultr / Linode） | 大雲（AWS / GCP） |
-|---|---|---|
-| 計費 | 月計、容易預測 | 按使用量、複雜 |
-| 入門 | 簡單 | 複雜（IAM / VPC...） |
-| 服務 | 純機 | 機 + 100+ 服務 |
-| 全球 | 20-30 機房 | 30+ region |
-| 適合 | 個人 / 小專案 | 企業 / 大規模 |
-
-「**個人 / 小團隊用 VPS、企業用大雲**」是普遍指南。
-
-## 容器跟 VPS
-
-容器**不能取代 VPS**。容器需要一個 host，host 通常是 VM / VPS。
-
-「**VPS 上跑 docker**」常見部署模式：
+## VM vs 容器:獨立 kernel 的差別
 
 ```
- VPS (Linux host)
-   ├── nginx container
-   ├── postgres container
-   ├── app container
-   └── monitoring container
+VM（VPS）vs 容器的根本差別：
+
+  VM（VPS）：每個有「獨立的 OS kernel」
+    ┌─────────┐ ┌─────────┐
+    │  App    │ │  App    │
+    │ Guest OS│ │ Guest OS│  ← 每個 VM 完整的 OS（含 kernel）
+    └─────────┘ └─────────┘
+    ┌───────────────────────┐
+    │   Hypervisor          │  ← 虛擬化層（切割硬體）
+    ├───────────────────────┤
+    │   實體硬體             │
+    └───────────────────────┘
+        │
+  容器：共享「宿主的 kernel」
+    ┌─────────┐ ┌─────────┐
+    │  App    │ │  App    │
+    │(只有依賴)│ │(只有依賴)│  ← 容器只打包 app+依賴，沒有 kernel
+    └─────────┘ └─────────┘
+    ┌───────────────────────┐
+    │   宿主 OS Kernel       │  ← 所有容器共享這個 kernel（Ch 20）
+    └───────────────────────┘
+        │
+  → VM 隔離強（獨立 kernel，一個壞不影響別的）但重（每個完整 OS）
+    容器輕（共享 kernel，秒啟動）但隔離弱（共享 kernel = 共同攻擊面）
 ```
 
-容器負責「**應用打包 + 隔離**」，VPS 提供「**底層 OS + IP**」。
+> **VM 有獨立 kernel（隔離強但重）、容器共享宿主 kernel（輕但隔離弱）——這是雲端兩大虛擬化路線的根本差別**。**VM（VPS）** 透過 **hypervisor**（虛擬化層，如 KVM/Xen/VMware）把實體硬體切割，每個 VM 跑**完整的作業系統**（含自己的 kernel）——像獨立公寓，完全隔離（一個 VM 崩潰/被入侵不影響別的），但**重**（每個都要完整 OS 的記憶體/磁碟、開機慢）。**容器**（Docker）共享**宿主的 kernel**（用 Ch 20 的 namespace + cgroup 隔離），只打包 app 和它的依賴（沒有 kernel）——像合租房間，**輕**（共享 kernel，秒啟動、省資源），但**隔離較弱**（共享 kernel = 共同的攻擊面，一個 kernel 漏洞影響所有容器）。選擇：需要強隔離、跑不同 OS、安全敏感 → VM/VPS；需要高密度、快啟動、微服務 → 容器。實務上常**組合**——在 VPS（VM）裡跑容器（Docker），兼得 VM 的隔離和容器的輕量（你的 VPS 裡可以跑很多容器）。理解這個差別，你就懂了「為什麼 VPS 比容器隔離強但比較貴」「為什麼容器秒啟動」，以及 Ch 20 的 namespace 在容器裡的角色。Part 8 你買的 VPS 是一個 VM，可以在裡面跑容器（如果學了 docker 課）。
 
-## 一個常見誤解：「VPS 跟 VM 不同」
+## VPS 的選擇考量（為買 VPS 鋪墊）
 
-**錯**。VPS = VM 給你用。**「Virtual Private Server」就是「私人 VM」**。
+```
+買 VPS 要考慮什麼（Ch 33 會實際操作）：
 
-廠商賣 VPS 服務 = 給你 VM + 公網 IP + Linux 預裝。
+  1. 規格：
+     CPU（核心數）、RAM（記憶體）、磁碟（SSD 容量）
+     頻寬（每月流量上限）、網路速度
+        │
+  2. 地點（很重要！）：
+     離你近 → 延遲低（Ch 16 的 RTT）
+     特定地點 → 看地區內容 / 特定用途
+        │
+  3. 虛擬化類型：
+     KVM（完整虛擬化，獨立 kernel，較好）
+     OpenVZ（容器式，較便宜但隔離弱、限制多）
+        │
+  4. 商家：
+     大廠（DigitalOcean/Vultr/Linode）：穩定、貴一點
+     小廠：便宜，但品質/穩定性參差
+        │
+  5. 價格：
+     入門 ~$5/月（1 核 1GB，夠跑 VPN/小服務）
+        │
+  → 個人用途（VPN/小服務）：$5/月的 KVM VPS 就夠
+    重點：地點（延遲）+ KVM（隔離）+ 可靠商家
+```
 
-## 一個常見誤解：「VPS 比 dedicated 便宜總是好」
+> **買 VPS 最重要的考量是「地點（延遲）+ KVM 虛擬化（隔離）+ 可靠商家」——$5/月就夠個人用途**。買 VPS 的考量：(1) **規格**——CPU/RAM/磁碟/頻寬（個人 VPN 或小服務，1 核 1GB 就夠）；(2) **地點**（很重要！）——離你近延遲低（Ch 16 的 RTT，影響所有互動體驗），或選特定地點達成特定用途（看地區內容）；(3) **虛擬化類型**——**KVM**（完整虛擬化，獨立 kernel，能跑任何東西包括 WireGuard 的 kernel 模組，較好）vs **OpenVZ**（容器式虛擬化，較便宜但隔離弱、有諸多限制如不能改 kernel 參數，**架 VPN 可能受限**——所以選 KVM）；(4) **商家**——大廠（DigitalOcean/Vultr/Linode）穩定但貴一點，小廠便宜但品質參差；(5) **價格**——入門 ~$5/月（1 核 1GB SSD）夠跑 VPN 和小服務。對本課的用途（自架 VPN、部署 HTTPS 服務），**$5/月的 KVM VPS** 就足夠。關鍵提醒：**選 KVM 不要 OpenVZ**（OpenVZ 不能載入 kernel 模組，WireGuard 等可能裝不了）、**選好地點**（延遲影響大）、**選可靠商家**（小廠可能突然跑路或品質差）。Ch 33 會帶你實際買一台並做初始設定。理解這些考量，你買的時候就不會選錯（如貪便宜買 OpenVZ 結果架不了 VPN）。
 
-**部分對**。但：
+## 故意弄壞:理解 VPS 的限制與責任
 
-- VPS 共享物理 → **noisy neighbor**（鄰居 CPU 爆滿影響你）
-- 配額限制 → 突發 burst 可能慢
-- 跑 IO heavy 工作 → 可能卡
+```
+VPS 的限制和「你的責任」（自架的代價）：
 
-**真正性能要求**用 dedicated。**多數場景 VPS 夠**。
+  1. 你負責「一切」（沒有託管的便利）：
+     OS 更新、安全加固（Ch 35）、備份、監控
+     → VPS 是「裸機」，給你 root 但也給你全部責任
+        │
+  2. 暴露在公網（真實的攻擊）：
+     買了 VPS、開機幾分鐘，就開始被掃描/攻擊
+     SSH 暴力破解、漏洞掃描 24/7 不停
+     → 所以 Ch 35（安全加固）是必須，不是選配
+        │
+  3. 資源是「共享的」（VPS 不是獨佔）：
+     同一實體機的其他 VPS 可能影響你（吵鄰居問題）
+     → 大廠較少這問題，小廠可能超賣
+        │
+  4. 商家能看到你的資料：
+     VPS 在商家的硬體上 → 理論上他們能存取
+     → 敏感資料要加密（但 VPN 流量對他們是加密的）
+        │
+  → VPS 給你自由（完全掌控）也給你責任（自己負責安全/維護）
+    這是「自架」的本質：能力越大，責任越大
+```
 
-## 一個常見誤解：「容器比 VM 慢」
-
-**錯**。容器**幾乎沒 overhead**（共享 kernel）。
-
-「VM 比容器強」常指**隔離強度** — 一個 VM 崩不影響其他 VM；container 共 kernel，kernel bug 影響全部。
-
-## 一個常見誤解：「VPS 能跑任何東西」
-
-**部分對**。VPS 限制：
-
-- 不能跑非 Linux kernel module（除非廠商允許）
-- 某些 VPS 禁 BT / VPN / 翻牆 / 挖礦
-- 頻寬有限制（流量超就限速 / 收費）
-- 公網 IP 可能被某些 site 列黑名單（如果其他 VPS 用戶被 abuse）
-
-買前看廠商 ToS。
+> **買 VPS 後幾分鐘就會被公網掃描攻擊——這就是為什麼 Ch 35（安全加固）是必須而非選配**。VPS 的「自由」（完全掌控、root 權限）伴隨「責任」——你負責一切（OS 更新、安全、備份、監控），沒有託管服務的便利。最震撼的現實是：**買了 VPS、開機幾分鐘，它就開始被掃描和攻擊**——公網上有無數機器人 24/7 掃描所有 IP，嘗試 SSH 暴力破解（Ch 12，用常見密碼猜）、掃描已知漏洞。你的 VPS 一上線就在這個「公網叢林」裡。**所以 Ch 35（安全加固——關閉密碼登入、改 SSH port、設防火牆、fail2ban）是必須的**，不是學完才做的選配。這是「真的暴露在公網」和「在家用 NAT 後面」的根本差別（Ch 8——NAT 後面有天然保護，公網 VPS 完全暴露）。其他現實：資源是共享的（VPS 不獨佔實體機，可能有「吵鄰居」影響，小廠超賣更嚴重）、商家理論上能存取你的資料（VPS 在他們硬體上——所以敏感資料要加密，不過 VPN 流量對他們是加密的）。理解這些，你買 VPS 後第一件事就是安全加固（Ch 35），而不是急著部署服務。「能力越大，責任越大」——自架給你完全掌控，也要你完全負責。Ch 33（買 VPS）和 Ch 35（加固）會帶你正確地起步。
 
 ## 動手練習
 
-**1. 列你目前用的 hosting**
+1. 理解虛擬化層次：畫出實體/VM/容器的層次圖，說出隔離和效率的取捨
 
-寫下：
+2. VM vs 容器：說明獨立 kernel（VM）vs 共享 kernel（容器）的差別和影響
 
-- 用什麼？（VPS / 雲 / 主機）
-- 每月成本？
-- 跑什麼？
+3. 規劃 VPS 需求：根據你的用途（VPN？小網站？），列出需要的規格和地點
 
-**2. 比較 5 家 VPS provider**
+4. 理解 KVM vs OpenVZ：說明為什麼架 VPN 要選 KVM
 
-去看 5 家定價（Vultr, Linode, DigitalOcean, Hetzner, AWS Lightsail）：
+5. 思考責任：列出買 VPS 後你要負責的事（安全/更新/備份），理解自架的代價
 
-| 廠商 | 1G RAM 月費 | 機房 | 頻寬 |
-|---|---|---|---|
-| Vultr | ? | ? | ? |
-| ...
+## 本章重點整理
 
-選最適合你的。
-
-**3. benchmark 自己 VPS**
-
-```bash
-# CPU
-sysbench cpu --threads=4 run
-
-# Disk
-dd if=/dev/zero of=test.bin bs=1M count=1000 oflag=direct
-
-# Network
-speedtest-cli   # apt install speedtest-cli
-```
-
-跟 advertised spec 對比。
-
-**4. 看 VPS 的「噪音鄰居」**
-
-```bash
-# CPU steal time（hypervisor 偷的 CPU 時間）
-top
-# 或
-vmstat 1
-# %st 欄位高 = noisy neighbor
-```
-
-如果 `%st` > 5% 持續，換 dedicated CPU VPS。
-
-**5. 比較 VPS / 容器啟動時間**
-
-```bash
-# VPS：從廠商 dashboard 看 deploy 時間
-# Container：
-time docker run --rm alpine echo hi
-# 通常 0.5 秒
-```
+- 虛擬化層次：實體伺服器（獨佔）> VM/VPS（hypervisor 切割，獨立 kernel）> 容器（共享 kernel，namespace 隔離）
+- VPS = 賣給你的一個 VM；隔離強度 實體>VM>容器，資源效率反過來；VPS 是「夠隔離又夠便宜」的甜蜜點
+- VM（獨立 kernel，隔離強但重）vs 容器（共享宿主 kernel，輕但隔離弱）；常組合（VPS 裡跑容器）
+- 買 VPS 考量：地點（延遲）+ KVM 虛擬化（不要 OpenVZ，能架 VPN）+ 可靠商家；$5/月夠個人用
+- VPS 的責任：一切自己負責（安全/更新/備份）；上線幾分鐘就被公網掃描攻擊 → Ch 35 加固是必須
 
 ## 自我檢核
 
-- [ ] 講得出 dedicated / VPS / container 三層差異
-- [ ] 知道 VPS 是 VM
-- [ ] 知道 VPS 跟雲（AWS / GCP）的區別
-- [ ] 列得出 5+ 家 VPS provider
-- [ ] benchmark 過自己的 VPS
+- [ ] 能解釋 VPS、VM、容器、實體伺服器的關係和取捨
+- [ ] 知道 VM（獨立 kernel）和容器（共享 kernel）的根本差別
+- [ ] 知道買 VPS 該考慮什麼（地點/虛擬化/商家），為什麼選 KVM
+- [ ] 理解 VPS 的「自由與責任」，為什麼一上線就被攻擊
+- [ ] 串起 Ch 20 的虛擬化知識（netns/容器 vs VM）
 
-下一章看怎麼買 VPS — 機房選擇 / 規格 / 廠商。
+## 延伸閱讀
 
-→ [Ch 33 買 VPS](./33-buying-vps.md)
+### 文章
+
+- **[VM vs Container](https://www.docker.com/resources/what-container/)** — Docker
+  - **這篇說什麼**：VM 和容器的對比，虛擬化層次
+  - **讀哪裡**：對比那節
+  - **為什麼值得讀**：本章 VM vs 容器的視覺化版
+
+- **[Choosing a VPS](https://www.digitalocean.com/community/tutorials/initial-server-setup-with-ubuntu-22-04)** — DigitalOcean
+  - **這篇說什麼**：VPS 的選擇和初始設定
+  - **為什麼值得讀**：連接 Ch 33 的實際操作
+
+### 書籍
+
+- **《Site Reliability Engineering》— Google（基礎設施章節）**
+  - **這本書的定位**：理解雲端基礎設施的運維視角
+
+下一章實際操作——買一台 VPS 並做初始設定（建立非 root 使用者、SSH 金鑰、基本設定），讓你真正擁有一台公網伺服器。
+
+→ [Ch 33 買 VPS 與初始設定](./33-buying-vps.md)

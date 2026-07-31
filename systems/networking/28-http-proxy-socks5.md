@@ -1,323 +1,218 @@
-# Ch 28 — HTTP Proxy / SOCKS5
+# Ch 28 — HTTP proxy 與 SOCKS5
 
-> 目標：搞懂 HTTP Proxy 跟 SOCKS5 的本質、跟 VPN 的差別、各自應用場景。
+> **目標**：理解 proxy（代理）——它和 VPN 的差別（應用層 vs 網路層）、HTTP proxy（轉發 HTTP 請求）和 SOCKS5（轉發任意 TCP/UDP）的運作、forward proxy vs reverse proxy（兩種完全不同的東西）、以及 proxy 在「換 IP/跳板/翻牆」的角色。proxy 是比 VPN 更輕量的「換出口」方案，也是 Part 7 翻牆生態的基礎——Shadowsocks/V2Ray 本質都是「加密的 SOCKS proxy」。
 
-## Proxy 是什麼
+> **環境**：Linux（ssh -D / curl --proxy）。
 
-「**中間人**」 — 客戶端不直接連目標，而是叫 proxy 代為連、回傳結果。
+## 為什麼 proxy 是 VPN 之外的選擇？
 
-```
- client ──────► proxy ──────► destination
-        request           request
-        (我想連 example.com)
-                          (proxy 替你連)
-        ◄──────         ◄──────
-        response          response
-```
+Ch 27 說「VPN 不是萬靈丹，有時 proxy 就夠」。proxy 是「代理」——你不直接連目的地，而是請一個中間人（proxy）代替你連。它比 VPN 輕量（不用建隧道、不用改路由、可針對單一應用）。
 
-跟 VPN 不同：proxy 是 **應用層** 的，每個應用要單獨設定。
+理解 proxy 回答了幾個問題：proxy 和 VPN 到底差在哪？為什麼瀏覽器有「proxy 設定」？SSH 的 `-D`（Ch 12）建的 SOCKS proxy 是什麼？最重要的——Part 7 的翻牆工具（Shadowsocks/V2Ray）本質上都是「加密的 SOCKS proxy」，理解 proxy 是理解它們的基礎。這章也釐清一個常見混淆：forward proxy（你用來連外面）和 reverse proxy（伺服器前面擋著的，如 nginx，Ch 36）是兩種完全不同的東西。
 
-## 為什麼用 Proxy
-
-- **匿名 / 翻牆**：destination 看到的是 proxy IP
-- **快取**：企業 / ISP proxy 快取常見資源
-- **過濾**：黑名單 / 白名單管制
-- **負載平衡**：多 backend 分流（reverse proxy）
-- **Inspect**：企業 audit traffic（含 SSL inspection）
-
-## HTTP Proxy
-
-最簡單的 proxy — 只代理 HTTP / HTTPS。
-
-### HTTP（明文）
-
-client 送 request 到 proxy：
+## 先建立直覺:proxy 是代購
 
 ```
-GET http://example.com/path HTTP/1.1
-Host: example.com
+proxy = 代購（你不直接買，請人代買）
+
+  直連：你 ──────▶ 目的地（網站）
+        │
+  proxy：你 ──▶ proxy ──▶ 目的地
+              （代理替你連，再把結果轉給你）
+        │
+  目的地看到的是「proxy 的 IP」，不是你的
+    → 換 IP / 隱藏真實位置 / 跳板
+        │
+  proxy vs VPN 的關鍵差別：
+    VPN：在「網路層」攔截「所有」流量（改路由，Ch 23）
+         系統級，所有 app 的流量都走 VPN
+        │
+    proxy：在「應用層」，「特定 app」設定用它
+         瀏覽器設 proxy → 只有瀏覽器走 proxy
+         其他 app 不受影響（除非各自設定）
+        │
+  → VPN 是「全車改道」，proxy 是「指定某些乘客搭專車」
+    proxy 更輕量、更精準，但要 app 支援/設定
 ```
 
-注意：**Request line 是完整 URL**，不是只 path（直接連時是 `GET /path`）。
+關鍵心智：proxy 是「代購」——你請中間人代替你連目的地，目的地看到 proxy 的 IP。和 VPN 的關鍵差別：**VPN 在網路層攔截所有流量（系統級，改路由）、proxy 在應用層由特定 app 設定使用**。VPN 是「全車改道」，proxy 是「指定某些乘客搭專車」。proxy 更輕量精準，但要 app 支援。
 
-proxy 收到後 → 連 example.com → 取結果 → 回 client。
+> proxy 和 VPN（Ch 23）都做「換出口」，但層次不同。SSH 的 `-D`（Ch 12）建的就是 SOCKS proxy。Part 7 的翻牆工具是「加密的 proxy」。如果對 VPN、SSH tunnel 不熟，回看 [Ch 23](./23-vpn-overview.md) 和 [Ch 12](./12-ssh-and-others.md)。
 
-### HTTPS（CONNECT method）
-
-HTTPS 是端到端加密，proxy 不能解密。用 **CONNECT method** 建立 tunnel：
+## HTTP proxy vs SOCKS5
 
 ```
-client 送：
-CONNECT example.com:443 HTTP/1.1
-Host: example.com:443
+兩種 proxy（轉發的層次不同）：
 
-proxy 連到 example.com:443，回：
-HTTP/1.1 200 Connection Established
-
-之後 client ↔ proxy ↔ destination 用 raw TCP（client 跟 destination 做 TLS 握手）
+  HTTP proxy：專門轉發 HTTP/HTTPS
+    理解 HTTP 協定（看得到/能改 HTTP 請求）
+    用途：網頁快取、過濾、企業上網管控
+    限制：只能 HTTP（其他協定不行）
+    HTTPS 用 CONNECT 方法（建隧道，proxy 看不到加密內容）
+        │
+  SOCKS5 proxy：轉發「任意 TCP/UDP」
+    不理解應用協定（只轉發 bytes）
+    用途：任何 TCP/UDP 流量（HTTP、SSH、遊戲、任何東西）
+    更通用（這就是為什麼翻牆工具用 SOCKS）
+        │
+  → HTTP proxy：懂 HTTP，只能 HTTP
+    SOCKS5：不懂協定，但能轉發任何東西（更通用）
+    翻牆工具（Shadowsocks/V2Ray）都提供 SOCKS5 介面
 ```
-
-proxy 只是「**中介管道**」，看不到加密內容。
-
-### 配置 HTTP Proxy
 
 ```bash
-# 環境變數
-export http_proxy=http://proxy.company.com:8080
-export https_proxy=http://proxy.company.com:8080
+# === SOCKS5 proxy（用 SSH -D，Ch 12）===
+ssh -D 1080 user@server          # 在本機 1080 建 SOCKS5 proxy
+# 用 curl 透過它
+curl --socks5 127.0.0.1:1080 https://ifconfig.me
+# → 顯示 server 的 IP（流量經過 server 出去）
 
-# 認證
-export http_proxy=http://user:pass@proxy.company.com:8080
+# === HTTP proxy ===
+# 用 curl 透過 HTTP proxy
+curl --proxy http://proxy-server:8080 https://example.com
+# 設環境變數（很多工具會讀）
+export http_proxy=http://proxy-server:8080
+export https_proxy=http://proxy-server:8080
+curl https://ifconfig.me         # 透過 proxy
 
-# curl
-curl --proxy http://proxy:8080 https://example.com
-
-# wget
-wget --proxy=on --http-proxy=proxy:8080 http://example.com
-
-# git
-git config --global http.proxy http://proxy:8080
+# === 瀏覽器設 proxy ===
+# 設定 → 網路 → proxy → SOCKS5 127.0.0.1:1080（搭配 ssh -D）
+# → 只有瀏覽器的流量走 proxy
 ```
 
-## SOCKS5
+> **SOCKS5（轉發任意 TCP/UDP）比 HTTP proxy（只懂 HTTP）通用——這是翻牆工具都用 SOCKS5 的原因**。**HTTP proxy** 專門轉發 HTTP/HTTPS——它**理解** HTTP 協定（能看請求、做快取、過濾），用於企業上網管控、網頁快取。但它只能 HTTP（其他協定如 SSH、遊戲不行），且 HTTPS 時用 CONNECT 方法建隧道（proxy 看不到加密內容，只轉發）。**SOCKS5** 是「協定無關」的——它不理解應用協定，只**轉發 bytes**（任意 TCP/UDP），所以能代理**任何**流量（HTTP、SSH、遊戲、BT…）。這個通用性是 SOCKS5 的價值，也是為什麼**翻牆工具（Shadowsocks/V2Ray）都提供 SOCKS5 介面**——它們要代理你所有的流量，不只網頁。`ssh -D`（Ch 12）建的就是 SOCKS5 proxy（最簡單的「自架 proxy」）。實務上你設一個 SOCKS5 proxy（如 `ssh -D 1080`），讓瀏覽器或特定 app 用它——流量就經過 proxy 出去。理解 HTTP proxy（懂協定、只 HTTP）vs SOCKS5（不懂協定、通用）的差別，你就知道為什麼翻牆要 SOCKS5、企業上網管控用 HTTP proxy。
 
-更通用的 proxy — **任意 TCP / UDP**，不只 HTTP。
+## Forward proxy vs Reverse proxy（重要的混淆）
 
-### SOCKS 演進
-
-- SOCKS4：1992，TCP only，沒 auth
-- SOCKS4a：DNS 也走 proxy
-- **SOCKS5**：1996（RFC 1928），TCP + UDP + auth + IPv6
-
-「**SOCKS5 是現代標準**」。
-
-### SOCKS5 流程
+這是 proxy 最常被混淆的概念——兩種完全不同的東西：
 
 ```
- client ─── 連 proxy:1080
-      ──► greeting (auth methods)
-      ◄── chosen auth
-      ──► auth (username/pass etc)
-      ◄── auth result
-      ──► CONNECT example.com:443
-      ◄── connect result
-      ◄── ↕ ─── raw bytes (TCP)
+Forward proxy vs Reverse proxy（方向完全相反）：
+
+  Forward proxy（正向代理）—— 替「客戶端」工作：
+    客戶端 ──▶ [forward proxy] ──▶ 各種網站
+    你（客戶端）用它連外面
+    目的：換 IP、跳板、翻牆、企業上網管控
+    「代理你去連別人」
+        │
+  Reverse proxy（反向代理）—— 替「伺服器」工作：
+    各種客戶端 ──▶ [reverse proxy] ──▶ 後端伺服器們
+    伺服器用它擋在前面（如 nginx，Ch 36）
+    目的：負載平衡、TLS 終止、快取、隱藏後端
+    「代理別人來連你」
+        │
+  → forward proxy 在「客戶端側」（你用它出去）
+    reverse proxy 在「伺服器側」（擋在伺服器前面）
+    兩者都叫 proxy 但方向和用途完全相反！
+        │
+  本章（翻牆相關）講 forward proxy
+  Ch 36（nginx 部署）講 reverse proxy
 ```
 
-跟 HTTP CONNECT 類似，但**任意協定** (TCP/UDP/IPv6 都行)。
+> **forward proxy（替客戶端連外）和 reverse proxy（替伺服器擋前面）是兩種方向相反的東西——別混淆**。這是 proxy 最大的混淆源。**Forward proxy**（正向代理）站在**客戶端側**——你用它連外面的網站（換 IP、跳板、翻牆、企業管控上網）。它「代理你去連別人」，外面的網站看到 proxy 的 IP。SSH `-D`、Shadowsocks、企業上網 proxy 都是 forward proxy（本章和 Part 7 的主題）。**Reverse proxy**（反向代理）站在**伺服器側**——它擋在後端伺服器前面，接收外面來的請求再轉給後端（nginx 就是典型，Ch 36）。它「代理別人來連你」，外面的客戶端看到 reverse proxy 的 IP（不知道後端在哪），用於負載平衡、TLS 終止（在這裡解密 HTTPS）、快取、隱藏/保護後端。**方向完全相反**：forward proxy 你（客戶端）主動用它出去、reverse proxy 是伺服器擺在前面被動接收。但兩者都叫「proxy」（都是「中間轉發」），所以常混淆。記住：**forward = 客戶端側出去、reverse = 伺服器側進來**。本章講 forward proxy（連外/翻牆），Ch 36（部署）講 reverse proxy（nginx 擋在你的服務前面）。理解這個區別，你看到「proxy」時就知道是哪種。
 
-### 配置 SOCKS5
+## proxy 在翻牆的角色（預告 Part 7）
 
-很多應用支援：
+```
+proxy 怎麼用於翻牆（Part 7 的基礎）：
+
+  基本原理：
+    你（被審查的網路內）──▶ proxy（牆外伺服器）──▶ 被封的網站
+    proxy 在牆外，替你訪問被封的網站
+        │
+  但「裸 proxy」會被封：
+    審查者能識別 proxy 流量（SOCKS5/HTTP proxy 有特徵）
+    或封鎖 proxy 伺服器的 IP
+        │
+  所以翻牆需要「加密 + 偽裝的 proxy」：
+    Shadowsocks（Ch 29）：加密的 SOCKS5（流量看起來像隨機 bytes）
+    V2Ray/Xray（Ch 30）：更進階，能偽裝成正常 HTTPS 流量
+        │
+  → 翻牆工具 = SOCKS5 proxy + 加密 + 偽裝
+    本章的 SOCKS5 是它們的「介面」（你的 app 連 SOCKS5）
+    加密/偽裝是它們對抗審查的部分（Ch 29-31）
+        │
+  ssh -D 為什麼能翻牆又容易被封：
+    它是加密的（SSH 加密）→ 能翻牆
+    但 SSH 流量特徵明顯 → 易被識別封鎖（Ch 31）
+```
+
+> **翻牆工具本質是「SOCKS5 proxy + 加密 + 偽裝」——理解這個分解，Part 7 就有了框架**。翻牆的基本原理是 forward proxy——你連一個牆外的 proxy，它替你訪問被封的網站。但**裸 proxy 會被封**：審查者能識別 SOCKS5/HTTP proxy 的流量特徵，或封鎖 proxy 伺服器的 IP。所以翻牆需要在 proxy 上加兩層：**加密**（讓流量內容看不出是什麼）+ **偽裝**（讓流量「看起來像正常流量」，不被識別為 proxy）。**Shadowsocks**（Ch 29）是「加密的 SOCKS5」——流量加密成看似隨機的 bytes。**V2Ray/Xray**（Ch 30）更進階——能把流量偽裝成正常的 HTTPS（審查者難以區分）。所以這些工具的架構是：**SOCKS5 proxy 介面**（你的 app 連它，本章的內容）+ **加密層**（Ch 29）+ **偽裝層**（Ch 30）。`ssh -D` 為什麼能翻牆又易被封？它是加密的（SSH 加密 → 能翻牆），但 SSH 流量**特徵明顯**（審查者一看就知道是 SSH，易封鎖，Ch 31）——它有加密沒偽裝。理解這個分解（proxy + 加密 + 偽裝），你就懂了 Part 7 翻牆工具在解決什麼、各自的演進方向。本章的 SOCKS5 是基礎介面，Ch 29-31 是加密和偽裝的攻防。
+
+## 故意弄壞:理解 proxy 的洩漏與限制
 
 ```bash
-# curl
-curl --socks5 proxy:1080 https://example.com
-curl --socks5-hostname proxy:1080 https://example.com   # DNS 也走 proxy
+# proxy 的常見問題（理解它的限制）
 
-# Firefox：Settings → Network → Manual proxy → SOCKS5
-# Chrome：用 extension 或啟動參數
+# 1. DNS 洩漏（和 VPN 一樣的問題，Ch 9/23）
+# 用 SOCKS5 proxy 但 DNS 沒走 proxy → 洩漏你查什麼
+# curl --socks5 vs --socks5-hostname 的差別：
+ssh -D 1080 user@server &
+curl --socks5 127.0.0.1:1080 https://example.com         # DNS 可能在本地解析（洩漏）
+curl --socks5-hostname 127.0.0.1:1080 https://example.com # DNS 也走 proxy（不洩漏）
+#   → --socks5-hostname 讓域名解析也經過 proxy（重要！）
+
+# 2. 只有「設定了 proxy 的 app」走 proxy
+# 瀏覽器設了 proxy，但其他 app（系統更新、其他程式）沒走 → 流量分流
+# → 這是 proxy vs VPN 的關鍵差別（VPN 全部走，proxy 只有設定的走）
+
+# 3. proxy 本身能看到你的流量（除非端到端加密）
+# proxy 是中間人 → 如果你連的是 HTTP（明文），proxy 看得到內容
+# → 所以要嘛信任 proxy、要嘛用 HTTPS（端到端加密，proxy 只看到加密的）
+
+# 4. 環境變數 proxy 不是所有工具都讀
+echo $http_proxy                 # 設了，但不是所有程式都讀這個變數
 ```
 
-### SSH 內建 SOCKS5 server
-
-SSH 一行建 SOCKS5 proxy：
-
-```bash
-ssh -D 1080 user@vps
-```
-
-之後本機 `localhost:1080` 是 SOCKS5 proxy → 走 VPS。**極簡 VPN 替代**。
-
-```bash
-# 用它
-curl --socks5 localhost:1080 https://example.com
-```
-
-## VPN vs Proxy
-
-| 維度 | VPN | Proxy |
-|---|---|---|
-| 範圍 | 整台機器 | 應用 / browser |
-| 層級 | L3 (IP) | L4-7 |
-| 設定 | OS 層 / 整體 | 每應用 |
-| 加密 | 是 | 視 proxy 而定 |
-| Speed overhead | 中 | 低 |
-| DNS | 走 VPN（如果配對） | 看設定（容易 leak） |
-| Routing | 整路 | 應用自己決定 |
-
-簡單版：
-
-- **VPN**：「整台用」  
-- **Proxy**：「單一程式用」
-
-## 透明 Proxy（Transparent Proxy）
-
-某些場景：proxy **不需要 client 配置**，路由器自動把 traffic 導 proxy。
-
-例：企業 / 學校網路。你瀏覽器以為直連 google.com，**實際 routes 過 proxy**。
-
-技術：iptables `REDIRECT` / `TPROXY`。
-
-副作用：你不知道流量被中間人，**HTTPS 偵測得到**（因為 TLS cert 對不上）。
-
-## Reverse Proxy
-
-跟「正向 proxy」相反 — **server 端**的中介：
-
-```
- internet client ──► reverse proxy ──► backend server 1
-                  (nginx / haproxy)  ──► backend server 2
-                                     ──► backend server 3
-```
-
-用途：
-
-- **load balance**：多 backend 分流
-- **SSL termination**：proxy 處理 HTTPS，backend 用 HTTP（簡化）
-- **快取**：減少 backend load
-- **safety**：backend 不直接暴露
-- **routing**：按 URL 分流到不同服務
-
-nginx / haproxy / Caddy 都是 reverse proxy。**現代 web app 必備**。
-
-Ch 36 詳細。
-
-## 一個常見誤解：「Proxy 跟 VPN 一樣安全」
-
-**錯**。Proxy 不一定加密。HTTP proxy 走明文，**任何中間人能看**。
-
-要安全用：
-
-- HTTPS proxy（少見）
-- SOCKS5 over TLS / SSH tunnel
-- 連 proxy 的 channel 自己加密
-
-## 一個常見誤解：「設了 proxy 整台機器都走」
-
-**錯**。proxy 是**應用層**設定。設 `http_proxy` 環境變數**只影響讀這個變數的程式**（curl / wget / git 等）。
-
-瀏覽器 / 其他應用要單獨設。
-
-要全機走 → VPN 或 transparent proxy。
-
-## 一個常見誤解：「DNS 一定走 proxy」
-
-**部分對**。看設定：
-
-- `curl --socks5 proxy:1080`：**DNS 在本機解**，再連 IP
-- `curl --socks5-hostname proxy:1080`：**DNS 也走 proxy**
-
-「DNS leak」常見場景：你以為翻牆但 ISP 看到你查了 google.com。
-
-## 一個常見誤解：「Proxy 都很慢」
-
-**部分對**。HTTP proxy 額外解析請求 / 快取查詢有 overhead。
-
-但**SOCKS5 / SSH tunnel** 接近 wire speed（只是中介傳）。
+> **`--socks5-hostname`（DNS 也走 proxy）vs `--socks5`（DNS 本地解析）是 proxy 防洩漏的關鍵差別**。proxy 和 VPN 一樣有 **DNS 洩漏**問題（Ch 9/23）——如果你的流量走 proxy 但**域名解析在本地做**，就洩漏了「你要訪問哪個域名」（即使連線內容走 proxy）。curl 的 `--socks5`（在本地解析 DNS 再連 proxy）vs `--socks5-hostname`（把域名交給 proxy 解析）——後者讓 **DNS 也走 proxy**，不洩漏。這是翻牆時的重要細節（DNS 洩漏會暴露你訪問被封網站，且本地 DNS 可能被污染，Ch 9/31）。其他限制：(1) **只有設定 proxy 的 app 走 proxy**（其他 app 流量分流，這是 proxy vs VPN 的核心差別——VPN 全走、proxy 選擇性走，各有好處）；(2) **proxy 能看到你的流量**（它是中間人，連明文 HTTP 時看得到內容——所以要信任 proxy 或用 HTTPS 端到端加密）；(3) **環境變數 proxy 不是所有工具都讀**（`http_proxy` 是慣例但非強制）。理解這些限制，你用 proxy 時就知道怎麼避免洩漏（用 `--socks5-hostname`、確認所有要保護的 app 都設了 proxy、用 HTTPS）。這些細節在翻牆場景（Part 7）特別重要——一個 DNS 洩漏可能暴露你的真實行為。
 
 ## 動手練習
 
-**1. SSH 一行 SOCKS5**
+1. 建 SOCKS proxy：用 `ssh -D 1080` 建一個，用 `curl --socks5` 透過它，看 IP 變成 server 的
 
-```bash
-# 在本機
-ssh -D 1080 user@vps -N    # -N 不開 shell
+2. HTTP vs SOCKS：理解 HTTP proxy（只 HTTP）和 SOCKS5（任意 TCP/UDP）的差別
 
-# 另開 terminal
-curl --socks5-hostname localhost:1080 ifconfig.me
-# 應該顯示 VPS IP
-```
+3. forward vs reverse：畫出兩者的方向圖，說出各自的用途（連外 vs 擋在伺服器前）
 
-**2. 看 HTTP proxy CONNECT**
+4. DNS 洩漏：對比 `--socks5` 和 `--socks5-hostname`，理解 DNS 走不走 proxy 的差別
 
-```bash
-sudo tcpdump -nn -i any 'port 8080' &
-curl --proxy http://localhost:8080 https://example.com
-```
+5. 思考翻牆：理解「翻牆工具 = SOCKS5 + 加密 + 偽裝」的分解，預告 Ch 29-31
 
-如果你跑了 proxy（如 squid），看 CONNECT method packet。
+## 本章重點整理
 
-**3. 配 Firefox SOCKS5**
-
-Settings → Network → Manual proxy → SOCKS5 host = localhost, port 1080。打開 ipchicken.com 看 IP 變了。
-
-**4. 寫個 simple HTTP proxy（python）**
-
-```python
-import socket, threading
-
-def handle(conn):
-    data = conn.recv(4096)
-    if not data: return
-    
-    # 解析第一行
-    first_line = data.split(b'\n')[0]
-    method, url, _ = first_line.split()
-    
-    if method == b'CONNECT':
-        host, port = url.split(b':')
-        port = int(port)
-    else:
-        # parse Host header for HTTP
-        for line in data.split(b'\n'):
-            if line.lower().startswith(b'host:'):
-                host = line.split(b':')[1].strip()
-                port = 80
-                break
-    
-    # 連 destination
-    upstream = socket.socket()
-    upstream.connect((host.decode(), port))
-    
-    if method == b'CONNECT':
-        conn.send(b'HTTP/1.1 200 OK\r\n\r\n')
-    else:
-        upstream.send(data)
-    
-    # forward 兩邊
-    def forward(src, dst):
-        try:
-            while True:
-                data = src.recv(4096)
-                if not data: break
-                dst.send(data)
-        finally:
-            src.close(); dst.close()
-    
-    threading.Thread(target=forward, args=(conn, upstream)).start()
-    threading.Thread(target=forward, args=(upstream, conn)).start()
-
-s = socket.socket()
-s.bind(('0.0.0.0', 8888))
-s.listen(5)
-print("proxy on 8888")
-while True:
-    conn, _ = s.accept()
-    threading.Thread(target=handle, args=(conn,)).start()
-```
-
-```bash
-python3 proxy.py
-# 另一個 terminal
-curl --proxy http://localhost:8888 http://example.com
-```
-
-簡化版 HTTP proxy，玩玩看。
-
-**5. SSH SOCKS5 + browser**
-
-開 SSH SOCKS5 + Firefox 設 proxy → 整個 Firefox traffic 走 VPS。同時 Chrome 不設 → 走本地。**雙瀏覽器雙 IP**。
+- proxy 是「代購」——中間人替你連目的地；vs VPN：proxy 在應用層（特定 app 設定）、VPN 在網路層（系統級全流量）
+- HTTP proxy（懂 HTTP、只 HTTP、能快取過濾）vs SOCKS5（不懂協定、轉發任意 TCP/UDP、更通用）
+- forward proxy（客戶端側，你用它連外/翻牆）vs reverse proxy（伺服器側，nginx 擋前面，Ch 36）——方向相反，別混淆
+- 翻牆工具 = SOCKS5 proxy（介面）+ 加密（Ch 29）+ 偽裝（Ch 30）；ssh -D 有加密無偽裝（易被封）
+- proxy 限制：DNS 洩漏（用 --socks5-hostname 防）、只有設定的 app 走、proxy 看得到明文流量
 
 ## 自我檢核
 
-- [ ] HTTP Proxy 跟 SOCKS5 差別清楚
-- [ ] 知道 CONNECT method 怎麼處理 HTTPS
-- [ ] 用 SSH `-D` 建過 SOCKS5
-- [ ] 知道「proxy 不一定加密」
-- [ ] 知道 reverse proxy 跟正向的區別
-- [ ] 配置過 curl / Firefox 走 proxy
+- [ ] 能說出 proxy 和 VPN 的核心差別（應用層 vs 網路層）
+- [ ] 知道 HTTP proxy 和 SOCKS5 的差別，為什麼翻牆用 SOCKS5
+- [ ] 能區分 forward proxy 和 reverse proxy（方向和用途）
+- [ ] 理解「翻牆工具 = SOCKS5 + 加密 + 偽裝」的分解
+- [ ] 知道 proxy 的 DNS 洩漏問題和怎麼防
 
-下一章看 Shadowsocks — 翻牆界的經典工具。
+## 延伸閱讀
+
+### 文章
+
+- **[Forward vs Reverse proxy](https://www.cloudflare.com/learning/cdn/glossary/reverse-proxy/)** — Cloudflare
+  - **這篇說什麼**：清楚對比兩種 proxy 的方向和用途
+  - **讀哪裡**：整篇
+  - **為什麼值得讀**：本章「forward vs reverse」混淆的權威澄清
+
+- **[SOCKS5 協定詳解](https://www.rfc-editor.org/rfc/rfc1928)** — RFC 1928
+  - **讀哪裡**：協定流程那節
+  - **為什麼值得讀**：SOCKS5 的權威定義，理解它怎麼轉發
+
+### 工具
+
+- **[SSH dynamic forwarding 完整指南](https://www.ssh.com/academy/ssh/tunneling/example)** — SSH.com
+  - **這篇說什麼**：ssh -D 建 SOCKS proxy 的完整用法
+  - **為什麼值得讀**：連接 Ch 12，理解最簡單的自架 proxy
+
+下一章進入翻牆生態的第一個專門工具——Shadowsocks，理解它怎麼用「加密的 SOCKS proxy」對抗審查，以及它的設計和演進。
 
 → [Ch 29 Shadowsocks](./29-shadowsocks.md)

@@ -1,404 +1,197 @@
 # Ch 15 — dig / nslookup
 
-> 目標：精通 DNS debug 工具，能診斷各種 DNS 問題。
+> **目標**：把 DNS 查詢工具 dig 用熟——查各種記錄、`+trace` 看完整遞迴、`+short`/`+noall +answer` 控制輸出、指定解析器對照、反解、debug DNS 問題。Ch 9 講了 DNS 原理，這章把它落到「怎麼用工具查和 debug」。dig 是 DNS 問題的手術刀，掌握它你能精準診斷「It's always DNS」的各種狀況。
 
-## dig 為什麼是 DNS debug 首選
+> **環境**：Linux（dig，來自 dnsutils/bind-utils）。nslookup 是較舊的替代。
 
-`dig` (Domain Information Groper) 比 `nslookup` 強：
+## 為什麼 dig 是 DNS 的手術刀？
 
-- 輸出更詳細
-- 顯示 DNS server 的真實回應
-- 支援 +trace（看完整階層）
-- 支援所有 record type
-- 適合 script 解析
+Ch 9 說 DNS 是「最常見的故障源」。當你懷疑 DNS 出問題時，需要一個能精準查詢、看到查詢每一步、對照不同解析器的工具——這就是 **dig**（Domain Information Groper）。它比 `nslookup`（較舊）更強大、輸出更清楚，是 DNS debug 的標準工具。
 
-`nslookup` 較舊、輸出簡略，**只在 dig 沒裝時用**。
+dig 讓你回答所有 DNS 問題：這個域名解析到什麼？哪個解析器給的？完整的遞迴查詢經過哪些伺服器？TTL 還剩多久？權威伺服器怎麼說（繞過快取）？這些是 debug DNS 污染、快取問題、設定錯誤的關鍵。這章把 Ch 9 的原理變成手上的工具操作。
 
-## dig 基本
+## 先建立直覺:dig 是「問 DNS 並看完整回答」
+
+```
+dig 的輸出結構（一次查詢的完整資訊）：
+
+  dig example.com
+        │
+  ;; QUESTION SECTION:      ← 你問了什麼
+  ;example.com.  IN  A
+        │
+  ;; ANSWER SECTION:        ← 答案（你要的）
+  example.com.  3600  IN  A  93.184.216.34
+                └TTL┘        └─IP─┘
+        │
+  ;; AUTHORITY SECTION:     ← 誰是權威（可選）
+  ;; ADDITIONAL SECTION:    ← 額外資訊
+        │
+  ;; Query time: 23 msec    ← 查詢花多久
+  ;; SERVER: 192.168.1.1    ← 問了哪個解析器
+        │
+  → dig 給你「完整的 DNS 回答」，不只 IP
+    TTL、用哪個解析器、查多久——都是 debug 線索
+```
+
+關鍵心智：dig 給你「完整的 DNS 回答」——不只 IP，還有 TTL（快取多久）、用哪個解析器、查詢花多久。這些都是 debug 線索。相比之下 `ping` 只給你「能不能通」，dig 給你「DNS 怎麼回答的全貌」。
+
+> dig 是 Ch 9（DNS）的工具版。如果對 DNS 的階層查詢、記錄類型、TTL/快取不熟，回看 [Ch 9](./09-dns.md)。這章假設你懂 DNS 原理，專注「怎麼用 dig 查和 debug」。
+
+## dig 的核心用法
 
 ```bash
-dig example.com           # 查 A record（預設）
-dig example.com MX        # MX record
-dig example.com NS        # nameserver
-dig example.com TXT       # TXT
-dig example.com AAAA      # IPv6
-dig example.com ANY       # 所有 record type（很多 server 不再支援 ANY）
+# === 基本查詢 ===
+dig example.com                  # 完整輸出（A 記錄）
+dig example.com +short           # 只要答案（93.184.216.34）—— 腳本常用
+dig example.com +noall +answer   # 只要 ANSWER section（乾淨）
+
+# === 查不同記錄類型（Ch 9）===
+dig example.com A +short         # IPv4
+dig example.com AAAA +short      # IPv6
+dig example.com MX +short        # 郵件伺服器
+dig example.com TXT +short       # TXT（SPF/驗證）
+dig example.com NS +short        # 權威伺服器
+dig example.com CNAME +short     # 別名
+dig example.com ANY              # 所有記錄（很多伺服器已禁用 ANY）
+
+# === 指定解析器（對照不同 DNS）===
+dig @8.8.8.8 example.com +short  # 問 Google
+dig @1.1.1.1 example.com +short  # 問 Cloudflare
+dig @192.168.1.1 example.com     # 問你的路由器
+
+# === 反解（IP → 域名）===
+dig -x 8.8.8.8 +short            # dns.google
+
+# === 看完整遞迴（Ch 9 的階層查詢）===
+dig +trace example.com           # 從根→TLD→權威，看每一層
 ```
 
-## dig 輸出解讀
+> **`dig +short`（腳本用）和 `dig +trace`（看遞迴）是兩個最該記住的用法**。`+short` 只輸出答案（如 `93.184.216.34`），適合腳本裡用（`ip=$(dig +short example.com)`）。`+trace` 顯示完整的遞迴查詢——從根伺服器→.com TLD→權威伺服器，親眼看 Ch 9 的階層查詢（它繞過快取，自己從根問起，所以能看到完整路徑）。`@解析器` 指定問哪個 DNS——這是 **debug DNS 污染/快取的關鍵**：`dig @8.8.8.8 example.com` vs `dig @你的解析器 example.com`，如果給不同答案，就有問題（污染、快取不一致、或地理性的 CDN 差異）。記住查記錄類型的語法（`dig <域名> <類型>`），這是設定/驗證 DNS 記錄（Ch 36 部署網站時設 A/MX/TXT）的基本操作。`dig` 比 `nslookup` 好（輸出清楚、功能多、適合腳本）——除非在沒有 dig 的環境，否則用 dig。
 
-```
-$ dig example.com
-
-; <<>> DiG 9.18.18 <<>> example.com
-;; global options: +cmd
-;; Got answer:
-;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 12345
-;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
-
-;; OPT PSEUDOSECTION:
-; EDNS: version: 0, flags:; udp: 1232
-
-;; QUESTION SECTION:
-;example.com.            IN    A
-
-;; ANSWER SECTION:
-example.com.    7200    IN    A    93.184.216.34
-
-;; Query time: 12 msec
-;; SERVER: 1.1.1.1#53(1.1.1.1) (UDP)
-;; WHEN: Mon Apr 28 12:00:00 UTC 2025
-;; MSG SIZE  rcvd: 56
-```
-
-讀法：
-
-- `status: NOERROR` — 查詢成功
-  - 其他可能：NXDOMAIN（不存在）, SERVFAIL（server 出錯）, REFUSED
-- `flags: qr rd ra`
-  - `qr` — 這是 response
-  - `rd` — recursion desired
-  - `ra` — recursion available
-- `ANSWER SECTION` — 答案
-  - `7200` — TTL
-  - `IN` — class（Internet）
-  - `A` — record type
-  - `93.184.216.34` — 答案
-- `Query time` — 多久
-- `SERVER` — 用哪個 DNS server
-
-## 各種 dig flag
+## 用 dig debug DNS 問題
 
 ```bash
-# 短輸出（只答案）
-dig +short example.com
+# === debug 場景 1：域名解析不了 ===
+dig example.com
+# 看 ANSWER SECTION 有沒有答案
+# status: NOERROR + 有 ANSWER → 正常
+# status: NXDOMAIN → 域名不存在（打錯？沒註冊？）
+# status: SERVFAIL → 解析器出錯（DNSSEC 失敗？上游問題？）
+# 沒回應/timeout → 解析器不通
 
-# 不要 cache，從 root 開始查
-dig +trace example.com
+# === debug 場景 2：解析到「錯的」IP（污染/快取舊值）===
+dig example.com +short                # 你的解析器給的
+dig @1.1.1.1 example.com +short       # 對照公共解析器
+dig @8.8.8.8 example.com +short       # 再對照一個
+# 三個不同 → 可能污染（Ch 31）或快取不一致
+# 繞過快取直接問權威：
+AUTH=$(dig example.com NS +short | head -1)
+dig @"$AUTH" example.com +short       # 權威伺服器的「真實」答案
 
-# 強制 TCP
-dig +tcp example.com
+# === debug 場景 3：改了 DNS 還沒生效（TTL/快取，Ch 9）===
+dig example.com | grep -A1 'ANSWER SECTION' 
+# 看 TTL 數字 —— 還要等這麼多秒快取才過期
+dig @權威伺服器 example.com           # 權威已是新值，但快取還舊 → 等 TTL
 
-# 指定 DNS server
-dig @8.8.8.8 example.com
-dig @1.1.1.1 example.com
-dig @ns1.example.com example.com
-
-# 多 query
-dig example.com mx ns aaaa
-
-# reverse lookup
-dig -x 8.8.8.8
-
-# 不要 recursion（直接問 authoritative）
-dig +norecurse @ns1.example.com example.com
-
-# DNSSEC
-dig +dnssec example.com
-
-# DNS over TLS
-dig +tls @1.1.1.1 example.com
-
-# DNS over HTTPS（要 kdig）
-kdig -d @1.1.1.1 +https example.com
+# === debug 場景 4：DNS 很慢 ===
+dig example.com | grep 'Query time'
+# ;; Query time: 523 msec    ← 太慢（正常 <50ms）→ 解析器慢或網路問題
 ```
 
-## dig +trace
+```
+dig 的 status 碼（debug 的關鍵信號）：
+  NOERROR    正常（有答案就成功）
+  NXDOMAIN   域名不存在（打錯/沒註冊/被刪）
+  SERVFAIL   解析器出錯（DNSSEC 驗證失敗、上游掛了）
+  REFUSED    解析器拒絕（你沒權限用這個解析器）
+        │
+  → status 直接告訴你問題類型
+    NXDOMAIN = 域名問題，SERVFAIL = 解析器問題
+```
 
-最強 debug 工具。從 root 開始一步步查：
+> **dig 的 `status` 碼和「對照不同解析器」是 debug DNS 的兩大利器**。`status` 直接分類問題：**NOERROR**（正常）、**NXDOMAIN**（域名不存在——打錯、沒註冊、或被刪）、**SERVFAIL**（解析器出錯——DNSSEC 驗證失敗或上游問題）、**REFUSED**（拒絕——你沒權限用這解析器）。看到 NXDOMAIN 查域名拼寫/註冊狀態，看到 SERVFAIL 換個解析器試（可能是解析器的問題）。**對照不同解析器**（`dig @8.8.8.8` vs `dig @1.1.1.1` vs 你的）是診斷污染和快取的金鑰——答案不一致就有問題。**繞過快取問權威**（先 `dig NS` 找權威伺服器，再 `dig @權威`）能看到「真實的、最新的」答案，對照你的解析器是否在給舊快取——這是 debug「改了 DNS 沒生效」（Ch 9）的關鍵。`Query time` 看 DNS 是否慢（影響「網頁載入卡在一開始」）。這些把 Ch 9 的原理變成可操作的診斷——`dig` 是你診斷「It's always DNS」的手術刀。
+
+## 故意弄壞:看 DNS 污染的樣貌
 
 ```bash
-dig +trace example.com
+# 對照不同解析器，理解「DNS 污染」怎麼被偵測（Ch 31 翻牆相關）
+
+# 正常域名：各解析器應該一致（或只是 CDN 的地理差異）
+for dns in 8.8.8.8 1.1.1.1 9.9.9.9; do
+    echo -n "@$dns: "
+    dig @$dns example.com +short | head -1
+done
+# 通常一致（或 CDN 給不同但都「對」的 IP）
+
+# 被污染的域名（在某些網路環境）：
+# 某些解析器會給「假 IP」（污染）
+# 對照公共解析器（8.8.8.8）vs 本地解析器，假 IP 會不一致
+# 用 DoH 繞過（Ch 9）：
+curl -s 'https://1.1.1.1/dns-query?name=example.com&type=A' \
+    -H 'accept: application/dns-json' | grep -o '"data":"[^"]*"'
+# DoH 加密，難被污染 → 對照明文 dig 的結果
+
+# 看一個域名有沒有 DNSSEC（防污染的機制）
+dig example.com +dnssec | grep -i rrsig
+# 有 RRSIG = 有 DNSSEC 簽名（能驗證真偽，防污染）
 ```
 
-輸出：
-
-```
-.                       86400    IN  NS      a.root-servers.net.
-                        86400    IN  NS      b.root-servers.net.
-                        ...
-;; Received 239 bytes from 1.1.1.1 in 12 ms
-
-com.                    172800   IN  NS      a.gtld-servers.net.
-                        172800   IN  NS      b.gtld-servers.net.
-                        ...
-;; Received 1216 bytes from a.root-servers.net (198.41.0.4) in 25 ms
-
-example.com.            172800   IN  NS      a.iana-servers.net.
-example.com.            172800   IN  NS      b.iana-servers.net.
-;; Received 92 bytes from a.gtld-servers.net (192.5.6.30) in 30 ms
-
-example.com.            86400    IN  A       93.184.216.34
-;; Received 56 bytes from a.iana-servers.net (199.43.135.53) in 40 ms
-```
-
-清楚看到「**root → .com → example.com**」每階段。
-
-debug DNS 第一招就是 `dig +trace`，看哪階段壞。
-
-## 一些常見 debug 場景
-
-### 1. domain 解不到
-
-```bash
-$ dig example.com
-;; status: NXDOMAIN
-```
-
-意思 domain 不存在。check：
-
-- 拼錯？
-- registry 過期？
-
-```bash
-whois example.com   # 看 registration 狀態
-```
-
-### 2. 解到舊 IP
-
-```bash
-$ dig example.com
-;; ANSWER SECTION:
-example.com. 86400 IN A 1.1.1.1   # 但你已經改 server IP 了
-```
-
-cache 沒 expired。check：
-
-```bash
-# 強制不用 cache
-dig +trace example.com
-
-# 或問 authoritative server
-dig @ns1.example.com example.com
-```
-
-如果 authoritative 回新 IP → 等 cache expire（看 TTL）。
-
-### 3. 不同 server 回不同答案
-
-```bash
-dig @8.8.8.8 example.com    # 1.1.1.1
-dig @1.1.1.1 example.com    # 2.2.2.2
-```
-
-可能：
-
-- DNS 改了，部份 server cache 還沒更新
-- DNS poisoning / hijacking
-- geo-DNS（按地理區回不同 IP，正常）
-
-### 4. SERVFAIL
-
-```bash
-$ dig example.com
-;; status: SERVFAIL
-```
-
-DNS server 內部錯誤。可能：
-
-- DNSSEC 驗證失敗（記錄被改 / 簽章過期）
-- recursive resolver 問不到 authoritative
-- network 問題
-
-```bash
-# 換 DNS server 試
-dig @1.1.1.1 example.com
-```
-
-### 5. 查 mail server
-
-```bash
-dig example.com MX
-# 10  mail.example.com.
-# 20  backup-mail.example.com.
-```
-
-`10` / `20` 是 priority（小者優先）。
-
-寄信前的 sender 會：
-
-1. 查 dst 的 MX
-2. 連 priority 最小的 mail server
-3. 失敗 → 試 priority 次小的
-
-## nslookup 簡介
-
-```bash
-# 互動模式
-nslookup
-> example.com
-> set type=mx
-> example.com
-> server 8.8.8.8
-> example.com
-> exit
-```
-
-或非互動：
-
-```bash
-nslookup example.com
-nslookup example.com 8.8.8.8
-nslookup -type=mx example.com
-```
-
-**輸出比 dig 簡略**，少資訊。**dig 在的話用 dig**。
-
-## host 命令
-
-更簡略的 DNS 工具：
-
-```bash
-host example.com
-# example.com has address 93.184.216.34
-# example.com has IPv6 address 2606:2800:220:1:248:1893:25c8:1946
-# example.com mail is handled by 0 .
-
-host -t mx example.com
-host -a example.com    # 全部 record
-```
-
-寫 script 用 host 比較簡單（output 簡單）。
-
-## /etc/resolv.conf
-
-Linux 預設 DNS server 設定：
-
-```
-# /etc/resolv.conf
-nameserver 1.1.1.1
-nameserver 8.8.8.8
-search example.com
-```
-
-`nameserver` — DNS server 順序  
-`search` — short hostname 自動加這個 domain
-
-但**多數現代 distro 用 systemd-resolved 管理**，`/etc/resolv.conf` 會被覆蓋：
-
-```bash
-# 看 systemd-resolved 設定
-resolvectl status
-resolvectl dns                   # 當前 DNS server
-resolvectl flush-caches          # 清 cache
-```
-
-## /etc/hosts
-
-DNS 之前的「**手動 mapping**」：
-
-```
-# /etc/hosts
-127.0.0.1   localhost
-192.168.1.10  myserver
-```
-
-優先於 DNS。debug 用 / 開發環境 mock domain 用。
-
-```bash
-# 暫時讓某 domain 解到本機 server
-echo "127.0.0.1   example.com" | sudo tee -a /etc/hosts
-curl https://example.com   # 連 127.0.0.1
-```
-
-**改完別忘了改回來**。
-
-## 一個常見誤解：「dig 跟 ping 都查 DNS，差不多」
-
-**不**。
-
-- `ping` 是「**測網路 + DNS**」，輸出 ping 結果
-- `dig` 是「**只測 DNS**」，輸出 DNS 細節
-
-debug DNS 用 dig，不要用 ping（看不到細節）。
-
-## 一個常見誤解：「DNS cache 是 OS 的事」
-
-**部分對**。多層 cache：
-
-- 應用程式（瀏覽器、curl 不太 cache）
-- OS（systemd-resolved / nscd / dnsmasq）
-- 路由器
-- ISP DNS
-
-每層 TTL 獨立倒數。要全清要逐層處理。
-
-## 一個常見誤解：「`dig` 就反映瀏覽器看到的」
-
-**部分對**。瀏覽器有自己的 DNS cache（Chrome 60 秒）。
-
-```
-chrome://net-internals/#dns      # Chrome
-about:networking#dns             # Firefox
-```
-
-清瀏覽器 cache：通常重啟。
+> **「對照不同解析器的答案」是偵測 DNS 污染的方法，這是 Ch 31 翻牆對抗的基礎**。DNS 污染（GFW 等的手段，Ch 31）是「對某些域名回假 IP」——你查 `某被封域名`，污染的解析器（或路徑上的污染）回一個錯的 IP，讓你連到錯的地方或連不上。偵測方法就是**對照**：`dig @8.8.8.8` vs `dig @你的解析器`，如果差異大（不是 CDN 的合理地理差異，而是明顯的假 IP），就是污染。對抗手段：**DoH/DoT**（Ch 9，加密 DNS，污染者看不到也改不了你查什麼）——`curl https://1.1.1.1/dns-query` 用 DoH 查，對照明文 dig 的結果。**DNSSEC**（`dig +dnssec` 看 RRSIG）是另一道防線——它用簽名讓你驗證 DNS 回應的真偽（污染的假回應沒有正確簽名，能被識破）。這些是 Ch 31（翻牆生態）的前置——DNS 污染是審查的第一道手段，DoH/DNSSEC 是對抗它的工具。理解用 dig 偵測污染，你就懂了「為什麼翻牆要先解決 DNS」。注意：本課討論這些是為了理解網路審查的技術原理（教育目的），實際使用須遵守當地法律。
 
 ## 動手練習
 
-**1. dig 各種 record**
+1. 基本查詢：對一個真實域名查 A/AAAA/MX/TXT/NS，用 `+short` 和完整輸出對照
 
-```bash
-dig google.com
-dig google.com mx
-dig google.com ns
-dig google.com txt
-dig google.com aaaa
-```
+2. 看遞迴：`dig +trace example.com`，對照 Ch 9 的階層查詢，看根→TLD→權威
 
-**2. dig +trace**
+3. 對照解析器：`dig @8.8.8.8` vs `dig @1.1.1.1` vs 你的解析器，看是否一致、誰快（Query time）
 
-```bash
-dig +trace example.com
-```
+4. 看 TTL：連續 dig 同域名，看 TTL 倒數（快取計時）
 
-數有幾層、每層問哪個 server。
+5. 跑「故意弄壞」：對照多個解析器的答案，理解怎麼偵測污染；用 DoH 對照明文查詢
 
-**3. 對比不同 DNS server**
+## 本章重點整理
 
-```bash
-dig @8.8.8.8 example.com
-dig @1.1.1.1 example.com
-dig @9.9.9.9 example.com
-```
-
-response time 對比。
-
-**4. 看自己的 DNS 設定**
-
-```bash
-cat /etc/resolv.conf
-resolvectl status   # systemd-resolved
-```
-
-**5. 故意改 hosts**
-
-```bash
-# 加一行
-echo "1.2.3.4   example.com" | sudo tee -a /etc/hosts
-
-# dig 看（dig 跳過 /etc/hosts，所以還是顯示真 IP）
-dig example.com
-
-# 但 ping / curl 走 hosts
-ping -c 1 example.com    # 1.2.3.4
-curl -I http://example.com   # 連 1.2.3.4
-
-# 移除
-sudo vi /etc/hosts
-```
-
-dig 不看 /etc/hosts，這是它跟 ping/curl 行為不一樣的點。
+- dig 給「完整的 DNS 回答」：答案 + TTL + 用哪個解析器 + 查詢時間，都是 debug 線索
+- 核心用法：`+short`（腳本）、`+trace`（看遞迴）、`@解析器`（對照）、`-x`（反解）、`<域名> <類型>`（查記錄）
+- status 碼分類問題：NOERROR（正常）、NXDOMAIN（域名不存在）、SERVFAIL（解析器錯）、REFUSED（拒絕）
+- debug 利器：對照不同解析器（偵測污染/快取）、繞過快取問權威（看真實值）、Query time（看慢）
+- 對照解析器答案是偵測 DNS 污染的方法；DoH/DNSSEC 是對抗手段（Ch 31 翻牆前置）
 
 ## 自我檢核
 
-- [ ] dig 輸出讀得懂（status / flags / ANSWER）
-- [ ] 知道 NXDOMAIN / SERVFAIL / NOERROR 各意義
-- [ ] dig +trace 用得順
-- [ ] 知道 dig vs nslookup vs host 各用途
-- [ ] 知道 /etc/resolv.conf vs systemd-resolved 關係
-- [ ] /etc/hosts 用過 mock domain
+- [ ] 能用 dig 查各種記錄類型，控制輸出（+short/+noall +answer）
+- [ ] 會用 `+trace` 看完整遞迴，`@解析器` 對照不同 DNS
+- [ ] 知道 status 碼（NXDOMAIN/SERVFAIL）各代表什麼問題
+- [ ] 能用 dig debug「解析不了」「解析到錯 IP」「改了沒生效」
+- [ ] 理解怎麼用對照解析器偵測 DNS 污染，DoH/DNSSEC 的作用
 
-下一章看路徑診斷工具：traceroute / mtr / ping。
+## 延伸閱讀
+
+### 官方文件
+
+- **[dig man page](https://linux.die.net/man/1/dig)** — ISC BIND
+  - **讀哪裡**：QUERY OPTIONS（所有 +options）
+  - **為什麼值得讀**：dig 所有選項的權威，`+trace`/`+dnssec`/`+short` 的完整說明
+
+### 文章
+
+- **[How to use dig](https://www.digitalocean.com/community/tutorials/how-to-use-dig)** — DigitalOcean
+  - **這篇說什麼**：dig 的實用範例集，從基礎到 debug
+  - **讀哪裡**：整篇
+  - **為什麼值得讀**：本章用法的擴充，例子多
+
+- **[Julia Evans 的 dig/DNS debug](https://jvns.ca/blog/2021/12/15/some-ways-dns-can-break/)** — Julia Evans
+  - **這篇說什麼**：DNS 各種壞掉的方式和怎麼用 dig 診斷
+  - **為什麼值得讀**：把 dig debug 講得最實用
+
+### 書籍
+
+- **《DNS and BIND》— Ch 12 (Troubleshooting)** — Liu & Albitz
+  - **讀哪幾章**：Ch 12（用 dig/nslookup debug DNS）
+  - **這本書的定位**：DNS 權威，debug 章把 dig 的診斷用法講透
+
+下一章看路徑診斷工具——traceroute/mtr/ping，把 Ch 4 的 TTL/ICMP 知識落到「怎麼看封包經過哪些路由器、哪裡丟包」。
 
 → [Ch 16 traceroute / mtr / ping](./16-traceroute-mtr-ping.md)

@@ -1,220 +1,197 @@
-# Ch 23 — VPN 全景
+# Ch 23 — VPN 總覽與原理
 
-> 目標：搞清楚 VPN 是什麼、3 大主流（WireGuard / OpenVPN / IPSec）的本質差異、跟 Proxy / SD-WAN 的對比。
+> **目標**：建立 VPN 的全局理解——VPN 到底是什麼（加密隧道，Ch 21 tun + Ch 11 加密的組合）、它解決什麼問題（隱私/翻牆/連內網）、不同的 VPN 用途（remote access vs site-to-site）、以及 VPN 的通用原理。這章是 Part 6 的地圖，把前面學的 tun/tap（Ch 21）、加密（Ch 11）、NAT（Ch 8）、路由（Ch 4）串成「VPN 怎麼運作」的完整圖像，為後面三家 VPN（WireGuard/OpenVPN/IPSec）打底。
 
-## VPN 是什麼
+> **環境**：概念章為主。後續 Ch 24-26 是各 VPN 的實作。
 
-**Virtual Private Network** — 在公網上建立「**虛擬私有網路**」。
+## 為什麼 VPN 值得一整個 Part？
 
-3 個關鍵：
+VPN（虛擬私人網路）是現代網路的重要工具——保護隱私（在公共 WiFi 加密流量）、翻牆（繞過審查，Ch 31）、連公司內網（遠端工作）、連接多個地點的網路（企業）。但「VPN 到底是什麼、怎麼運作」常被當成黑盒子。
 
-1. **Tunneling**：把 packet 包進另一個 packet
-2. **Encryption**：加密 inner packet（外面看不到內容）
-3. **Authentication**：驗證對方身份
+好消息是：學完 Part 2-5，你已經有了理解 VPN 的所有零件——tun/tap（Ch 21，攔截封包）、加密（Ch 11，保護內容）、NAT/路由（Ch 8/4，讓流量出網）。VPN 就是把這些組合起來：用 tun 攔截封包、加密、透過隧道送到 VPN 伺服器、伺服器解密後送出。這章把這個全貌講清楚，讓你理解「VPN 不是魔法」，為後面學三家具體的 VPN 打好原理基礎。
 
-達成：兩端網路像「直接連在同一個 LAN」（雖然中間隔著 Internet）。
-
-## 為什麼用 VPN
-
-| 場景 | 用法 |
-|---|---|
-| **遠端工作** | 連回公司內網存取資源 |
-| **跨機房連接** | site-to-site VPN，兩 office 像同 LAN |
-| **保護隱私** | 加密所有 traffic，ISP 看不到內容 |
-| **繞過地理限制** | exit node 在別國，看起來像當地用戶 |
-| **翻牆** | （在中國等地）穿越防火牆 |
-| **公共 WiFi 安全** | 咖啡店 WiFi 不可信 → VPN 加密 |
-
-不同場景用不同 VPN 設定。
-
-## VPN 跟 Proxy 的差別
-
-| 項目 | VPN | Proxy |
-|---|---|---|
-| 範圍 | **整台裝置流量** | 通常單一應用（如瀏覽器） |
-| 層級 | L3 (IP) | L4-7 (TCP / app) |
-| 加密 | 是（一般） | 視 proxy 而定 |
-| 設定複雜度 | 中-高 | 低 |
-| 速度 overhead | 中 | 低（HTTP proxy）/ 中（SOCKS）|
-| 應用感知 | 透明（app 不知） | 應用需設 |
-
-簡單版：**VPN 包整台、Proxy 包單一程式**。
-
-Part 7 詳細展開 Proxy。
-
-## 3 大 VPN 對比
-
-| 維度 | OpenVPN | IPSec | WireGuard |
-|---|---|---|---|
-| 出生 | 2001 | 1995 | 2018 |
-| 程式碼量 | ~70k 行 | 數百 k | ~4k 行 |
-| 速度 | 慢 (user-space) | 快 (kernel) | **最快** (kernel) |
-| 加密 | 多選擇 | 多選擇 | 固定（現代強算法）|
-| 設定 | 複雜 (PKI) | 超複雜 | **簡單** |
-| 跨平台 | ✅ 全 | ✅ 全 | ✅ 全（新版） |
-| 防火牆穿透 | ✅ TCP 443 偽裝 | △ 易被擋 | △ 較易被擋 |
-| 行動友善 | 中 | 差（連線斷重連慢）| **好**（roaming） |
-| 社群成熟度 | 高 | 高（企業級）| 高（增長快） |
-
-**現代推薦**：
-
-- **個人 / 小型場景** → WireGuard（簡單、快、安全）
-- **企業 site-to-site** → IPSec（成熟、相容性好）
-- **要 TCP / 防火牆繞過** → OpenVPN（能偽裝 HTTPS）
-
-## VPN 的 2 種 topology
-
-### 1. Remote Access（遠端接入）
+## 先建立直覺:加密的隧道
 
 ```
- Client (你)             VPN Server          Internal LAN
-   ┌──┐                    ┌──┐              ┌──┐
-   │PC│ ──── tunnel ──────►│  │ ────────────►│  │
-   └──┘                    └──┘              └──┘
-                              │
-                              └─►  10.0.0.0/8
+VPN = 在不可信的網路上建一條「加密隧道」
+
+  沒有 VPN：
+    你 ──明文/或各自加密──▶ 各個網站
+    ISP/中間人看得到：你連了哪些網站（即使 HTTPS，SNI/IP 還是露）
+        │
+  有 VPN：
+    你 ══加密隧道══▶ VPN 伺服器 ──▶ 各個網站
+    ISP/中間人只看到：你和 VPN 伺服器之間的加密流量
+    看不到：你實際訪問什麼（都在隧道裡）
+        │
+  VPN 伺服器「代替你」連網站：
+    網站看到的來源 IP = VPN 伺服器的 IP（不是你的）
+    → 你「看起來」在 VPN 伺服器的位置
+        │
+  → VPN 做兩件事：
+    1. 加密你到 VPN 伺服器的流量（隱私）
+    2. 讓你的流量「從 VPN 伺服器出去」（換 IP/位置/翻牆）
 ```
 
-公司常用：員工從家裡連回公司。
+關鍵心智：VPN 是「在不可信網路上建的加密隧道」。你的流量加密後送到 VPN 伺服器，伺服器代替你連目的地。結果：ISP/中間人只看到「你和 VPN 伺服器的加密流量」（看不到你訪問什麼），目的地看到的來源是「VPN 伺服器的 IP」（你看起來在那個位置）。VPN 同時提供隱私（加密）和換位置（從 VPN 伺服器出網）。
 
-### 2. Site-to-Site
+> VPN 是前面所有知識的綜合：tun（Ch 21，攔截封包）+ 加密（Ch 11）+ NAT/路由（Ch 8/4，出網）+ 封裝（Ch 2，雙層封包）。如果這些不熟，回看對應章節——VPN 沒有新原理，是組合。
+
+## VPN 的封包流（綜合前面所學）
 
 ```
- Office A LAN          VPN A      VPN B        Office B LAN
- 192.168.1.0/24                                10.0.0.0/24
-        │                │ ──tunnel──► │              │
-   ┌────┴────┐    ┌─────┴┐         ┌──┴───┐     ┌───┴────┐
-   │ devices │ ──►│router│ ───────►│router│ ───►│ devices│
-   └─────────┘    └──────┘         └──────┘     └────────┘
+VPN 的完整封包流（以「全流量 VPN」為例）：
+
+  1. 你的程式產生封包：要連 example.com
+        │
+  2. 路由（Ch 4）：路由表設「流量走 VPN 介面（tun/wg）」
+        │
+  3. 封包進 VPN 介面（tun，Ch 21）→ VPN 程式讀到（明文）
+        │
+  4. VPN 程式加密（Ch 11 的對稱加密）
+        │
+  5. 加密資料包成新封包（封裝，Ch 2）：
+     [外層: 你的真實IP → VPN伺服器IP, UDP][加密的內層封包]
+        │
+  6. 從實體網卡送出 → 經過 ISP（ISP 只看到外層：你↔VPN伺服器的加密UDP）
+        │
+  7. VPN 伺服器收到 → 解密 → 拿到內層封包（要連 example.com）
+        │
+  8. VPN 伺服器用「自己的網路」連 example.com（NAT，Ch 8）
+     → example.com 看到來源是 VPN 伺服器
+        │
+  9. 回應沿原路加密回來 → 你的 VPN 程式解密 → 送進 tun → 你的程式收到
+        │
+  → VPN = tun攔截 + 加密 + 封裝 + 隧道傳輸 + 伺服器端NAT出網
+    全部是前面學過的零件
 ```
 
-兩 office 互通像同公司網路。
+> **VPN 的封包流是前面所有零件的組合——沒有新魔法，只有 tun + 加密 + 封裝 + NAT 的協同**。逐步看：路由（Ch 4）把流量導向 VPN 介面 → tun（Ch 21）讓 VPN 程式讀到明文封包 → 加密（Ch 11）→ 封裝成「你到 VPN 伺服器」的 UDP 封包（Ch 2 的套娃再一層）→ 從實體網卡送出（ISP 只看到外層的加密 UDP）→ VPN 伺服器解密 → 用自己的網路 NAT 出網（Ch 8，所以目的地看到 VPN 伺服器的 IP）。這就是為什麼**理解 VPN 需要先學 Part 2-5**——VPN 是這些知識的綜合應用。三家 VPN（WireGuard/OpenVPN/IPSec）的差別不在這個基本流程（都一樣），而在**怎麼加密、怎麼握手、在 kernel 還用戶空間、設定多複雜**。理解了這個通用流程，學具體的 VPN 就是看「它怎麼實現這些步驟」。這也讓你能 debug VPN——VPN 不通可能斷在任一步：路由沒設對（流量沒進 tun）、加密握手失敗（金鑰錯）、NAT 沒設（伺服器端出不了網）、MTU 問題（封裝後封包太大，Ch 4）。
 
-## VPN 跟 SD-WAN
+## VPN 的用途類型
 
-**SD-WAN** (Software-Defined WAN) — 企業級「**多 ISP 智能切換**」：
+```
+VPN 的兩大用途類型：
 
-- 同時連 4G + 光纖 + MPLS
-- 動態選最快路徑
-- 應用感知（影片走 4G、檔案走光纖）
-- 集中管理
+  1. Remote Access VPN（遠端存取）：
+     個人連到一個 VPN 伺服器
+     用途：
+       - 隱私：公共 WiFi 加密流量
+       - 換 IP/位置：看起來在別的地方（翻牆、地區限制）
+       - 連公司內網：遠端工作存取內部資源
+     例子：你連到 VPN 服務商、公司的 VPN
+        │
+  2. Site-to-Site VPN（站對站）：
+     連接兩個「網路」（不是個人）
+     用途：
+       - 連接公司的兩個辦公室網路（像在同一個內網）
+       - 連接雲端 VPC 和地端機房
+     例子：總部 ↔ 分公司、AWS VPC ↔ 自家機房
+        │
+  → 個人用 = remote access（一台連 VPN 伺服器）
+    企業連網路 = site-to-site（兩個網段橋接）
+    本課主要做 remote access（買 VPS 自架，Part 8）
+```
 
-VPN 是 SD-WAN 的子集。**SD-WAN > VPN > 純 routing**。
+> **Remote Access（個人連 VPN）和 Site-to-Site（連兩個網路）是 VPN 的兩大用途，本課主要做前者**。**Remote Access** 是個人連到一個 VPN 伺服器——用於隱私（公共 WiFi 加密）、換位置（翻牆、繞地區限制）、連公司內網（遠端工作）。這是最常見的個人 VPN 用途，也是本課的重點（Part 8 你會買 VPS 自架一個）。**Site-to-Site** 連接兩個**網路**（不是個人）——如公司總部和分公司的內網互連（讓兩地像在同一個內網）、雲端 VPC 和地端機房互連。它是企業用途，設定更複雜（涉及兩端的路由整合）。兩者底層原理相同（加密隧道），差別在「連的是一台還是一個網段」和「路由怎麼設」。本課的 WireGuard（Ch 24）兩種都能做，但練習 C 和 Final 聚焦 remote access（自架 VPN 給自己用）。理解這個分類，你看 VPN 產品/設定時就知道它是哪種用途、為什麼這樣設計。
 
-新手別擔心 SD-WAN，企業 IT 才用。
+## 為什麼自架 VPN？
 
-## VPN 的 trust model
+```
+用商業 VPN vs 自架 VPN：
 
-3 個信任問題：
+  商業 VPN（NordVPN/ExpressVPN...）：
+    優點：方便、多節點、不用維護
+    缺點：要信任服務商（它能看到你的流量！）、可能被封、月費
+        │
+  自架 VPN（買 VPS 自己架，本課做法）：
+    優點：
+      - 完全掌控（伺服器是你的，沒有第三方看你流量）
+      - 便宜（一台 VPS ~$5/月）
+      - 學到真本事（理解 VPN 怎麼運作）
+      - 獨享 IP（不像商業 VPN 共享 IP 易被封）
+    缺點：
+      - 要自己維護、只有一個節點、IP 可能被特定服務識別為 VPS
+        │
+  → 本課教自架（Part 8 買 VPS + Ch 24 架 WireGuard）
+    這是「真正理解 VPN」+「完全掌控」的路徑
+```
 
-### 1. Server 端
+> **自架 VPN 的核心價值是「完全掌控 + 真正理解」——商業 VPN 你還是要信任它不看你的流量**。商業 VPN 方便（多節點、不用維護），但有個根本問題：**你的所有流量都經過它，你必須信任它不記錄、不看、不賣**——而你無法驗證（很多「no-log」聲稱無法證實）。自架 VPN（買 VPS 自己架）讓**伺服器是你的**——沒有第三方能看你的流量（除了 VPS 商，但它看到的是加密的，且沒有動機/能力分析個人）。其他優勢：便宜（VPS ~$5/月 vs VPN 訂閱）、獨享 IP（商業 VPN 的共享 IP 常被服務識別封鎖）、**學到真本事**（自己架一遍，你就真正理解 VPN 了）。代價是要自己維護、只有一個節點（商業 VPN 有很多）。本課選**自架路徑**（Part 8 買 VPS、Ch 24 架 WireGuard）——這既符合「深度理解」的目標，也給你一個真正屬於自己的 VPN。注意：VPS 的 IP 有時被特定服務（如串流平台）識別為「資料中心 IP」而限制——這是自架的一個小限制（商業 VPN 用住宅 IP 規避，但那是另一個灰色地帶）。Part 8 會教你完整地買 VPS、架 VPN、配安全。
 
-VPN server 看到所有你的 traffic（解密後）。**信任 server provider 嗎？**
+## VPN 的常見問題（預告各章）
 
-商業 VPN（NordVPN / ExpressVPN）：信任 provider 不 log
-自架 VPN：你**自己就是 provider**，最可信
+```
+架 VPN 會遇到的通用問題（後面各章會解決）：
 
-### 2. 端到端
+  1. 連上了但上不了網（路由/NAT 問題）：
+     → 忘了開 ip_forward 或設 MASQUERADE（Ch 18/22）
+        │
+  2. 傳大檔案卡住（MTU 問題，Ch 4）：
+     → VPN 多包一層，有效 MTU 變小，要調 MTU 或 MSS clamping（Ch 18）
+        │
+  3. DNS 洩漏（DNS leak）：
+     → 流量走 VPN 但 DNS 查詢沒走 → 洩漏你訪問什麼
+     → 要設 DNS 也走 VPN（Ch 24 的 DNS 設定）
+        │
+  4. VPN 斷線時流量「裸奔」：
+     → kill switch：VPN 斷時擋掉所有流量（防洩漏）
+        │
+  5. 在 NAT 後面連不上（Ch 8 的打洞）：
+     → 至少一端要有公網 IP（VPS 有，所以自架方便）
+        │
+  → 這些是 VPN 實務的核心問題，Ch 24-26 + 練習 C 會逐一處理
+```
 
-VPN 只加密 client ↔ VPN server。**VPN server → real server** 還是普通網路。
-
-如果 real server 是 HTTP（不是 HTTPS），VPN server 後**仍明文**。
-
-「**VPN 不替代 HTTPS**」。
-
-### 3. DNS 洩漏
-
-如果 DNS 不走 VPN，**你查的 domain 對 ISP 可見**。
-
-對策：VPN 設定強制走 VPN 的 DNS。
-
-## 一個常見誤解：「VPN 全方位匿名」
-
-**錯**。VPN provider 看得到你；你 login 的 site 看得到你。
-
-「**真匿名**」要 Tor + 多層 + 行為控制。VPN 只解決「**ISP 跟公網能看什麼**」。
-
-## 一個常見誤解：「免費 VPN 安全」
-
-**錯**。免費 VPN 多數靠賣 user data 賺錢。「**免費 = 你是商品**」。
-
-要 VPN：
-
-- 自架（最佳）
-- 信譽好的付費（次選）
-- 公司 / 學校的（信任 administrator）
-
-## 一個常見誤解：「VPN 一定能解鎖 Netflix」
-
-**部分對**。串流公司有反 VPN 機制，IP 列表常被 block。
-
-每個 VPN provider 跟串流公司「**貓抓老鼠**」遊戲不停。
-
-## 一個常見誤解：「VPN 100% 防中間人」
-
-**部分對**。VPN 防「**ISP 跟公網中間設備**」MITM。但**用 VPN 連時，VPN provider 自己就能 MITM**。
-
-「**真正端到端安全**」需要 application-level 加密（HTTPS / Signal / PGP）。
+> **VPN 的通用問題（路由/NAT、MTU、DNS 洩漏、kill switch、NAT 穿透）是前面所學的直接應用——這預告了 Part 6 的實務重點**。架 VPN 不是「裝個軟體就好」，會遇到這些需要前面知識的問題：(1) **連上但上不了網**——忘了 `ip_forward` 或 MASQUERADE（Ch 18/22，VPN 伺服器要當 NAT 路由器讓你的流量出網）；(2) **傳大檔案卡住**——VPN 封裝多一層使有效 MTU 變小（Ch 4），要調 MTU 或 MSS clamping（Ch 18）；(3) **DNS 洩漏**——流量走 VPN 但 DNS 查詢沒走，洩漏你訪問什麼（Ch 9），要設 DNS 也走 VPN；(4) **kill switch**——VPN 斷線時流量會「裸奔」走原本網路（洩漏），要設「VPN 斷時擋掉所有流量」；(5) **NAT 穿透**——兩端都在 NAT 後面難直連（Ch 8），所以自架要有公網 IP 的一端（VPS）。這些問題的解法都來自前面的章節——這再次說明 VPN 是綜合應用。Ch 24（WireGuard）會在實作中處理這些，練習 C 會讓你親手架一個並解決這些問題。理解這些「會遇到什麼」，你架 VPN 時就有心理準備，不會卡在某個問題上不知所措。
 
 ## 動手練習
 
-**1. 看你機器有沒有 VPN interface**
+1. 畫 VPN 封包流：不看書，畫出「你的封包怎麼經過 VPN 到目的地再回來」，標出加密/封裝/NAT 在哪步
 
-```bash
-ip a | grep -E "tun|wg|tap|ppp"
-```
+2. 對應零件：列出 VPN 用到的前面章節零件（tun/加密/NAT/路由/封裝），說出每個的作用
 
-**2. 用瀏覽器試 VPN（不裝）**
+3. 理解雙層：思考「在 VPN 介面 vs 實體介面抓封包」會看到什麼不同（Ch 21）
 
-```bash
-# 看你公網 IP（沒 VPN）
-curl ifconfig.me
-```
+4. 用途分類：判斷幾個場景（公共 WiFi 隱私、連公司內網、翻牆、兩辦公室互連）各屬於哪種 VPN 用途
 
-如果有 VPN（個人用 / 公司），開了再跑：
+5. 思考問題：對「連上但沒網」「DNS 洩漏」各想一個原因和解法（對照通用問題那節）
 
-```bash
-curl ifconfig.me
-```
+## 本章重點整理
 
-兩個 IP 不同。
-
-**3. 看 traffic 是否走 VPN**
-
-```bash
-ip route | head
-# 如果有 default via X dev tun0/wg0 → 走 VPN
-```
-
-**4. DNS 洩漏測試**
-
-```bash
-# 看 DNS query 走哪
-dig example.com
-# 看 server 是不是 VPN 的 DNS
-
-# 線上工具
-curl ipleak.net   # 完整 leak test
-```
-
-**5. 思考你的 VPN 用例**
-
-寫下：
-
-- 你目前 VPN 用什麼？
-- 為什麼用？
-- 信任哪個 provider？
-- DNS 洩漏嗎？
+- VPN 是「不可信網路上的加密隧道」：加密流量到 VPN 伺服器，伺服器代替你連目的地（隱私 + 換位置）
+- VPN 封包流是前面零件的組合：路由導向 tun → tun 攔截 → 加密 → 封裝 → 隧道傳輸 → 伺服器 NAT 出網
+- 兩大用途：Remote Access（個人連 VPN，本課重點）vs Site-to-Site（連兩個網路，企業用）
+- 自架 VPN 的價值：完全掌控（沒第三方看流量）、便宜、真正理解；商業 VPN 你還是要信任它
+- 通用問題（路由/NAT、MTU、DNS 洩漏、kill switch、NAT 穿透）都是前面知識的應用，Ch 24-26 會解決
 
 ## 自我檢核
 
-- [ ] 講得出 VPN 三要素（tunnel / encrypt / auth）
-- [ ] 知道 VPN vs Proxy 差別
-- [ ] WireGuard / OpenVPN / IPSec 各自定位
-- [ ] Remote Access vs Site-to-Site topology 清楚
-- [ ] 知道 VPN 的 3 個信任問題
-- [ ] 「VPN ≠ 匿名」概念清楚
+- [ ] 能用自己的話解釋 VPN 是什麼、解決什麼問題
+- [ ] 能描述 VPN 的完整封包流，並指出每步用到前面哪個零件
+- [ ] 知道 Remote Access 和 Site-to-Site 的差別
+- [ ] 理解自架 VPN vs 商業 VPN 的取捨
+- [ ] 知道 VPN 的常見問題（連上沒網/MTU/DNS 洩漏）大概怎麼來的
 
-下一章看 WireGuard — 最現代的 VPN。
+## 延伸閱讀
 
-→ [Ch 24 WireGuard 原理 + 自架](./24-wireguard.md)
+### 文章
+
+- **[How VPNs really work](https://www.cloudflare.com/learning/access-management/what-is-a-vpn/)** — Cloudflare
+  - **這篇說什麼**：VPN 的原理、用途、和零信任的對比
+  - **讀哪裡**：整篇
+  - **為什麼值得讀**：VPN 概念的清楚總覽
+
+- **[VPN 的隱私真相](https://www.privacyguides.org/en/vpn/)** — Privacy Guides
+  - **這篇說什麼**：VPN 能保護什麼、不能保護什麼、商業 VPN 的信任問題
+  - **為什麼值得讀**：對「VPN = 完全匿名」的常見誤解做誠實澄清
+
+### 書籍
+
+- **《Guide to Computer Network Security》— VPN 章** — Joseph Migga Kizza
+  - **讀哪幾章**：VPN 技術那章
+  - **這本書的定位**：把 VPN 放進網路安全的脈絡
+
+下一章是 Part 6 的重頭戲——WireGuard，現代最推薦的 VPN，極簡、極快、極安全。你會理解它的設計並動手架一個。
+
+→ [Ch 24 WireGuard](./24-wireguard.md)

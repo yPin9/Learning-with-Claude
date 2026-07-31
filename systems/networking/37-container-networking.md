@@ -1,336 +1,232 @@
 # Ch 37 — 容器網路
 
-> 目標：搞懂 Docker / Kubernetes 的網路模型 — bridge / host / overlay / CNI。
+> **目標**：理解容器（Docker）網路——它怎麼建立在 Ch 20-22 的 netns/veth/bridge 之上、Docker 的網路模式（bridge/host/none/overlay）、容器怎麼上外網（NAT）、port mapping、容器間通訊、以及 Kubernetes 網路的概念。Ch 22 你手工建了「容器網路」，這章看 Docker 怎麼自動化它，並補完容器網路的全貌。這是 Part 9 進階速覽的第一站，串起前面的虛擬網路知識。
 
-## Container 網路的挑戰
+> **環境**：Linux + Docker（選裝）。概念為主，串 Ch 20-22。
 
-容器跑在同 host 上 → 需要：
+## 為什麼要懂容器網路？
 
-- 容器間互通
-- 容器跟 host 通
-- 容器對外網
-- 多 host 容器互通（Kubernetes）
-- service discovery（容器 IP 動態）
+容器（Docker/Kubernetes）是現代部署的主流——你的服務（Ch 36）很可能跑在容器裡。但容器網路常是黑盒子：容器怎麼有自己的 IP？怎麼上外網？怎麼互相通訊？port mapping（`-p 8080:80`）做什麼？這些不懂，容器網路出問題時你束手無策。
 
-每個都用不同網路機制。
+好消息是：Ch 22 你已經**手工建了容器網路**（netns + veth + bridge + NAT）。Docker 只是把這些自動化。理解容器網路就是「看 Docker 怎麼用 Ch 20-22 的 Linux 原語」。這章把那些底層和 Docker 的抽象連起來，讓容器網路從黑盒子變透明。這也是進階速覽——快速補完現代部署的網路知識。
 
-## Docker 4 種 network mode
-
-| Mode | 機制 | 用途 |
-|---|---|---|
-| `bridge`（預設） | docker0 bridge + veth | 一般 |
-| `host` | 共用 host netns | 高性能 |
-| `none` | 沒 network | 隔離 |
-| `container:X` | 共用 X container 的 netns | sidecar |
-
-### bridge mode
-
-預設。每個 container 在獨立 netns，veth 連到 docker0 bridge：
+## 先建立直覺:Docker 自動化了你手建的拓樸
 
 ```
- ┌────────────────────────────────────────────┐
- │ host                                       │
- │                                            │
- │  eth0 (公網)                               │
- │  │                                          │
- │  │ NAT (iptables)                          │
- │  │                                          │
- │  docker0 (172.17.0.1)                      │
- │  ├── veth-X ──→ container A (172.17.0.2)   │
- │  └── veth-Y ──→ container B (172.17.0.3)   │
- │                                            │
- └────────────────────────────────────────────┘
+Docker 網路 = Ch 22 你手建的拓樸的自動化：
+
+  你手建的（Ch 22）：
+    netns（虛擬主機）+ veth（網線）+ bridge + NAT
+        │
+  Docker 自動做的（一模一樣！）：
+    每個容器 → 一個 netns（Ch 20）
+    容器的 eth0 → veth（一端在容器、一端接 docker0）（Ch 22）
+    docker0 → bridge（虛擬交換器）（Ch 22）
+    iptables MASQUERADE → 讓容器上外網（Ch 18/8）
+        │
+  → Docker 不是發明新東西，是「自動化」Linux 網路原語
+    docker run 時，背後執行類似 Ch 22 的那些命令
+        │
+  所以理解容器網路 = 理解 Ch 20-22 + Docker 的封裝
 ```
 
-跟你 Ch 22 手建的一樣。
+關鍵心智：Docker 網路就是 **Ch 22 你手建的拓樸的自動化**——每個容器一個 netns（Ch 20）、容器的 eth0 是 veth（Ch 22，接到 docker0 bridge）、docker0 是 bridge（Ch 22）、iptables MASQUERADE 讓容器上外網（Ch 18/8）。Docker 不是發明新東西，是自動化這些 Linux 原語。
 
-### host mode
+> 容器網路完全建立在 Ch 20（netns）、Ch 22（veth/bridge）、Ch 18（iptables NAT）之上。如果這些不熟，先回看——特別是 [Ch 22](./22-bridge-veth.md)（你手建了容器網路）。這章是那個手建拓樸的 Docker 版。
 
-```bash
-docker run --network host nginx
-```
-
-container 直接用 host 的 netns。**沒隔離**。
-
-優點：性能最好（無 bridge / NAT）。
-缺點：port 衝突、隔離差。
-
-用於：高性能網路 service / debug。
-
-### overlay mode
-
-跨 host 的 container 互通。**Kubernetes / Docker Swarm** 用：
+## Docker 的網路模式
 
 ```
- host A (1.2.3.4)             host B (5.6.7.8)
-   ├── ctr1 (10.0.0.1) ◄─VXLAN tunnel─► ctr3 (10.0.0.3)
-   └── ctr2 (10.0.0.2)                 └── ctr4 (10.0.0.4)
-```
+Docker 的網路模式（docker run --network=...）：
 
-VXLAN encapsulation 讓不同 host 上的容器**像在同個虛擬網段**。
-
-## Docker network 命令
-
-```bash
-# 列 networks
-docker network ls
-
-# 看 network 細節
-docker network inspect bridge
-
-# 建 network
-docker network create mynet
-docker network create --driver bridge --subnet 10.10.0.0/24 mynet
-
-# 連 container 到 network
-docker run --network mynet nginx
-docker network connect mynet existing-container
-
-# 斷
-docker network disconnect mynet container1
-```
-
-## Custom bridge 比 default 好
-
-Docker 預設 bridge 缺：
-
-- 無 service discovery (容器互連要 IP)
-- 無自動 DNS
-
-建自己的 bridge：
-
-```bash
-docker network create app-net
-
-docker run --name web --network app-net nginx
-docker run --name db --network app-net postgres
-
-# 容器內，能用 name 互連
-docker exec web ping db    # OK
-```
-
-**建議所有 production 用 custom network**。
-
-## Docker compose
-
-宣告式定義 multi-container：
-
-```yaml
-# docker-compose.yml
-version: '3'
-
-services:
-  web:
-    image: nginx
-    ports:
-      - "80:80"
-    networks:
-      - app-net
-  
-  db:
-    image: postgres
-    environment:
-      POSTGRES_PASSWORD: secret
-    networks:
-      - app-net
-
-networks:
-  app-net:
-    driver: bridge
+  1. bridge（預設）：
+     容器接到 docker0 bridge（Ch 22）
+     有自己的 IP（172.17.x.x），透過 NAT 上外網
+     容器間透過 bridge 互通
+        │
+  2. host：
+     容器「共享宿主的網路」（不隔離網路 namespace）
+     容器直接用宿主的 IP 和 port（沒有自己的網路 stack）
+     快（無 NAT/bridge 開銷）但無隔離（port 衝突）
+        │
+  3. none：
+     容器沒有網路（只有 lo）
+     完全隔離（需要時自己配）
+        │
+  4. overlay（多主機）：
+     跨多台主機的容器網路（Kubernetes/Swarm 用）
+     用 VXLAN 等把多主機的容器連成一個虛擬網路
+        │
+  → bridge（預設，單機隔離）最常用
+    host（高效能無隔離）、none（完全隔離）、overlay（跨主機）按需
 ```
 
 ```bash
-docker compose up -d
+# 看 Docker 的網路（對照 Ch 22）
+docker network ls                  # 列出網路（bridge/host/none）
+ip link show docker0               # docker0 bridge（Ch 22 的 br0！）
+sudo iptables -t nat -L POSTROUTING -n | grep MASQUERADE  # Docker 的 NAT（Ch 18）
+
+# 跑一個容器，看它的網路
+docker run -d --name web nginx
+docker exec web ip addr            # 容器的 eth0（172.17.x.x，是 veth）
+ip link | grep veth                # host 端看到 veth（接到 docker0）
+
+# 進容器的 netns（Ch 20 的 nsenter）
+# PID=$(docker inspect -f '{{.State.Pid}}' web)
+# sudo nsenter -t $PID -n ip addr  # 鑽進容器的網路看
 ```
 
-自動建 network、跑 containers、互連。
+> **Docker 的 bridge 模式（預設）就是 Ch 22 的拓樸，host 模式則完全共享宿主網路——理解兩者的取捨**。Docker 的網路模式：**bridge**（預設）——容器接到 `docker0` bridge（就是 Ch 22 的 br0！），有自己的 IP（172.17.x.x，是 veth），透過 NAT 上外網（Ch 18 MASQUERADE），容器間透過 bridge 互通。這提供隔離（每個容器獨立網路 stack）。**host** 模式——容器**共享宿主的網路 namespace**（不隔離），直接用宿主的 IP 和 port——快（無 NAT/bridge 開銷）但**無隔離**（容器的 port 就是宿主的 port，會衝突，且失去隔離的安全性）。**none**——容器沒網路（只有 lo，完全隔離，需要時自己配）。**overlay**——跨多主機的容器網路（Kubernetes/Swarm，用 VXLAN 把多主機的容器連成虛擬網路）。觀察：`docker0`（Ch 22 的 bridge）、`iptables nat`（Docker 的 MASQUERADE）、容器的 veth——全是 Ch 20-22 的東西。用 `nsenter`（Ch 20）能鑽進容器的 netns 看它的網路。理解這些模式，你選對的（一般用 bridge 隔離、高效能需求用 host、跨主機用 overlay），也能 debug 容器網路問題。
 
-## Kubernetes 網路：CNI
-
-K8s 的網路用 **CNI** (Container Network Interface) plugin：
-
-| CNI | 特色 |
-|---|---|
-| **Flannel** | 簡單 overlay |
-| **Calico** | BGP routing，性能好 |
-| **Cilium** | eBPF-based，現代 |
-| **Weave** | 老牌 mesh |
-| **AWS VPC CNI** | 雲原生 |
-
-K8s 4 個基本網路問題：
-
-1. **Pod-to-Pod**：CNI 解決（每 pod 獨立 IP）
-2. **Pod-to-Service**：kube-proxy + iptables / IPVS
-3. **External-to-Service**：LoadBalancer / NodePort / Ingress
-4. **Pod-to-External**：default route + NAT
-
-## kube-proxy + Service
-
-K8s 有 `Service` 抽象 — 給多個 pod 一個穩定 VIP：
+## port mapping 與容器上外網
 
 ```
- Service: my-svc, ClusterIP 10.96.0.10
-   ├── Pod 1 (10.244.0.5)
-   ├── Pod 2 (10.244.1.8)
-   └── Pod 3 (10.244.2.3)
+容器怎麼上外網 + port mapping：
+
+  容器上外網（出向）：
+    容器（172.17.x.x，私有 IP）→ docker0 → MASQUERADE（NAT，Ch 8/18）
+    → 用宿主 IP 出網（和 Ch 22 你建的一樣）
+        │
+  外網連容器（入向）—— port mapping：
+    容器在內部 netns，外網連不進來（Ch 8 的 NAT 單向性）
+    docker run -p 8080:80：
+      把「宿主的 8080」映射到「容器的 80」
+      = iptables DNAT（Ch 8 的 port forwarding！）
+    → 外網連宿主:8080 → DNAT 轉給容器:80
+        │
+  → 容器上外網 = MASQUERADE（出）
+    外網連容器 = port mapping = DNAT（入）
+    這正是 Ch 8 的 NAT 雙向（MASQUERADE + port forwarding）
 ```
-
-任何 pod 連 `my-svc:80` 透過 kube-proxy 路由到後端 pod 之一。
-
-實作：iptables 或 IPVS rules（kube-proxy 自動維護）。
-
-## Ingress
-
-把外部 traffic 路由到 cluster 內 service：
-
-```
- internet ──► Ingress controller (nginx / traefik / istio)
-                    │
-                    ├── path /api → service A
-                    └── path /web → service B
-```
-
-通常用 Cloud LoadBalancer + Ingress controller。
-
-## Service Mesh
-
-進階：每 pod 旁掛 sidecar proxy（Envoy / Istio）做：
-
-- mTLS
-- traffic management
-- observability
-- retries / circuit breaker
-
-「**所有網路功能在 mesh 層處理**」。複雜但強大。
-
-## 觀察 docker 網路
 
 ```bash
-# 看 docker0 bridge
-ip a show docker0
-sudo bridge link
+# port mapping（-p 宿主port:容器port）
+docker run -d -p 8080:80 nginx
+# 外網連 宿主IP:8080 → 容器的 80（nginx）
 
-# 看 container 的 netns
-docker inspect <container> | grep Pid
-sudo nsenter -t <PID> -n ip a
-sudo nsenter -t <PID> -n ss -tnlp
+# 看 port mapping 的本質（iptables DNAT，Ch 8）
+sudo iptables -t nat -L DOCKER -n
+# DNAT ... tcp dpt:8080 to:172.17.0.2:80   ← 就是 Ch 8 的 port forwarding！
 
-# 看 NAT rules
-sudo iptables -t nat -L -n -v | grep DOCKER
+# 容器間通訊（同 bridge 網路）
+docker network create mynet              # 建自訂網路（比預設 bridge 好，有 DNS）
+docker run -d --name db --network mynet postgres
+docker run -d --name app --network mynet myapp
+# app 能用「db」這個名字連到 db 容器（Docker 的內建 DNS）
+# docker exec app ping db                # 用容器名互通（自訂網路有 DNS 解析）
 ```
 
-## 一個常見誤解：「容器有自己的 network stack 跟 VM 一樣」
+> **port mapping（`-p 8080:80`）就是 Ch 8 的 port forwarding（DNAT）——容器網路的入向和出向都是 Ch 8 的 NAT**。容器**上外網**（出向）靠 MASQUERADE（Ch 8/18，和 Ch 22 你建的一樣）——容器的私有 IP 透過 NAT 用宿主 IP 出網。但**外網連容器**（入向）有 Ch 8 的問題——容器在內部 netns，NAT 的單向性讓外網連不進來。**port mapping** 解決——`docker run -p 8080:80` 把「宿主的 8080」映射到「容器的 80」，這**就是 Ch 8 的 port forwarding（DNAT）**！`iptables -t nat -L DOCKER` 能看到 Docker 自動加的 DNAT 規則（`dpt:8080 to:172.17.0.2:80`）——和你手設 port forwarding 一模一樣。所以容器網路的入向（port mapping=DNAT）和出向（MASQUERADE）都是 Ch 8 的 NAT 雙向。**容器間通訊**——用**自訂網路**（`docker network create`，比預設 bridge 好）容器能用**名字**互連（`app` 連 `db`，Docker 內建 DNS 解析容器名）——這比用 IP 好（IP 會變，名字穩定）。理解這些，你就懂了 `-p` 在做什麼、容器為什麼能上網、容器間怎麼互通——全是前面學的 NAT/bridge/DNS 的應用。Docker 把它們自動化，但底層沒有魔法。
 
-**錯**。容器跟 VM 不同：
+## Kubernetes 網路概念（速覽）
 
-- VM：有自己的 kernel，完整網路 stack
-- 容器：共用 host kernel，只有獨立 netns
+```
+Kubernetes 網路（概念速覽，雲原生的網路）：
 
-容器只「**看起來像**」獨立網路，但 kernel 是 host 的。
+  K8s 的網路模型（比 Docker 複雜）：
+        │
+  1. Pod 網路：
+     每個 Pod（一組容器）有自己的 IP
+     Pod 之間能直接通（扁平網路，無 NAT）
+        │
+  2. Service：
+     一組 Pod 的「穩定入口」（Pod 會生滅，IP 會變）
+     Service 有固定的 virtual IP，負載平衡到後面的 Pod
+        │
+  3. Ingress：
+     從外部進來的 HTTP 路由（像 nginx reverse proxy，Ch 36）
+        │
+  4. CNI（容器網路介面）：
+     插件化的網路實作（Calico/Flannel/Cilium）
+     Cilium 用 eBPF（接 bpf 課）做高效能網路
+        │
+  → K8s 網路是「容器網路的規模化」
+    底層還是 netns/veth/路由/iptables(或eBPF)
+    但加了 Service/Ingress 等抽象來管理大規模
+```
 
-## 一個常見誤解：「Docker bridge 自動 firewall」
+> **Kubernetes 網路是「容器網路的規模化」——底層還是 netns/veth/路由，但加了 Service/Ingress 抽象來管理大規模**。K8s 網路比 Docker 複雜，但概念是容器網路的延伸：**Pod 網路**（每個 Pod 有自己的 IP，Pod 間扁平直連無 NAT——比 Docker 的 NAT 模型更直接）、**Service**（一組 Pod 的穩定入口——因為 Pod 會生滅、IP 會變，Service 提供固定的 virtual IP 並負載平衡到後面的 Pod，解決「後端動態變化」的問題）、**Ingress**（外部 HTTP 路由進來，像 nginx reverse proxy 的 K8s 版，Ch 36）、**CNI**（容器網路介面——插件化的網路實作，如 Calico/Flannel/Cilium，其中 **Cilium 用 eBPF** 做高效能網路，接 bpf 課）。這些抽象（Service/Ingress）是為了管理**大規模、動態**的容器（幾百個 Pod 不斷生滅）。但**底層還是 Ch 20-22 的東西**——netns、veth、路由、iptables（或 eBPF 取代 iptables）。理解這個，你看 K8s 網路時知道「它在 Linux 網路原語之上加了什麼抽象、為了解決什麼問題」。本課不深入 K8s（那是另一個大主題），但這個速覽讓你看到「容器網路怎麼規模化」，以及它和你學的底層的關係。重點認知：**再複雜的雲原生網路，底層都是你學過的 Linux 網路原語**——這是理解任何網路系統的鑰匙。
 
-**錯**。Docker 預設**對外 expose** 你 publish 的 port：
+## 故意弄壞:debug 容器網路
 
 ```bash
-docker run -p 80:80 nginx
-# 任何人連 host:80 就能訪問
+# 容器網路問題的 debug（綜合 Ch 20-22 的方法）
+
+# 1. 容器連不上外網 → 檢查 NAT/forward（Ch 22 的清單）
+docker exec web ping -c1 8.8.8.8
+# 不通 → 檢查：
+cat /proc/sys/net/ipv4/ip_forward          # 1 嗎？
+sudo iptables -t nat -L POSTROUTING -n | grep MASQUERADE  # 有 NAT 嗎？
+
+# 2. 容器 DNS 不通（Ch 20 的容器 DNS 陷阱）
+docker exec web cat /etc/resolv.conf        # DNS 設定對嗎？
+docker exec web nslookup google.com         # 解析得了嗎？
+
+# 3. port mapping 不通 → 檢查 DNAT（Ch 8）
+docker run -d -p 8080:80 nginx
+curl -I http://localhost:8080               # 通嗎？
+sudo iptables -t nat -L DOCKER -n           # DNAT 規則在嗎？
+
+# 4. 容器間不通 → 檢查是否同網路
+docker network inspect bridge               # 看哪些容器在這網路
+
+# 5. 鑽進容器網路看（Ch 20 nsenter）
+PID=$(docker inspect -f '{{.State.Pid}}' web)
+sudo nsenter -t $PID -n ip addr             # 容器的網路
+sudo nsenter -t $PID -n ip route            # 容器的路由
+
+# → 容器網路 debug = Ch 20-22 的方法 + Docker 的工具
 ```
 
-Docker 自動加 iptables rules**繞過 host 的 ufw**！
-
-對策：明確指定 IP：
-
-```bash
-docker run -p 127.0.0.1:80:80 nginx
-# 只 localhost 能連
-```
-
-或用 `iptables -I DOCKER-USER` 加自己的 rule。
-
-## 一個常見誤解：「K8s 自帶 ingress」
-
-**錯**。K8s 提供 `Ingress` resource 定義，但需要**安裝 Ingress controller** 才能用。
-
-常見：
-
-- nginx-ingress
-- traefik
-- HAProxy ingress
-- Istio Gateway
-
-## 一個常見誤解：「容器網路慢」
-
-**部分對**。bridge mode 比 host mode 慢（額外 NAT）。但大多場景**慢的可忽略**。
-
-真正性能要求：用 host mode 或 macvlan。
+> **容器網路的 debug 就是 Ch 20-22 的方法——這證明了「理解底層就能 debug 任何容器網路問題」**。容器網路出問題時，用前面學的方法和工具排查：(1) **容器連不上外網** → 檢查 ip_forward 和 MASQUERADE（Ch 22 的清單，和你手建拓樸時一樣）；(2) **容器 DNS 不通** → 檢查容器的 resolv.conf（Ch 20 的容器 DNS 陷阱——這是容器網路最常見的問題之一）；(3) **port mapping 不通** → 檢查 Docker 的 DNAT 規則（Ch 8）；(4) **容器間不通** → 檢查是否同網路；(5) **深入** → 用 `nsenter`（Ch 20）鑽進容器的 netns 看它的介面/路由/連線。`docker network inspect` 看網路詳情。這些 debug 方法**完全是 Ch 20-22 的延伸**——因為容器網路就是那些 Linux 原語。這呼應了本課的核心理念：**理解底層讓你能 debug 任何上層抽象**。當別人面對「容器連不上」束手無策（把 Docker 當黑盒子），你知道去查 ip_forward、NAT、resolv.conf、路由——因為你知道容器網路是什麼。這是「理解 vs 會用」的根本差別。Part 9 的容器網路速覽到此——你看到了現代部署的網路底層，以及它和全課知識的連結。
 
 ## 動手練習
 
-**1. 建 docker custom network**
+1. 對照手建：跑一個 Docker 容器，找出 docker0（bridge）、容器的 veth、NAT 規則，對照 Ch 22
 
-```bash
-docker network create test-net
-docker run -d --name n1 --network test-net nginx
-docker run -d --name n2 --network test-net nginx
-docker exec n1 ping -c 3 n2     # 用 name 互連
-docker network rm test-net
-```
+2. 網路模式：用 `--network host` vs 預設 bridge 跑容器，對比它們的網路（host 共享宿主）
 
-**2. 看 docker0**
+3. port mapping：`docker run -p 8080:80`，用 iptables 看 DNAT 規則（Ch 8）
 
-```bash
-ip a show docker0
-sudo iptables -L -t nat -n | grep -i docker | head
-```
+4. 容器間 DNS：建自訂網路，跑兩個容器，用名字互連（Docker 內建 DNS）
 
-**3. 進 container netns**
+5. 跑「故意弄壞」：用 nsenter 鑽進容器網路看，debug 一個容器網路問題
 
-```bash
-docker run -d --rm --name web nginx
-PID=$(docker inspect web | grep '"Pid"' | grep -oP '\d+')
-sudo nsenter -t $PID -n ip a
-sudo nsenter -t $PID -n ss -tnlp
-docker stop web
-```
+## 本章重點整理
 
-**4. compose 多 container**
-
-```bash
-mkdir compose-test && cd compose-test
-cat > docker-compose.yml <<EOF
-services:
-  web:
-    image: nginx
-    ports:
-      - "8080:80"
-  redis:
-    image: redis
-EOF
-docker compose up -d
-docker compose ps
-docker exec compose-test-web-1 ping -c 1 redis
-docker compose down
-```
-
-**5. 看 K8s（如果有）**
-
-```bash
-kubectl get pods -o wide
-kubectl get svc
-kubectl get endpoints
-kubectl get ingress
-```
+- Docker 網路 = Ch 22 手建拓樸的自動化：容器=netns、eth0=veth、docker0=bridge、MASQUERADE=NAT
+- 網路模式：bridge（預設，隔離）、host（共享宿主網路，快但無隔離）、none（無網路）、overlay（跨主機）
+- 容器上外網=MASQUERADE（出）；port mapping（-p 8080:80）=Ch 8 的 DNAT/port forwarding（入）
+- K8s 網路是容器網路的規模化（Pod 網路/Service/Ingress/CNI），底層還是 netns/veth/路由（或 eBPF）
+- 容器網路 debug = Ch 20-22 的方法（ip_forward/NAT/resolv.conf/nsenter）——理解底層就能 debug 任何抽象
 
 ## 自我檢核
 
-- [ ] Docker 4 種 network mode 知道
-- [ ] 自建 docker bridge network、用 name 互連
-- [ ] 知道 docker compose 預設怎麼處理 network
-- [ ] K8s 4 個網路問題清楚
-- [ ] 知道 CNI 是什麼
-- [ ] 用 nsenter 看過 container netns
+- [ ] 能說出 Docker 網路怎麼對應 Ch 20-22 的 netns/veth/bridge/NAT
+- [ ] 知道 Docker 網路模式（bridge/host/none/overlay）的差別
+- [ ] 理解 port mapping 就是 Ch 8 的 DNAT
+- [ ] 知道 K8s 網路的概念（Pod/Service/Ingress）和它和底層的關係
+- [ ] 能用 Ch 20-22 的方法 debug 容器網路問題
 
-下一章看 IPv6。
+## 延伸閱讀
+
+### 文章
+
+- **[Docker networking 詳解](https://docs.docker.com/network/)** — Docker 官方
+  - **讀哪裡**：bridge/host/overlay 那幾節
+  - **為什麼值得讀**：Docker 網路模式的權威
+
+- **[Container Networking from Scratch](https://labs.iximiuz.com/tutorials/container-networking-from-scratch)** — iximiuz
+  - **這篇說什麼**：手工建容器網路，對照 Docker
+  - **為什麼值得讀**：把 Ch 22 和 Docker 的連結講透（本章的延伸）
+
+### 書籍
+
+- **《Container Networking》— Michael Hausenblas（O'Reilly, 免費）**
+  - **讀哪幾章**：單機網路、K8s 網路那幾章
+  - **這本書的定位**：容器網路的完整指南，從 Docker 到 K8s
+
+下一章看 IPv6——位址耗盡的長期解法，理解它怎麼解決 NAT 的問題、為什麼普及緩慢、以及它和 IPv4 的差異。
 
 → [Ch 38 IPv6](./38-ipv6.md)

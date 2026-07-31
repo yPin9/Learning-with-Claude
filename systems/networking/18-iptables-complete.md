@@ -1,372 +1,269 @@
-# Ch 18 — iptables 完整指南
+# Ch 18 — iptables 完整
 
-> 目標：搞懂 iptables 的 4 表 5 鏈、寫 firewall 規則、看別人的規則。
+> **目標**：把 iptables 講透——netfilter 框架（封包在 kernel 怎麼被處理）、五個 chain（封包經過的檢查點）、表（filter/nat/mangle）、規則的組成、做防火牆和 NAT（Ch 8 的實作）、以及 DROP vs REJECT 的選擇。iptables 是 Linux 防火牆的經典工具，也是理解 VPN（Ch 23）、容器網路（Ch 37）、NAT（Ch 8）的關鍵。雖然 nftables（Ch 19）是新標準，但 iptables 仍無所不在。
 
-## iptables 是什麼
+> **環境**：Linux（iptables）。實驗用 netns 安全測試（弄壞了刪掉重來）。
 
-Linux kernel 的 **netfilter** 框架的 user-space 控制工具。能：
+## 為什麼要懂 iptables？
 
-- **過濾** packet（firewall）
-- **改寫** packet（NAT）
-- **mark** packet（QoS）
-- **記錄** 流量
+防火牆決定「哪些封包能進、能出、能轉發」——這是伺服器安全的第一道防線（Ch 35 會用它加固 VPS）。iptables 是 Linux 控制封包流的經典工具，它不只做防火牆，還做 NAT（Ch 8 的 MASQUERADE 就是 iptables）、流量改寫、轉發控制。
 
-雖然有新的 nftables（Ch 19）取代，但**現存系統 90% 還用 iptables**。會 iptables 必修。
+理解 iptables 回答了核心問題：封包進入 Linux 後怎麼被處理？防火牆規則怎麼決定 accept/drop？NAT 怎麼實作？為什麼有時「明明服務開了卻連不上」（防火牆擋了）？這些是 Part 8（VPS 安全）、Part 6（VPN 的封包轉發）、Part 9（容器網路）的基礎。雖然 nftables（Ch 19）是新標準，但 iptables 在現存系統、Docker、無數教學裡無所不在——必須懂。
 
-## 4 表 5 鏈
-
-iptables 用「**表（table）+ 鏈（chain）**」組織規則：
-
-### 4 個 table
-
-| Table | 用途 |
-|---|---|
-| **filter** | 過濾（INPUT / OUTPUT / FORWARD）— 預設 |
-| **nat** | NAT（PREROUTING / POSTROUTING） |
-| **mangle** | 修改 packet field |
-| **raw** | 跳過 connection tracking |
-
-### 5 個 chain
-
-| Chain | 觸發時機 |
-|---|---|
-| **PREROUTING** | packet 進來、路由前 |
-| **INPUT** | 路由後，往本機 |
-| **FORWARD** | 路由後，要轉發 |
-| **OUTPUT** | 本機產的 packet 出去前 |
-| **POSTROUTING** | 真正送出去前 |
-
-不是每個 table 都有所有 chain。常用組合：
-
-| 用途 | Table | Chain |
-|---|---|---|
-| 阻擋進來 | filter | INPUT |
-| 阻擋本機出去 | filter | OUTPUT |
-| 阻擋 forward (router) | filter | FORWARD |
-| SNAT (改 src) | nat | POSTROUTING |
-| DNAT (改 dst) | nat | PREROUTING |
-
-## packet 旅程
+## 先建立直覺:封包通過的安檢站
 
 ```
-                          ┌──────────────────┐
-                          │   PREROUTING     │
-       packet 進來 ───────►│ raw / mangle /  │
-                          │      nat         │
-                          └────────┬─────────┘
-                                   │
-                          ┌────────┴─────────┐
-                          │    routing       │
-                          │   decision       │
-                          └────┬───────┬─────┘
-                               │       │
-                  to local ────┘       └──── to forward
-                       │                            │
-              ┌────────┴────────┐         ┌────────┴────────┐
-              │     INPUT       │         │     FORWARD     │
-              │ mangle / filter │         │ mangle / filter │
-              └────────┬────────┘         └────────┬────────┘
-                       │                            │
-                  local process                     │
-                       │                            │
-              ┌────────┴────────┐                  │
-              │    OUTPUT       │                  │
-              │ raw / mangle /  │                  │
-              │ nat / filter    │                  │
-              └────────┬────────┘                  │
-                       │                            │
-                       └────────┬───────────────────┘
-                                │
-                       ┌────────┴─────────┐
-                       │  POSTROUTING     │
-                       │ mangle / nat     │
-                       └────────┬─────────┘
-                                │
-                       packet 送出
+netfilter：封包在 Linux kernel 裡經過的「安檢站」
+
+  封包進入 Linux → 經過一系列「檢查點」（chain）
+  每個檢查點有一串「規則」（rule）
+  封包逐條比對規則 → 符合就執行動作（ACCEPT/DROP/...）
+        │
+  五個檢查點（chain），對應封包的不同階段：
+        │
+  封包進來 ──▶ PREROUTING ──▶ [路由決策]
+                                  │
+              這是要給「本機」的？     是給「別人」的（轉發）？
+                  ▼                        ▼
+              INPUT ──▶ 本機程式         FORWARD
+                          │                  │
+                        本機程式發出         │
+                          ▼                  │
+                       OUTPUT ──▶ POSTROUTING ◀──┘ ──▶ 封包出去
+        │
+  → 封包經過哪些 chain，看它是「進本機」「出本機」還是「路過（轉發）」
+    在對應的 chain 設規則 = 控制那類封包
 ```
 
-新手只要記：
+關鍵心智：netfilter 是封包在 kernel 裡經過的「安檢站」系統。封包經過一系列 **chain**（檢查點），每個 chain 有一串**規則**，封包逐條比對，符合就執行動作。五個 chain 對應封包的不同階段：給本機的走 INPUT、本機發出的走 OUTPUT、路過（轉發）的走 FORWARD，加上路由前的 PREROUTING 和路由後的 POSTROUTING。
 
-- **進來**：PREROUTING → INPUT
-- **出去**：OUTPUT → POSTROUTING
-- **轉發**（router）：PREROUTING → FORWARD → POSTROUTING
+> iptables 操作的是 Ch 8 的 NAT、Ch 4 的封包轉發。MASQUERADE（Ch 8 讓內網上網的動作）就是 iptables 的 nat 表規則。如果對 NAT 不熟，回看 [Ch 8](./08-nat-explained.md)。
 
-## 基本命令
+## 五個 chain 與三個表
+
+```
+iptables 的核心結構：表（table）× 鏈（chain）
+
+  三個常用的表（每個表管不同的事）：
+    filter ── 防火牆（accept/drop，最常用）
+    nat    ── 位址轉換（NAT/MASQUERADE/port forwarding，Ch 8）
+    mangle ── 改封包欄位（TTL/TOS 等，進階）
+        │
+  五個鏈（chain，封包經過的點）：
+    PREROUTING  ── 剛進來，路由決策前（nat/mangle 用）
+    INPUT       ── 要給本機的（filter 防火牆主場）
+    FORWARD     ── 路過/轉發的（路由器/VPN/容器用）
+    OUTPUT      ── 本機發出的
+    POSTROUTING ── 要出去了，路由後（nat MASQUERADE 用）
+        │
+  常見組合：
+    filter 表的 INPUT 鏈 → 「誰能連我」（伺服器防火牆主場）
+    filter 表的 FORWARD 鏈 → 「能轉發什麼」（路由器/VPN）
+    nat 表的 POSTROUTING 鏈 → MASQUERADE（讓內網上網，Ch 8）
+    nat 表的 PREROUTING 鏈 → port forwarding（外網連內網服務）
+```
 
 ```bash
-# 看現有規則
-sudo iptables -L                  # filter table
-sudo iptables -L -n               # 不解 DNS
-sudo iptables -L -n -v            # 含 packet count
-sudo iptables -L -t nat           # nat table
-sudo iptables -L INPUT -n --line-numbers   # 加 line number
+# 看當前規則
+sudo iptables -L -n -v               # filter 表（預設），-n 數字 -v 詳細
+sudo iptables -t nat -L -n -v        # nat 表
+sudo iptables -S                     # 以「命令形式」列出（方便複製/理解）
+
+# 規則的計數器（-v 顯示）：看每條規則「命中幾次」（debug 用）
+# pkts bytes target ... → 這條規則匹配了多少封包
 ```
 
-範例輸出：
+> **「表 × 鏈」的組合決定一條規則「在封包旅程的哪個點、做什麼類型的事」——這是 iptables 的核心心智模型**。**表**決定「做什麼類型的事」：`filter`（防火牆 accept/drop）、`nat`（位址轉換）、`mangle`（改封包）。**鏈**決定「在封包旅程的哪個點」：INPUT（給本機的）、OUTPUT（本機發的）、FORWARD（路過的）、PRE/POSTROUTING（路由前後）。組合起來：要做「伺服器防火牆」（控制誰能連我）→ `filter` 表的 `INPUT` 鏈；要做「NAT 讓內網上網」（Ch 8）→ `nat` 表的 `POSTROUTING` 鏈（MASQUERADE）；要做「port forwarding」（外網連內網服務）→ `nat` 表的 `PREROUTING` 鏈。理解這個二維結構（表 × 鏈），你看任何 iptables 規則就知道「它在哪個點做什麼」。`iptables -L -n -v` 看規則，`-v` 的計數器（每條規則命中幾次）是 debug 利器——能看出「封包有沒有命中這條規則」。
 
-```
-Chain INPUT (policy ACCEPT)
-target     prot opt source     destination
-ACCEPT     all  --  anywhere   anywhere   ctstate RELATED,ESTABLISHED
-ACCEPT     tcp  --  anywhere   anywhere   tcp dpt:ssh
-DROP       all  --  anywhere   anywhere
-```
-
-「policy ACCEPT」= 預設行為（沒匹配規則的 packet 怎麼處理）。
-
-### 加規則
+## filter 表:做防火牆
 
 ```bash
-# 接受 SSH (port 22)
-sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+# === 基本防火牆規則（filter 表的 INPUT 鏈）===
+# 規則的組成：-A <鏈> <匹配條件> -j <動作>
 
-# 阻擋特定 IP
-sudo iptables -A INPUT -s 192.168.1.100 -j DROP
+# 允許特定 port（如 SSH/HTTP）
+sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT    # 允許 SSH
+sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT    # 允許 HTTP
+sudo iptables -A INPUT -p tcp --dport 443 -j ACCEPT   # 允許 HTTPS
 
-# 接受 HTTPS
-sudo iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+# 允許特定來源 IP
+sudo iptables -A INPUT -s 192.168.1.0/24 -j ACCEPT    # 允許整個內網
+sudo iptables -A INPUT -s 1.2.3.4 -p tcp --dport 22 -j ACCEPT  # 只允許這 IP 連 SSH
 
-# 預設拒絕（最後加）
-sudo iptables -A INPUT -j DROP
+# 允許已建立的連線（重要！否則回應封包被擋）
+sudo iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+# 允許 loopback（本機自己）
+sudo iptables -A INPUT -i lo -j ACCEPT
+
+# 預設策略：拒絕其他（白名單模式，安全）
+sudo iptables -P INPUT DROP          # 預設 DROP（沒被明確允許的都丟）
+
+# === 動作（-j target）===
+# ACCEPT：放行
+# DROP：靜默丟棄（不回應 → 對方 timeout，Ch 6）
+# REJECT：拒絕並回應（回 RST/ICMP → 對方 refused，Ch 6）
+# LOG：記錄（debug，不終止比對）
 ```
 
-選項：
+```
+一個典型的伺服器防火牆規則集（白名單模式）：
 
-- `-A` append（最後）
-- `-I` insert（最前 / 指定位置）
-- `-D` delete
-- `-F` flush（清整個 chain）
-- `-p tcp/udp/icmp/all`
-- `-s` source
-- `-d` dest
-- `--sport / --dport` source/dest port
-- `-i / -o` input/output interface
-- `-j ACCEPT/DROP/REJECT/LOG`
+  1. 允許 loopback（本機自己）：-i lo -j ACCEPT
+  2. 允許已建立的連線：-m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  3. 允許 SSH（管理用）：-p tcp --dport 22 -j ACCEPT
+  4. 允許 HTTP/HTTPS：-p tcp --dport 80,443 -j ACCEPT
+  5. 預設拒絕其他：-P INPUT DROP
+        │
+  → 白名單：只開明確需要的，其他全擋（Ch 35 安全原則）
+    順序重要！規則由上而下比對，第一個符合的生效
+    （所以「允許已建立連線」要放前面）
+```
 
-### 刪規則
+> **「允許已建立的連線」（conntrack ESTABLISHED）是防火牆規則最容易漏卻最關鍵的一條**。防火牆是**有狀態的**（stateful）——它追蹤連線狀態（用 conntrack，Ch 8 的連線追蹤）。當你連出去（如 `curl` 一個網站），回應封包要能進來——但回應封包的目標 port 是隨機的（不是 80/443），如果你只開了 80/443 的 INPUT，回應會被擋（你連得出去但收不到回應）。解法是 `-m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT`——「已經建立的連線的回應封包，放行」。這條規則讓「本機主動發起的連線」的回應能回來，而「外部主動發起的新連線」仍受其他規則控制。這是**有狀態防火牆**的精髓——你不用為每個出向連線開對應的入向規則，conntrack 自動追蹤。**規則順序也很關鍵**——iptables 由上而下比對，第一個符合的生效（所以 ESTABLISHED 要放前面，常用規則放前面效率高）。**預設策略 DROP**（`-P INPUT DROP`）配合明確的 ACCEPT 規則 = 白名單模式（只開需要的，Ch 35 的安全原則）。漏了 ESTABLISHED 這條，是新手設防火牆「設完就斷網」的頭號原因。
+
+## DROP vs REJECT
+
+```
+DROP vs REJECT（兩種「拒絕」，效果不同）：
+
+  DROP：靜默丟棄（不回應任何東西）
+    對方：等到 timeout（Ch 6）—— 不知道發生什麼
+    優點：隱蔽（掃描者不知道 port 存不存在/被擋）
+    缺點：對方要等 timeout（慢），合法使用者體驗差
+        │
+  REJECT：拒絕並回應（回 RST 或 ICMP unreachable）
+    對方：立刻收到「connection refused」（Ch 6）
+    優點：對方立刻知道（快），符合「禮貌」
+    缺點：暴露「這裡有東西在擋」（給掃描者資訊）
+        │
+  → 對「公網的攻擊面」用 DROP（隱蔽，讓掃描者浪費時間）
+    對「內網/已知來源」用 REJECT（快速回應，友善）
+    這對應 Ch 6 的 timeout vs refused，和練習 B 的問題 3
+```
 
 ```bash
-# 用 line number
-sudo iptables -L INPUT -n --line-numbers
-sudo iptables -D INPUT 3
+# DROP（靜默，對外用）
+sudo iptables -A INPUT -p tcp --dport 23 -j DROP        # telnet：靜默丟棄
 
-# 完整 spec match
-sudo iptables -D INPUT -s 192.168.1.100 -j DROP
+# REJECT（回應，內網用）
+sudo iptables -A INPUT -s 192.168.1.0/24 -p tcp --dport 3306 -j REJECT  # 內網連 MySQL：明確拒絕
+
+# 驗證 DROP vs REJECT 的差別（對應練習 B）
+# DROP 的 port → nc timeout
+# REJECT 的 port → nc refused（快）
 ```
 
-### 持久化
+> **DROP（靜默，造成 timeout）vs REJECT（回應，造成 refused）是有意的安全選擇——這正是練習 B 問題 3 的根源**。**DROP** 靜默丟棄封包，對方等到 timeout（Ch 6）——這對**公網攻擊面**有利（掃描者不知道 port 是「被擋」還是「主機不存在」，浪費他的時間，nmap 顯示 filtered，Ch 17）。**REJECT** 主動回應拒絕（RST 或 ICMP unreachable），對方立刻收到 refused——這對**內網/合法使用者**友善（不用等 timeout，立刻知道）。所以慣例：**公網用 DROP**（隱蔽防禦），**內網用 REJECT**（快速友善）。這完美對應 Ch 6 的「refused vs timeout」和練習 B 問題 3——當你 debug「為什麼連線 timeout」，可能就是對方防火牆 DROP 了你；「為什麼 refused」可能是 REJECT 或服務沒開。理解這個選擇，你既能正確設防火牆，也能反推「對方為什麼這樣回應我」。
 
-iptables 規則是 runtime，重開機消失。要持久：
+## nat 表:NAT 與 port forwarding
 
 ```bash
-# Ubuntu/Debian
-sudo apt install iptables-persistent
-sudo netfilter-persistent save     # 存到 /etc/iptables/rules.v4
+# === MASQUERADE：讓內網上網（Ch 8 的核心，VPN 也用）===
+# 把來源 IP 改成出口介面的 IP（內網 → 路由器公網 IP）
+sudo iptables -t nat -A POSTROUTING -s 192.168.1.0/24 -o eth0 -j MASQUERADE
+# 配合開啟 IP forwarding（Ch 0）：
+sudo sysctl net.ipv4.ip_forward=1
+# → 內網機器現在能透過這台機器上網（這台當路由器/NAT）
+# → 這正是 VPN（Ch 23）和容器（Ch 37）讓流量出網的機制
+
+# === DNAT / port forwarding：外網連內網服務（Ch 8）===
+# 把連到「本機公網 IP:80」的封包轉給「內網 192.168.1.10:80」
+sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j DNAT --to-destination 192.168.1.10:80
+# → 外網連這台的 80 → 轉給內網的 web 伺服器
+
+# === SNAT：固定來源 IP（MASQUERADE 的靜態版）===
+sudo iptables -t nat -A POSTROUTING -s 192.168.1.0/24 -j SNAT --to-source 1.2.3.4
+# MASQUERADE 自動用出口 IP，SNAT 指定固定 IP（適合固定公網 IP）
+
+# === MSS clamping：解決 VPN 的 MTU 問題（Ch 4）===
+sudo iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+# 強制把 TCP MSS 改小，避免 MTU 黑洞（Ch 4，VPN 常用）
 ```
 
-或手動：
+> **iptables 的 nat 表是 Ch 8 NAT 的實作——MASQUERADE 是 VPN 和容器讓流量出網的關鍵動作**。`iptables -t nat -A POSTROUTING ... -j MASQUERADE` 就是 Ch 8 講的 NAT——把內網封包的來源 IP 改成出口介面的 IP，讓內網能共用公網 IP 上網。這條規則（配合 `ip_forward=1`，Ch 0）讓一台 Linux 變成 NAT 路由器——**這正是 WireGuard VPN（Ch 24）讓 VPN 客戶端的流量從伺服器出網、Docker（Ch 37）讓容器上網的機制**。`DNAT`（PREROUTING）做 port forwarding（外網連內網服務，Ch 8）。`SNAT` 是 MASQUERADE 的靜態版（指定固定來源 IP）。還有一個 VPN 必備的技巧 **MSS clamping**（`TCPMSS --clamp-mss-to-pmtu`）——它強制把 TCP 的 MSS 改小，解決 VPN 多包一層造成的 MTU 黑洞（Ch 4，VPN 場景超常見）。這些 nat 規則是 Part 6（VPN）和 Part 9（容器網路）的底層——當你架 WireGuard 後發現「VPN 連上了但上不了網」，十之八九是少了 MASQUERADE 或 ip_forward；「傳大檔案卡住」可能要 MSS clamping。理解 iptables 的 nat 表，你就掌握了 VPN/容器網路的封包轉發核心。
+
+## 故意弄壞:在 netns 安全測試防火牆
 
 ```bash
-sudo iptables-save > /etc/iptables/rules.v4
-sudo iptables-restore < /etc/iptables/rules.v4
+# 在 netns 測試防火牆規則（弄壞了刪掉重來，不影響本機，Ch 0）
+sudo ip netns add fwtest
+sudo ip netns exec fwtest ip link set lo up
+
+# 在 netns 裡設規則並驗證
+# 1. 預設策略 DROP 會擋掉一切（包括 loopback！常見錯誤）
+sudo ip netns exec fwtest iptables -P INPUT DROP
+sudo ip netns exec fwtest ping -c1 127.0.0.1   # 不通！（連 loopback 都被 DROP）
+# → 教訓：設 -P INPUT DROP 前，務必先允許 loopback 和 ESTABLISHED！
+
+# 2. 補上必要的允許
+sudo ip netns exec fwtest iptables -A INPUT -i lo -j ACCEPT
+sudo ip netns exec fwtest ping -c1 127.0.0.1   # 通了
+
+sudo ip netns del fwtest
+
+# 真實世界的災難：遠端設 -P INPUT DROP 但忘了允許 SSH → 把自己鎖在外面！
+# 防範：
+#   1. 先 ACCEPT SSH/loopback/ESTABLISHED，「最後」才設 -P DROP
+#   2. 用 iptables-apply（設定後若沒確認自動回滾，防鎖死）
+#   3. 在 console/救援模式有後路
 ```
 
-## ACCEPT vs DROP vs REJECT
-
-| Action | 行為 |
-|---|---|
-| ACCEPT | 通過 |
-| DROP | 丟棄，沒回應（對方 timeout） |
-| REJECT | 丟棄 + 回 ICMP "Connection refused" |
-| LOG | 記到 syslog，繼續比對下一條 |
-
-DROP vs REJECT：
-
-- DROP 對攻擊者更安全（看起來主機不存在）
-- REJECT 對 user 友善（立刻 fail，不 timeout）
-
-## stateful firewall（connection tracking）
-
-iptables 能追蹤連線狀態：
-
-```bash
-# 接受已建立 / 相關連線（必加）
-sudo iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-```
-
-意思：「不管什麼 src/port，**只要是現有連線的後續 packet**就接受」。
-
-這條讓你不必為每個出去連線的回包寫規則。**標準 firewall 的第一條**。
-
-連線狀態：
-
-- `NEW`：第一個 packet
-- `ESTABLISHED`：已成立
-- `RELATED`：跟現有連線相關（如 FTP data channel）
-- `INVALID`：壞 packet
-
-## 標準 firewall ruleset
-
-```bash
-#!/bin/bash
-# 清乾淨
-iptables -F
-iptables -X
-iptables -Z
-
-# 預設拒絕
-iptables -P INPUT DROP
-iptables -P FORWARD DROP
-iptables -P OUTPUT ACCEPT
-
-# 1. 已建立連線 + loopback 接受
-iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-iptables -A INPUT -i lo -j ACCEPT
-
-# 2. SSH (改 port 更安全，這裡用 default 22)
-iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-
-# 3. HTTP/HTTPS（如果是 web server）
-iptables -A INPUT -p tcp --dport 80 -j ACCEPT
-iptables -A INPUT -p tcp --dport 443 -j ACCEPT
-
-# 4. ping 接受（可選）
-iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT
-
-# 5. log 被 drop 的（可選，方便 debug）
-iptables -A INPUT -j LOG --log-prefix "iptables-DROP: " --log-level 4
-
-# 6. 預設 DROP（已在 policy 設）
-```
-
-## NAT 範例
-
-### SNAT（source NAT，多裝置共享 IP）
-
-```bash
-# 把 LAN 出去的 packet 改成本機 IP
-sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-```
-
-`MASQUERADE` = 動態 SNAT（用 outgoing interface 的 IP）。
-
-開 IP forward：
-
-```bash
-sudo sysctl -w net.ipv4.ip_forward=1
-# 持久化
-echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
-```
-
-### DNAT（dest NAT，port forwarding）
-
-```bash
-# 把外部 8080 轉到 192.168.1.100:80
-sudo iptables -t nat -A PREROUTING -p tcp --dport 8080 -j DNAT --to-destination 192.168.1.100:80
-```
-
-## 檢視 stateful 規則
-
-```bash
-sudo conntrack -L           # 看現有 conntrack（需 conntrack-tools）
-sudo cat /proc/net/nf_conntrack  # 直接看 kernel
-```
-
-## 一個常見踩雷：「policy 設 DROP 後 SSH 斷了」
-
-```bash
-sudo iptables -P INPUT DROP    # 沒先加 SSH ACCEPT
-# 你的 SSH 立刻斷
-```
-
-**順序很重要**：先加 ACCEPT 規則，再改 policy。
-
-或用 `iptables-restore` 一次性 atomic 套用整套規則。
-
-## 一個常見踩雷：忘了 `-i lo`
-
-```bash
-# 沒接受 loopback
-iptables -A INPUT -m conntrack --ctstate ESTABLISHED -j ACCEPT
-iptables -P INPUT DROP
-
-# localhost 上的服務（127.0.0.1）連不到
-```
-
-**`lo` interface 一定要 ACCEPT**，否則本機程式互通失敗。
-
-## 一個常見踩雷：規則順序錯
-
-```bash
-# 錯：先 DROP 再 ACCEPT
-iptables -A INPUT -j DROP
-iptables -A INPUT -p tcp --dport 22 -j ACCEPT   # 永遠不會 match
-```
-
-iptables 是「**從上到下匹配，第一個 match 就執行**」。**ACCEPT 規則要在 DROP 之前**。
+> **設 `-P INPUT DROP` 前沒先允許 SSH/loopback/ESTABLISHED，會把自己鎖在伺服器外——這是運維的經典災難**。`-P INPUT DROP`（預設拒絕）很安全，但它擋掉**一切**沒被明確允許的——包括你的 SSH 連線和 loopback（本機自己）！如果你 SSH 到遠端伺服器，設了 `-P INPUT DROP` 但忘了先 `ACCEPT` SSH（port 22），下一個封包開始你就斷線了，而且**再也連不進去**（SSH 被自己的規則擋），只能透過雲商的 console/救援模式搶救。防範鐵律：**先把該允許的規則（loopback、ESTABLISHED、SSH）加好，「最後」才設 `-P DROP`**。更安全的是用 `iptables-apply`（設定後給你 N 秒確認，沒確認就自動回滾恢復原規則，防止鎖死）。在 netns 裡測試（弄壞了刪掉重來，不影響本機）是學防火牆的安全方式。另一個常見坑：iptables 規則**重開機會消失**（要用 `iptables-save`/`netfilter-persistent` 持久化）——很多人設好防火牆，重開機後規則沒了（伺服器裸奔）。Ch 35（VPS 安全）會講正確的防火牆持久化。記住：**改遠端防火牆要極其小心，永遠留後路**。
 
 ## 動手練習
 
-**1. 看現有規則**
+1. 看現有規則：`iptables -L -n -v` 和 `iptables -t nat -L -n -v`，理解表和鏈的結構
 
-```bash
-sudo iptables -L -n -v
-sudo iptables -L -n -v -t nat
-```
+2. 在 netns 設防火牆：建白名單規則集（loopback+ESTABLISHED+特定 port+預設 DROP），驗證效果
 
-**2. 設個簡單 firewall（在 VPS 上練）**
+3. DROP vs REJECT：對兩個 port 分別設 DROP 和 REJECT，用 `nc -zv` 看 timeout vs refused 的差別
 
-**警告**：在 VPS 上練 firewall，搞錯 SSH 會斷。**先設 console / 救援方案**。
+4. NAT 實驗（Ch 22 後）：在 netns 拓樸設 MASQUERADE，看內網封包的來源 IP 被改寫
 
-```bash
-# 安全做法：先設 reset 計時
-echo "iptables -F; iptables -P INPUT ACCEPT" | at now + 5 min
-# 5 分鐘後自動 reset
+5. 跑「故意弄壞」：在 netns 體驗 `-P DROP` 擋掉 loopback，理解為什麼要先允許再設預設策略
 
-# 然後實驗
-sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT
-sudo iptables -P INPUT DROP
+## 本章重點整理
 
-# 測試 SSH 能不能連、HTTP 通不通
-```
-
-**3. 阻擋特定 IP**
-
-```bash
-sudo iptables -I INPUT 1 -s 1.2.3.4 -j DROP
-# 從 1.2.3.4 完全進不來
-
-# 移除
-sudo iptables -D INPUT -s 1.2.3.4 -j DROP
-```
-
-**4. 看 packet 統計**
-
-```bash
-sudo iptables -L -n -v
-# pkts bytes target     prot ...
-# 1234  56789 ACCEPT     tcp  ...
-```
-
-跑一段時間後看哪些規則被 hit。
-
-**5. NAT 練習**
-
-如果你 VPS 跑 docker / podman，看一下 nat table 的 rule（會看到大量 docker 自動加的）：
-
-```bash
-sudo iptables -L -t nat -n
-```
+- netfilter 是封包在 kernel 的「安檢站」；iptables 用「表 × 鏈」控制：表（filter/nat/mangle）決定做什麼，鏈（INPUT/OUTPUT/FORWARD/PRE/POSTROUTING）決定在哪個點
+- filter 表做防火牆：規則 `-A 鏈 匹配 -j 動作`；白名單模式（明確 ACCEPT + 預設 DROP）；規則由上而下比對
+- 「允許 ESTABLISHED 連線」是最關鍵卻最易漏的規則（有狀態防火牆，讓出向連線的回應能回來）
+- DROP（靜默/timeout，公網用隱蔽）vs REJECT（回應/refused，內網用友善）——對應 Ch 6 的 timeout vs refused
+- nat 表是 Ch 8 NAT 的實作：MASQUERADE（讓內網/VPN/容器上網）、DNAT（port forwarding）、MSS clamping（解 VPN MTU）
+- 設 `-P DROP` 前先允許 SSH/loopback/ESTABLISHED，否則鎖死自己；規則重開機會消失要持久化
 
 ## 自我檢核
 
-- [ ] 4 表 5 鏈背得出
-- [ ] 知道 packet 在 chain 中走的順序
-- [ ] 寫得出基本 firewall ruleset（5+ 條規則）
-- [ ] 知道 stateful firewall（conntrack）的價值
-- [ ] DROP / REJECT / ACCEPT 各意義清楚
-- [ ] 至少在 VPS 上實驗過（小心斷 SSH）
+- [ ] 能解釋封包經過哪些 chain，以及表和鏈的二維結構
+- [ ] 會寫白名單防火牆規則，知道為什麼「允許 ESTABLISHED」關鍵
+- [ ] 知道 DROP 和 REJECT 的差別，何時用哪個
+- [ ] 理解 MASQUERADE 是 NAT/VPN/容器讓流量出網的機制
+- [ ] 知道設防火牆怎麼避免把自己鎖死，規則要持久化
 
-下一章看 nftables — 現代版的 iptables。
+## 延伸閱讀
+
+### 官方文件
+
+- **[iptables(8) man page](https://man7.org/linux/man-pages/man8/iptables.8.html)** — netfilter
+  - **讀哪裡**：TARGETS、MATCH EXTENSIONS（conntrack 等）
+  - **為什麼值得讀**：iptables 所有選項的權威
+
+### 文章
+
+- **[A Deep Dive into Iptables and Netfilter Architecture](https://www.digitalocean.com/community/tutorials/a-deep-dive-into-iptables-and-netfilter-architecture)** — DigitalOcean
+  - **這篇說什麼**：netfilter 框架、表/鏈、封包流的完整圖解
+  - **讀哪裡**：整篇
+  - **為什麼值得讀**：本章「封包經過哪些 chain」的權威視覺化版
+
+- **[iptables 防火牆設定教學](https://www.frozentux.net/iptables-tutorial/iptables-tutorial.html)** — Oskar Andreasson
+  - **這篇說什麼**：iptables 的完整教學（雖老但經典）
+  - **為什麼值得讀**：把每個表/鏈/動作講到極致
+
+### 書籍
+
+- **《Linux Firewalls》— Michael Rash（No Starch）**
+  - **讀哪幾章**：iptables 基礎與進階那幾章
+  - **這本書的定位**：Linux 防火牆的權威，含攻擊偵測等進階
+
+下一章看 iptables 的現代繼任者 nftables——更統一、更高效的語法，理解為什麼要取代 iptables，以及怎麼用。
 
 → [Ch 19 nftables](./19-nftables.md)

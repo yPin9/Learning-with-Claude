@@ -1,407 +1,221 @@
-# Ch 34 — SSH 完整指南
+# Ch 34 — SSH 完整
 
-> 目標：把 SSH 用到專業級 — key 管理、port forwarding、tunneling、config 檔、安全配置。
+> **目標**：把 SSH 從基礎推到精通——`~/.ssh/config`（讓 SSH 管理變優雅）、多金鑰管理、ssh-agent（金鑰免重複輸密碼）、進階 tunnel（跳板/ProxyJump）、SCP/SFTP/rsync 傳檔、SSH 的安全選項。SSH 是你管理 VPS 的命脈（每天用），這章讓你高效又安全地用它。Ch 12 講了 SSH 原理，這章是實戰精通。
 
-## SSH 不只是「遠端 shell」
+> **環境**：Linux/Mac（OpenSSH）。VPS 管理場景。
 
-3 大功能：
+## 為什麼 SSH 值得深入？
 
-1. **遠端命令執行**（基本）
-2. **檔案傳輸**（scp / sftp / rsync over SSH）
-3. **Tunneling**（local / remote / dynamic forward）
+你會用 SSH 管理 VPS（Ch 33）——每天登入、傳檔、執行命令。基礎的 `ssh user@host` 能用，但管理多台機器、用跳板、自動化時，基礎用法很笨拙。SSH 有一整套讓管理變優雅的功能（config、agent、ProxyJump），掌握它們大幅提升效率。
 
-第 3 個讓 SSH 變超強工具。
+更重要的是安全——SSH 是 VPS 的主要入口（Ch 33 看到它被瘋狂攻擊），正確設定 SSH 是 VPS 安全的核心（Ch 35 會深入）。這章把 SSH 的實戰功能講透，讓你從「會 ssh 登入」進化到「優雅高效安全地管理伺服器群」。Ch 12 是原理，這章是精通。
 
-## SSH key 完整管理
-
-### 生 key
+## SSH config:管理的優雅之道
 
 ```bash
-# Ed25519 (推薦，現代、快、短)
-ssh-keygen -t ed25519 -C "your_email@example.com"
-
-# RSA 4096 (相容性最好)
-ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
-
-# ECDSA (中庸)
-ssh-keygen -t ecdsa -b 521 -C "your_email@example.com"
-```
-
-存到 `~/.ssh/`：
-
-```
-id_ed25519       ← 私鑰（不能洩漏！）
-id_ed25519.pub   ← 公鑰
-```
-
-### 多 key 管理
-
-不同用途用不同 key：
-
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_personal
-ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_work
-ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_github
-```
-
-### 安裝公鑰到 server
-
-```bash
-# 簡單法
-ssh-copy-id user@server
-
-# 指定 key
-ssh-copy-id -i ~/.ssh/id_ed25519_work.pub user@server
-
-# 手動
-cat ~/.ssh/id_ed25519.pub | ssh user@server 'cat >> ~/.ssh/authorized_keys'
-```
-
-確認 server 端：
-
-```bash
-# 在 server
-cat ~/.ssh/authorized_keys
-ls -la ~/.ssh
-# .ssh 應該 700, authorized_keys 600
-```
-
-## ~/.ssh/config
-
-**最強的 SSH 生產力工具**。設別名 / 預設值：
-
-```
-# ~/.ssh/config
-
-Host vps1
-    HostName 1.2.3.4
-    User root
-    Port 22
-    IdentityFile ~/.ssh/id_ed25519_personal
-
-Host work-bastion
-    HostName bastion.company.com
-    User myname
-    IdentityFile ~/.ssh/id_ed25519_work
-    
-Host work-internal
-    HostName 10.0.0.50
-    User myname
-    IdentityFile ~/.ssh/id_ed25519_work
-    ProxyJump work-bastion
-
-Host github.com
-    User git
-    IdentityFile ~/.ssh/id_ed25519_github
-
-# wildcard
-Host *.dev.example.com
-    User developer
-    IdentityFile ~/.ssh/id_dev
-```
-
-之後：
-
-```bash
-ssh vps1                    # = ssh -i ~/.ssh/id_ed25519_personal -p 22 root@1.2.3.4
-ssh work-internal           # 自動跳 bastion
-git clone git@github.com:... # 用對的 key
-```
-
-## ProxyJump（跳板機）
-
-公司內部 server 通常不直接連，要先連 bastion / jump server：
-
-```
- 你 ──ssh──► bastion ──ssh──► internal-server
-```
-
-舊寫法：
-
-```bash
-ssh -J bastion.com user@internal.com
-```
-
-config 寫：
-
-```
-Host internal
-    HostName 10.0.0.50
-    ProxyJump bastion
-    User myname
-```
-
-之後 `ssh internal` 自動跳。
-
-## SSH agent
-
-每次連都輸入 key passphrase 累。用 ssh-agent cache：
-
-```bash
-# 啟動 agent (多數系統 systemd 或 GNOME Keyring 自動)
-eval $(ssh-agent)
-
-# 加 key（只問一次 passphrase）
-ssh-add ~/.ssh/id_ed25519
-ssh-add ~/.ssh/id_ed25519_work
-
-# 看
-ssh-add -l
-```
-
-之後 SSH 連線不用 prompt passphrase。
-
-## Port forwarding（重要！）
-
-### Local forwarding (-L)
-
-「**把對方 server 的某 port 對到本機**」：
-
-```bash
-ssh -L 8080:localhost:80 user@vps
-```
-
-本機 `localhost:8080` = vps 上 `localhost:80`。
-
-用途：
-
-- 連對方 internal database（不暴露到公網）
-- 用 server 的 web admin 介面
-- 內網跳機跳過 firewall
-
-例：vps 上跑 phpmyadmin 但只 listen 127.0.0.1：
-
-```bash
-ssh -L 8888:localhost:80 user@vps
-# 本機 browser 開 http://localhost:8888 → 看 vps 的 phpmyadmin
-```
-
-### Remote forwarding (-R)
-
-「**把本機某 port 對到 server**」：
-
-```bash
-ssh -R 9000:localhost:8000 user@vps
-```
-
-vps 上 `localhost:9000` = 本機 `localhost:8000`。
-
-用途：
-
-- 從你機器暴露 service 給 vps（vps 是「**對外**」server）
-- 反向 tunnel（你在 NAT 後，vps 在公網）
-
-例：本機跑 dev server，讓朋友透過你 vps 連：
-
-```bash
-ssh -R 8080:localhost:3000 user@vps
-# 朋友訪問 http://vps-ip:8080 → 你本機 :3000
-```
-
-### Dynamic forwarding (-D) = SOCKS5
-
-```bash
-ssh -D 1080 user@vps
-```
-
-`localhost:1080` 是 SOCKS5 proxy → 走 vps。
-
-詳見 Ch 28。**極簡 VPN 替代**。
-
-### -N 不開 shell
-
-只做 tunnel，不開 shell：
-
-```bash
-ssh -N -L 8080:localhost:80 user@vps
-# 沒 shell prompt，純 tunnel
-```
-
-加 `-f` 後台跑：
-
-```bash
-ssh -fN -L 8080:localhost:80 user@vps
-```
-
-## SSH config 持久 forward
-
-```
-Host vps1
-    HostName 1.2.3.4
-    LocalForward 8080 localhost:80
-    LocalForward 5432 localhost:5432
-    DynamicForward 1080
-```
-
-`ssh vps1` 自動建所有 forward。
-
-## SCP / SFTP / rsync
-
-```bash
-# scp
-scp file.txt user@server:/path/
-scp -r dir/ user@server:/path/
-scp user@server:/path/file.txt .
-scp -P 2222 file.txt user@server:/path/
-
-# sftp（互動）
-sftp user@server
-sftp> get file.txt
-sftp> put local.txt
-
-# rsync（推薦，增量同步）
-rsync -av file.txt user@server:/path/
-rsync -av --delete dir/ user@server:/backup/   # 完整 sync 含刪
-rsync -avz --progress big.iso user@server:/path/    # 壓縮 + 進度
-```
-
-`rsync` 比 `scp` 強，**生產用 rsync**。
-
-## SSH 安全配置（server 端）
-
-```
-# /etc/ssh/sshd_config
-
-# 改預設 port（避免 scan）
-Port 2222
-
-# 不允許 root 直接登入
-PermitRootLogin no
-
-# 只允許 key 認證
-PasswordAuthentication no
-ChallengeResponseAuthentication no
-PubkeyAuthentication yes
-
-# 只允許特定 user
-AllowUsers myname admin
-
-# 限制協議版本
-Protocol 2
-
-# 連線超時
-ClientAliveInterval 300
-ClientAliveCountMax 2
-
-# 禁 X11 forwarding（除非需要）
-X11Forwarding no
-
-# 禁 agent forwarding（安全考量）
-AllowAgentForwarding no
-```
-
-reload：
-
-```bash
-sudo systemctl restart sshd
-```
-
-**改完前另開一個 SSH session 測試**，否則 misconfig 會把自己鎖在外。
-
-## 防 brute force
-
-```bash
-sudo apt install fail2ban
-# 預設 enable SSH jail
-sudo systemctl enable fail2ban
-```
-
-failure 5 次 → ban 10 分鐘。
-
-## 一個常見踩雷：「SSH 突然斷線」
-
-可能：
-
-- 網路不穩
-- ServerAliveInterval 沒設
-
-config 加：
-
-```
+# 沒有 config 的痛苦：每次打一長串
+ssh -i ~/.ssh/vps_key -p 2222 deploy@192.0.2.123    # 每次都要記/打這些
+
+# === ~/.ssh/config：把連線設定存起來 ===
+cat > ~/.ssh/config <<'EOF'
+Host myvps                          # 別名（之後 ssh myvps 就好）
+    HostName 192.0.2.123            # 真實 IP
+    User deploy                     # 使用者
+    Port 2222                       # SSH port（如果改了，Ch 35）
+    IdentityFile ~/.ssh/vps_key     # 用哪個金鑰
+
+Host work
+    HostName work.example.com
+    User alice
+    IdentityFile ~/.ssh/work_key
+
+# 萬用設定（套用到所有 host）
 Host *
-    ServerAliveInterval 60
+    ServerAliveInterval 60          # 每 60 秒送 keepalive（防 NAT 斷線，Ch 8）
     ServerAliveCountMax 3
+    AddKeysToAgent yes              # 自動加金鑰到 agent
+EOF
+chmod 600 ~/.ssh/config
+
+# 現在登入超簡單
+ssh myvps                          # 等於那一長串！
+scp file.txt myvps:/tmp/           # scp 也認 config 的別名
 ```
 
-每 60 秒送個 keepalive。
+> **`~/.ssh/config` 是 SSH 管理的核心——把每台機器的設定存成別名，從此 `ssh myvps` 取代一長串參數**。管理多台機器時，每次打 `ssh -i key -p port user@host` 很痛苦。`~/.ssh/config` 讓你為每台機器定義別名和設定——之後 `ssh myvps` 就自動用對的 IP、使用者、port、金鑰。這不只省打字，還讓 scp/rsync/git 都能用這些別名。`Host *`（萬用）設定套用到所有機器——常用的有 `ServerAliveInterval 60`（每 60 秒送 keepalive，防止 NAT 表過期斷線，Ch 8 的問題在 SSH 的解法）、`AddKeysToAgent yes`（自動管理金鑰）。config 還支援萬用比對（`Host *.example.com`）、繼承、各種選項。這是從「會用 SSH」到「優雅管理伺服器群」的關鍵工具——專業的運維都重度使用 ssh config。記得 config 檔權限要 600（Ch 12 的 SSH 嚴格權限）。掌握 config，你管理 10 台機器和 1 台一樣輕鬆。
 
-## 一個常見踩雷：「Permission denied (publickey)」
-
-可能：
-
-- 本機沒對應 private key
-- server 端 `~/.ssh/authorized_keys` 內容 / 權限錯
-- server 端 sshd 設定不允許 key auth
-
-debug：
+## ssh-agent:金鑰免重複輸密碼
 
 ```bash
-ssh -v user@server
-# 看詳細失敗原因
+# 問題：金鑰加了密碼保護（好習慣），但每次登入都要輸 → 煩
+# 解法：ssh-agent 記住解密的金鑰
+
+# 啟動 agent（通常桌面環境自動啟動）
+eval "$(ssh-agent -s)"
+
+# 把金鑰加進 agent（輸一次密碼）
+ssh-add ~/.ssh/vps_key             # 輸入金鑰密碼一次
+ssh-add -l                         # 列出 agent 裡的金鑰
+
+# 之後登入不用再輸金鑰密碼（agent 幫你認證）
+ssh myvps                          # 直接登入（agent 提供金鑰）
+
+# agent forwarding（跳板場景，謹慎用）
+ssh -A myvps                       # 把本地 agent「轉發」到遠端
+# → 在 myvps 上能用「你本地的金鑰」連其他機器（不用把私鑰放 VPS）
+# 注意：agent forwarding 有安全風險（遠端 root 能用你的 agent）
+#       現代建議用 ProxyJump 取代（下節）
 ```
 
-## 一個常見踩雷：「私鑰權限太鬆 → SSH 拒絕用」
+> **ssh-agent 讓「加密碼保護的金鑰」也能方便使用——輸一次密碼，之後 agent 幫你認證**。好習慣是金鑰加密碼保護（Ch 12，雙因素：有私鑰檔+知道密碼），但每次登入都輸密碼很煩。**ssh-agent** 解決——`ssh-add` 把金鑰加進 agent（輸一次密碼解密），之後 agent 在記憶體裡保管解密的金鑰，登入時自動提供，不用再輸。這兼得「金鑰加密碼的安全」和「不用重複輸的方便」。**agent forwarding**（`ssh -A`）能把本地 agent 轉發到遠端——讓你在 VPS 上用「本地的金鑰」連其他機器（不用把私鑰複製到 VPS，私鑰留在本地更安全）。但 agent forwarding **有安全風險**（遠端的 root 能透過你轉發的 agent 用你的金鑰）——**現代建議用 ProxyJump（下節）取代**它，更安全。ssh-agent 是日常管理的便利工具，配合 config 的 `AddKeysToAgent yes` 自動化。理解它，你的金鑰既安全（有密碼）又好用（不用重複輸）。
+
+## 進階 tunnel:跳板與 ProxyJump
 
 ```bash
-$ ssh user@server
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-@         WARNING: UNPROTECTED PRIVATE KEY FILE!          @
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-Permissions 0644 for '~/.ssh/id_ed25519' are too open.
+# === ProxyJump：透過跳板機連內網機器（現代做法）===
+# 場景：internal-server 在內網，只能透過 jump-host（跳板）連
+ssh -J jump-host internal-server   # -J = ProxyJump，自動透過 jump-host
+
+# 在 config 裡設定（更優雅）
+cat >> ~/.ssh/config <<'EOF'
+Host internal
+    HostName 10.0.0.50              # 內網 IP
+    User admin
+    ProxyJump jump-host             # 透過 jump-host 跳轉
+EOF
+ssh internal                       # 自動透過跳板連內網機器
+
+# === 多層跳板 ===
+ssh -J jump1,jump2 final-server    # 跳 jump1 → jump2 → final
+
+# === port forwarding（Ch 12 複習 + 實戰）===
+# 連遠端內網的資料庫（本地 5432 → 透過 VPS → 內網 db）
+ssh -L 5432:db-internal:5432 myvps
+# 之後本機 localhost:5432 = 遠端內網的 db
+
+# === 動態 SOCKS proxy（Ch 12/28）===
+ssh -D 1080 myvps                  # 本機 1080 = 經 myvps 的 SOCKS proxy
+
+# === 持久化 tunnel（背景跑 + 自動重連）===
+ssh -fN -L 5432:db:5432 myvps      # -f 背景 -N 不開 shell
+# 或用 autossh（斷線自動重連）
+# autossh -M 0 -fN -L 5432:db:5432 myvps
 ```
 
-修：
+> **ProxyJump（`-J`）是透過跳板機連內網的現代做法——取代了有安全風險的 agent forwarding**。常見場景：要連的機器在內網（只能透過一台有公網 IP 的「跳板機/bastion」連）。傳統做法是 SSH 到跳板再 SSH 到目標（兩段，麻煩）或用 agent forwarding（有風險）。**ProxyJump** `ssh -J jump-host target` 自動透過跳板連目標——SSH 先連跳板，在跳板上建立到目標的連線，但**認證和加密是端到端的**（跳板看不到你和目標之間的內容，比 agent forwarding 安全）。在 config 裡設 `ProxyJump jump-host` 更優雅（`ssh internal` 自動跳轉），還能多層跳板（`-J jump1,jump2`）。這是企業環境（內網機器透過 bastion 連）的標準做法。配合 Ch 12 的 port forwarding（`-L` 連內網服務、`-D` 當 SOCKS proxy）——這些 tunnel 是日常運維的利器（連雲端 VPC 內的資料庫、把 VPS 當跳板）。`-fN`（背景+不開 shell）做持久 tunnel，`autossh` 能斷線自動重連（長期 tunnel 用）。掌握 ProxyJump 和 tunnel，你能優雅地穿透複雜的網路拓樸管理機器。
+
+## 傳檔:scp / sftp / rsync
 
 ```bash
-chmod 600 ~/.ssh/id_ed25519
-chmod 700 ~/.ssh
+# === scp：簡單複製（Ch 12 複習）===
+scp file.txt myvps:/tmp/                    # 本地 → 遠端
+scp myvps:/var/log/app.log .                # 遠端 → 本地
+scp -r mydir/ myvps:/opt/                   # 遞迴複製目錄
+
+# === rsync：高效同步（增量，推薦大量/重複傳輸）===
+rsync -avz mydir/ myvps:/opt/mydir/         # 同步目錄（增量）
+#   -a 保留屬性, -v 詳細, -z 壓縮
+rsync -avz --delete mydir/ myvps:/opt/mydir/  # --delete：刪除目標多餘的（完全同步）
+rsync -avz --progress bigfile myvps:/tmp/   # 顯示進度
+
+# rsync 的優勢（vs scp）：
+#   - 增量（只傳變動的部分，重複同步快）
+#   - 中斷可續傳（--partial）
+#   - 能用 --exclude 排除檔案
+
+# === sftp：互動式傳檔 ===
+sftp myvps
+# sftp> put file.txt    上傳
+# sftp> get remote.txt  下載
+# sftp> ls / cd / mkdir 等
 ```
+
+> **rsync（增量同步）比 scp（每次全傳）高效——部署和備份的首選**。`scp` 簡單（一次性複製），但每次都**全部重傳**。`rsync` 是**增量同步**——只傳「變動的部分」，所以重複同步（如反覆部署更新的程式碼、定期備份）快很多。`rsync -avz`（保留屬性+詳細+壓縮）是常用組合，`--delete`（刪除目標多餘檔案，完全鏡像）、`--progress`（看進度）、`--exclude`（排除某些檔案，如 .git/node_modules）都很實用。rsync 還能**中斷續傳**（`--partial`，大檔案傳輸中斷不用重來）。它走 SSH（加密），所以一樣安全，且認 ssh config 的別名。實務上：**部署程式碼用 rsync**（增量快、能排除不需要的）、**備份用 rsync**（增量、能鏡像，呼應 linux_commands 課的備份練習）、**一次性傳單檔用 scp**（簡單）。`sftp` 是互動式傳檔（像 FTP 但加密）。掌握這些，你能高效地在本地和 VPS 之間傳輸——這是部署服務（Ch 36）和維護的日常。
+
+## 故意弄壞:SSH 連線問題進階排查
+
+```bash
+# SSH 進階 debug（Ch 12 基礎的延伸）
+
+# 1. 超詳細 debug（-vvv 看每一步）
+ssh -vvv myvps 2>&1 | less
+# 看認證過程、金鑰嘗試、協商的每一步（debug 認證/連線問題）
+
+# 2. 測試 config 解析（看 SSH 實際會用什麼設定）
+ssh -G myvps                       # 印出對 myvps 解析出的所有設定
+# 確認 HostName/User/Port/IdentityFile 是你預期的
+
+# 3. 金鑰問題（Ch 12 的權限 + 進階）
+ssh-add -l                         # agent 裡有金鑰嗎？
+ssh -i ~/.ssh/specific_key myvps   # 強制用特定金鑰（繞過 agent/config）
+
+# 4. 連線卡住/慢（DNS 反解問題）
+# SSH 登入慢常是伺服器端的 DNS 反解（UseDNS）
+# 伺服器 /etc/ssh/sshd_config: UseDNS no （加速登入）
+
+# 5. 「too many authentication failures」
+# agent 裡金鑰太多，SSH 一個個試超過上限
+ssh -o IdentitiesOnly=yes -i ~/.ssh/correct_key myvps  # 只用指定的金鑰
+
+# 6. host key 改變（Ch 12，重裝 VPS 後常見）
+# ssh-keygen -R myvps    # 清掉舊的 host key 記錄（確認是預期的重裝）
+```
+
+> **`ssh -vvv`（超詳細）和 `ssh -G`（看解析的設定）是 SSH 進階 debug 的兩大利器**。當 SSH 連線/認證出問題，`ssh -vvv myvps` 顯示**每一步的細節**——它嘗試哪些金鑰、config 怎麼解析、協商了什麼、卡在哪——是 debug 的終極工具（雖然輸出多，但問題的線索都在裡面）。`ssh -G myvps` 顯示「對這個 host **實際解析出的所有設定**」——確認 HostName/User/Port/IdentityFile 是你預期的（debug「config 沒生效」「連到錯的地方」）。常見進階問題：(1) **「too many authentication failures」**——agent 裡金鑰太多，SSH 一個個試超過伺服器上限，用 `-o IdentitiesOnly=yes -i 正確金鑰` 只試指定的；(2) **登入慢**——常是伺服器端的 DNS 反解（`UseDNS no` 加速）；(3) **host key 改變**（Ch 12，重裝 VPS 後）——確認是預期的重裝再 `ssh-keygen -R`。這些進階 debug 技巧讓你解決 Ch 12 基礎之外的 SSH 疑難。SSH 是 VPS 管理的命脈，debug 它的能力直接影響你的運維效率。配合 Ch 12 的基礎（權限、refused vs timeout、host key），你能應付幾乎任何 SSH 問題。
 
 ## 動手練習
 
-**1. 設多 key + config**
+1. 設 config：為你的 VPS 設 ssh config 別名，體會 `ssh myvps` 取代一長串
 
-生 3 個 key，寫 ~/.ssh/config，每個用不同 user / server。
+2. 用 agent：金鑰加密碼保護，用 ssh-add 加進 agent，體會不用重複輸密碼
 
-**2. ProxyJump**
+3. ProxyJump：如果有跳板場景（或用兩台 VPS 模擬），用 `-J` 透過跳板連
 
-如果有 bastion 場景，設 ProxyJump，1 個 ssh 命令直達內網。
+4. rsync 同步：用 rsync 同步一個目錄到 VPS，改個檔案再同步，看它只傳變動的
 
-**3. Local forwarding 練習**
+5. 跑「故意弄壞」：用 `ssh -vvv` 看認證過程、`ssh -G` 看解析的設定，熟悉進階 debug
 
-連 vps 後 forward 一個 port（如 nginx 80）：
+## 本章重點整理
 
-```bash
-ssh -L 8080:localhost:80 user@vps
-# 本機 browser 開 http://localhost:8080
-```
-
-**4. SOCKS5 proxy**
-
-```bash
-ssh -D 1080 user@vps
-# Firefox 設 SOCKS5 → 看 IP 變 vps
-```
-
-**5. rsync 同步**
-
-```bash
-# 第一次同步整個資料夾
-rsync -av --progress dir/ user@vps:/path/
-
-# 後續只送變更
-rsync -av dir/ user@vps:/path/
-```
+- `~/.ssh/config` 是管理核心：把每台機器設成別名（HostName/User/Port/IdentityFile），`Host *` 套用通用設定
+- ssh-agent 讓加密碼的金鑰也方便（輸一次，agent 保管）；ProxyJump（-J）取代有風險的 agent forwarding
+- ProxyJump 透過跳板連內網（端到端加密，跳板看不到內容）；port forwarding/-D SOCKS 是日常 tunnel
+- rsync（增量同步）比 scp（全傳）高效——部署/備份首選；--delete 鏡像、--exclude 排除
+- 進階 debug：`ssh -vvv`（每步細節）、`ssh -G`（看解析設定）、IdentitiesOnly（太多金鑰時）
 
 ## 自我檢核
 
-- [ ] 多 key 管理 + ~/.ssh/config 設熟
-- [ ] 用過 ProxyJump
-- [ ] LocalForward / RemoteForward / DynamicForward 都試過
-- [ ] rsync 用得順
-- [ ] SSH server 設安全配置
-- [ ] 知道 fail2ban 怎麼配
+- [ ] 會用 ssh config 管理多台機器，理解 Host 別名和通用設定
+- [ ] 知道 ssh-agent 的作用，以及 ProxyJump 為什麼比 agent forwarding 安全
+- [ ] 會用 ProxyJump 透過跳板連內網，會用各種 tunnel
+- [ ] 知道 rsync 比 scp 好在哪，會用它同步/部署
+- [ ] 會用 ssh -vvv / ssh -G 做進階 debug
 
-下一章看 VPS 安全配置完整指南。
+## 延伸閱讀
 
-→ [Ch 35 VPS 安全配置](./35-vps-security.md)
+### 官方文件
+
+- **[ssh_config(5)](https://man.openbsd.org/ssh_config)** — OpenSSH
+  - **讀哪裡**：所有設定選項（Host/ProxyJump/IdentityFile 等）
+  - **為什麼值得讀**：ssh config 所有選項的權威
+
+### 文章
+
+- **[SSH config 完整指南](https://www.ssh.com/academy/ssh/config)** — SSH.com
+  - **這篇說什麼**：ssh config 的所有用法和範例
+  - **讀哪裡**：整篇
+  - **為什麼值得讀**：本章 config 那節的完整版
+
+- **[rsync 完整教學](https://www.digitalocean.com/community/tutorials/how-to-use-rsync-to-sync-local-and-remote-directories)** — DigitalOcean
+  - **這篇說什麼**：rsync 的所有選項和場景
+  - **為什麼值得讀**：本章 rsync 那節的擴充
+
+### 書籍
+
+- **《SSH Mastery》— Michael W Lucas**
+  - **讀哪幾章**：config、tunnel、金鑰管理那幾章
+  - **這本書的定位**：SSH 實戰精通的權威，薄而精
+
+下一章是 VPS 安全的核心——把 SSH 加固、防火牆、fail2ban、自動更新組合成完整的 VPS 安全加固，讓你的伺服器能在公網叢林裡生存。
+
+→ [Ch 35 VPS 安全加固](./35-vps-security.md)

@@ -1,259 +1,185 @@
-# Ch 39 — QUIC / HTTP/3 / BGP
+# Ch 39 — QUIC / HTTP3 / BGP
 
-> 目標：認識 3 個現代網路的關鍵技術 — QUIC、HTTP/3、BGP，每個基本原理 + 為什麼重要。
+> **目標**：用三個現代/宏觀主題收尾全課——QUIC（傳輸層的未來，Ch 7/10 的深入）、HTTP/3（建在 QUIC 上）、BGP（網際網路怎麼連成一體的「路由的路由」）。前兩個把傳輸層的演進講完整，BGP 把視野拉到最宏觀（整個網際網路怎麼運作）。這章是全課的視野收尾，從一個封包的旅程（Ch 1）拉到全球網路的骨架。
 
-## QUIC
+> **環境**：概念速覽章。串 Ch 6/7/10（傳輸層）和 Ch 4（路由）。
 
-「**Quick UDP Internet Connections**」 — Google 2012 起設計，2021 RFC 9000 標準化。
+## 為什麼用這三個主題收尾？
 
-跑在 UDP 上，但**自己實作**所有 TCP 該有的：
+全課從「一個封包的旅程」（Ch 1）開始，深入了協定的每一層。最後用三個主題把視野推到兩個方向：**最前沿**（QUIC/HTTP3，傳輸層的未來，前面 Ch 7/10 預告過）和**最宏觀**（BGP，整個網際網路怎麼連成一體）。
 
-- 可靠 / 順序
-- 擁塞控制
-- 加密（內建 TLS 1.3）
-- 多 stream multiplexing
+QUIC/HTTP3 把 Ch 6（TCP 的限制）、Ch 7（UDP 的潛力）、Ch 10（HTTP 演進）、Ch 11（TLS）串成「傳輸層的下一代」。BGP 則回答一個你可能沒想過的問題——前面學的路由（Ch 4）是「一台機器的路由表」，但**整個網際網路**（無數個自治網路）怎麼知道彼此的路由？這是 BGP 的工作。這章讓你的視野從「協定細節」升到「整個網路怎麼運作」，為全課畫上句點。
 
-### 為什麼不直接用 TCP
-
-1. **TCP 演算法在 OS kernel** — 升級慢
-2. **TCP 中間設備兼容** — router / firewall 對 TCP option 處理保守，限制創新
-3. **TCP head-of-line blocking** — 一個 packet 丟 → 全 stream 卡
-4. **TCP + TLS 兩次握手** — 多一個 RTT
-
-QUIC 在 user space，**創新自由**：
-
-- 0-RTT 重連
-- 連線遷移（WiFi → 4G 不斷線）
-- 多 stream 互不阻塞
-- 整合 TLS
-
-### QUIC 握手
+## QUIC:傳輸層的未來（Ch 7 的深入）
 
 ```
- 0-RTT (有 cache):
-   client ──── data + handshake ──────► server
+QUIC = 在 UDP 上重建一個更好的傳輸層（Ch 7 預告的）：
 
- 1-RTT (新連線):
-   client ──── ClientHello ───────────► server
-   client ◄─── ServerHello + cert ─────  server
-   client ──── data ───────────────────► server
+  TCP 的根本問題（無法在 TCP 內解決）：
+    1. 隊頭阻塞（有序保證的代價，Ch 6/7）
+    2. 握手慢（TCP + TLS = 2-3 RTT，Ch 11）
+    3. 連線綁 IP（換網路斷線）
+    4. 在 kernel，難演進（中間設備干擾）
+        │
+  QUIC 的解法（建在 UDP，Ch 7）：
+    1. 多個獨立 stream → 一個丟包不卡其他（解決隊頭阻塞）
+    2. 握手 + 加密合併 → 1-RTT，重連 0-RTT
+    3. 連線 ID（不綁 IP）→ 換網路不斷（連線遷移）
+    4. 在用戶空間 → 更新快，不受中間設備干擾
+        │
+  → QUIC 把 Ch 6/7/11 的問題一次解決
+    它是 TCP+TLS 的現代替代，HTTP/3 建在它上面
 ```
 
-vs TCP+TLS 1.2 的 4-RTT，QUIC 1-RTT 快很多。
+> **QUIC 在 UDP 上重建傳輸層，一次解決了 TCP 的隊頭阻塞、慢握手、連線綁 IP——這是 Ch 6/7/10/11 的綜合演進**。前面多次預告 QUIC（Ch 7 的「UDP 上重建可靠性」、Ch 10 的 HTTP/3），這裡完整看它。QUIC 解決 TCP 無法在自身內解決的根本問題：(1) **隊頭阻塞**（Ch 6/7）——QUIC 有**多個獨立 stream**，一個 stream 丟包只卡那個，不影響其他（對比 TCP 單一有序流，一個丟包卡全部）；(2) **握手慢**（Ch 11）——QUIC 把傳輸握手和 TLS 握手**合併**成 1-RTT（重連 0-RTT），對比 TCP+TLS 的 2-3 RTT（對高延遲網路影響巨大）；(3) **連線綁 IP**——QUIC 用**連線 ID**（不綁 IP），換網路（WiFi→4G）連線不斷（連線遷移，對行動裝置極有用）；(4) **難演進**——QUIC 在**用戶空間**（不像 TCP 在 kernel），更新快、不受中間設備干擾。QUIC 內建 TLS 1.3（Ch 11，加密是強制的不是可選）。這把全課的傳輸層知識串成一條演進線：TCP（可靠但有限制，Ch 6）→ UDP（自由但要自己做，Ch 7）→ QUIC（在 UDP 上重建一個沒有 TCP 限制的傳輸層）。QUIC 由 Google 發明、IETF 標準化（RFC 9000），現在大量網站和 CDN 在用。它是傳輸層二十年來最大的變革，理解它你就看到了「網路傳輸的未來」。
 
-### QUIC 的代價
-
-- CPU 較重（user-space 加密）
-- 中間設備對 UDP 處理不一致
-- 部署較新（2022 年起標準）
-
-## HTTP/3
-
-= **HTTP over QUIC**。
-
-HTTP/2 的 application-layer 設計都保留：
-
-- multiplexing
-- header compression (但用 QPACK 不是 HPACK)
-- server push（少用）
-
-差別：底層從 TCP 換 QUIC。
-
-### HTTP/3 部署
-
-server 端：nginx / Caddy / Cloudflare 開支援。Browser 端：Chrome / Firefox 自動協商。
-
-協商：先試 HTTP/3，失敗 fallback HTTP/2。
-
-```bash
-# curl 試 HTTP/3
-curl --http3 -I https://www.google.com
-```
-
-```nginx
-# nginx 1.25+ 開 HTTP/3
-server {
-    listen 443 quic reuseport;
-    listen 443 ssl http2;
-    
-    add_header Alt-Svc 'h3=":443"; ma=86400';
-    ...
-}
-```
-
-`Alt-Svc` header 告訴 browser「**我支援 HTTP/3**」。
-
-### HTTP/3 採用率
-
-2025 年：
-
-- ~30% web 流量用 HTTP/3
-- Cloudflare / Google / Facebook 都支援
-- 慢慢取代 HTTP/2
-
-## BGP（Border Gateway Protocol）
-
-「**Internet 的路由協定**」 — 把全球路由連起來。
-
-### Internet 結構
+## HTTP/3:建在 QUIC 上（Ch 10 的完成）
 
 ```
- ┌────────────────────┐
- │  ISP A (AS 12345)  │ ────┐
- └────────────────────┘     │
-                            │
-                       ┌────┴─────┐
-                       │  IXP /    │  ← Internet Exchange Point
-                       │  Backbone │
-                       └────┬─────┘
-                            │
- ┌────────────────────┐     │
- │  ISP B (AS 67890)  │ ────┘
- └────────────────────┘
+HTTP/3 = HTTP over QUIC（Ch 10 演進的終點）：
+
+  HTTP 的演進（Ch 10 完整版）：
+    HTTP/1.1：一連線一請求（應用層隊頭阻塞）
+    HTTP/2：多路複用（解決應用層，但 TCP 層隊頭阻塞）
+    HTTP/3：建在 QUIC → 連 TCP 層隊頭阻塞都解決
+        │
+  HTTP/3 的好處（來自 QUIC）：
+    - 無任何隊頭阻塞（QUIC 的獨立 stream）
+    - 快握手（1-RTT/0-RTT）
+    - 連線遷移（換網路不斷）
+        │
+  代價：
+    - UDP 在某些網路被限速/封鎖 → fallback 到 HTTP/2
+    - 用戶空間 → CPU 開銷較高（但持續優化）
+        │
+  → HTTP/3 是 HTTP 演進的終點（目前）
+    它讓網頁在行動/高延遲網路下明顯更快
 ```
 
-每個 ISP / 大企業是「**Autonomous System (AS)**」，有 AS number。
+> **HTTP/3 是 HTTP 演進的終點（目前）——它建在 QUIC 上，連 HTTP/2 殘留的 TCP 層隊頭阻塞都解決了**。回到 Ch 10 的 HTTP 演進：HTTP/1.1（應用層隊頭阻塞）→ HTTP/2（多路複用解決應用層，但暴露 TCP 層隊頭阻塞）→ **HTTP/3（建在 QUIC，連 TCP 層隊頭阻塞都解決）**。HTTP/3 繼承了 QUIC 的所有好處——無任何隊頭阻塞（QUIC 的獨立 stream）、快握手、連線遷移。對使用者，這意味著網頁在**行動網路和高延遲環境下明顯更快**（少了握手往返、丟包不卡全部、換網路不斷線）。代價：UDP 在某些網路被限速/封鎖（要能 fallback 回 HTTP/2）、用戶空間實作 CPU 開銷較高（但持續優化）。HTTP/3 已被主流瀏覽器和 CDN（Cloudflare/Google）廣泛採用——你每天訪問的很多大網站已經在用 HTTP/3（瀏覽器開發者工具能看到）。這完成了 Ch 10 的 HTTP 演進故事——從 1.1 到 3，每一代都在攻克前一代的瓶頸，HTTP/3 透過放棄 TCP（改用 QUIC）達到了 TCP 架構下無法達到的境界。理解這個演進，你看到了「協定怎麼一步步進化」的完整案例，也理解了現代 web 為什麼越來越快。
 
-AS 之間用 **BGP** 交換路由：
+## BGP:網際網路怎麼連成一體
 
-「**我能到 192.0.2.0/24 這個網段，路徑是 AS 12345 → AS 67890**」
+```
+BGP（邊界閘道協定）—— 「路由的路由」，網際網路的骨架：
 
-每台 router 的 BGP table 上百萬條 route。
-
-### BGP 是 Internet 的「政治」
-
-ISP 之間的關係：
-
-- **Transit**：付錢給 upstream（小 ISP 付給大 ISP）
-- **Peering**：對等交換（大 ISP 之間）
-- **Customer**：你付 ISP 錢
-
-BGP 路由 announce 跟商業關係綁定。「**對方願意把我的 traffic 送到哪**」是商業 + 技術問題。
-
-### BGP hijacking
-
-惡意 / 誤配 ISP 宣告「**我擁有 X.X.X.0/24**」（明明不是它的）→ 全球流量被導去那 ISP。
-
-歷史事件：
-
-- 2008 巴基斯坦 ISP 想 block YouTube → 配錯 BGP → 全球 YouTube 流量被路由到巴基斯坦
-- 2018 BGP hijack 偷加密貨幣
-
-防禦：
-
-- **RPKI**（Resource Public Key Infrastructure）— 數位簽名 BGP route
-- **BGPsec**（next-gen BGP 含驗證）
-
-部署慢，仍部分風險。
-
-### 你不會直接用 BGP（除非 ISP / 大企業）
-
-Internet 跑 BGP，但**個人 / 小企業看不到**。學 BGP 為了：
-
-- 理解 Internet 怎麼運作
-- 看 traceroute 為什麼經過特定路徑
-- 了解 DDoS / hijacking 等網路安全議題
-
-## 看 BGP 路由
-
-```bash
-# 用 BGP looking glass（線上工具）
-# https://www.he.net/cgi-bin/lg.cgi
-# https://bgp.he.net/
-
-# 或本機 traceroute 看 AS
-mtr --aslookup example.com
-# 顯示每跳的 AS number
+  前面學的路由（Ch 4）：「一台機器/一個網路」的路由表
+        │
+  但網際網路是「無數個自治網路」組成：
+    每個 ISP、每個大公司、每個雲商 = 一個 AS（自治系統）
+    每個 AS 有自己的網路和路由
+        │
+  問題：這些 AS 怎麼知道彼此的路由？
+    （我的封包要去 Google，怎麼知道往哪個 AS 送？）
+        │
+  BGP 的工作：AS 之間「交換路由資訊」
+    每個 AS 用 BGP 告訴鄰居：「這些 IP 網段，經過我能到」
+    AS 之間傳播這些路由 → 拼出「全球的路由地圖」
+        │
+  → BGP 是「網際網路的黏合劑」
+    它讓無數獨立的網路（AS）知道怎麼到達彼此
+    沒有 BGP，網際網路就是一堆互不相連的孤島
 ```
 
-## 一個常見誤解：「QUIC 一定比 TCP 快」
+```
+BGP 的脆弱性（為什麼它重要又危險）：
 
-**部分對**。對小 request、低 packet loss 環境，QUIC 接近 TCP。差距在：
+  BGP 基於「信任」（鄰居說的路由，大致就信）
+        │
+  BGP 劫持（hijacking）：
+    某 AS 錯誤/惡意宣告「我能到某網段」（但其實不能）
+    → 流量被導向錯的地方（中斷或竊聽）
+    歷史上發生過多次（如某 ISP 誤宣告 YouTube 的路由，
+    導致全球 YouTube 流量被導到該 ISP → YouTube 全球中斷）
+        │
+  → BGP 的信任模型是網際網路的「阿基里斯之踵」
+    RPKI 等機制在改善，但 BGP 的脆弱性仍是真實風險
+```
 
-- 高 packet loss 環境（無 head-of-line blocking）→ QUIC 顯著快
-- mobile（連線遷移）→ QUIC 顯著好
-- 0-RTT 重連 → QUIC 快
+> **BGP 是「路由的路由」——它讓無數獨立的自治網路（AS）知道怎麼到達彼此，是網際網路的黏合劑，也是它的阿基里斯之踵**。前面學的路由（Ch 4）是「一台機器/一個網路內」的路由。但**網際網路是無數個「自治系統（AS）」組成**——每個 ISP、大公司、雲商是一個 AS，有自己的網路。**BGP（邊界閘道協定）** 的工作是讓這些 AS **交換路由資訊**——每個 AS 用 BGP 告訴鄰居「這些 IP 網段經過我能到達」，這些資訊在全球的 AS 之間傳播，拼出「全球的路由地圖」。沒有 BGP，網際網路就是一堆互不相連的孤島——BGP 是把它們黏合成「一個網際網路」的協定。但 BGP 有個致命弱點：它**基於信任**（鄰居宣告的路由大致就信，沒有強驗證）。**BGP 劫持**——某 AS 錯誤或惡意宣告「我能到某網段」（其實不能），流量就被導向錯的地方（中斷或竊聽）。歷史上發生過多次（經典案例：2008 年巴基斯坦某 ISP 誤宣告 YouTube 的路由，導致全球 YouTube 流量被導向該 ISP，YouTube 全球中斷數小時）。這讓 BGP 成為網際網路的「阿基里斯之踵」——一個錯誤的 BGP 宣告能造成大範圍中斷或攻擊。**RPKI**（資源公鑰基礎設施）等機制在改善（驗證路由宣告的真實性），但 BGP 的脆弱性仍是真實風險。理解 BGP，你把視野從「一個封包的旅程」（Ch 1）拉到了「整個網際網路怎麼連成一體」——這是最宏觀的網路理解，也讓你明白「網際網路其實是建立在脆弱的信任之上」這個深刻的事實。
 
-**多數場景 QUIC > TCP**，但 CPU 用量略多。
+## 全課的回顧:從一個封包到全球網路
 
-## 一個常見誤解：「BGP 是程式設計問題」
+```
+全課的視野收束（從 Ch 1 到 Ch 39）：
 
-**部分對**。實際 BGP 主要是**配置 + 政策**，不是寫 code。
+  Ch 1：一個封包的旅程（微觀起點）
+    ↓ 深入每一層
+  Part 2-3：協定棧（Ethernet→IP→TCP→TLS→HTTP）
+    ↓ 怎麼觀察
+  Part 4：工具（看見封包）
+    ↓ Linux 怎麼處理
+  Part 5：防火牆 + 虛擬網路
+    ↓ 怎麼改造
+  Part 6-7：VPN + 翻牆（隧道與審查攻防）
+    ↓ 怎麼提供服務
+  Part 8：VPS 部署（成為網路的一端）
+    ↓ 最前沿 + 最宏觀
+  Part 9：容器網路 + IPv6 + QUIC + BGP
+        │
+  → 從「一個封包」（Ch 1）到「全球網路的骨架」（BGP）
+    你走完了網路的完整光譜
+    微觀（一個 bit）到宏觀（全球路由）
+```
 
-ISP 工程師寫 BGP route policy（哪些 prefix 接受 / 拒絕 / 改 attribute），不寫 BGP 演算法本身。
-
-## 一個常見誤解：「HTTP/3 還沒成熟，先別用」
-
-**錯**。Google / Cloudflare / Facebook 大量 production 用了 5+ 年。
-
-對 web app：開 HTTP/3 通常**只有好處**（自動 fallback 安全）。
+> **從 Ch 1 的「一個封包的旅程」到 Ch 39 的 BGP（全球路由），你走完了網路的完整光譜——這是本課的視野收束**。回顧全課：你從「一個封包怎麼從你的瀏覽器到伺服器」（Ch 1，微觀起點）出發，深入了協定棧的每一層（Part 2-3：Ethernet→IP→TCP→TLS→HTTP）、學會了觀察它們的工具（Part 4：tcpdump 看見封包）、理解了 Linux 怎麼處理封包（Part 5：防火牆+虛擬網路）、怎麼改造流量（Part 6-7：VPN 隧道+審查攻防）、怎麼提供服務（Part 8：部署 VPS，成為網路的一端）、最後到最前沿（QUIC/HTTP3）和最宏觀（BGP，全球路由）。你的視野從「一個 bit」拉到了「全球的路由地圖」。這個從微觀到宏觀的完整光譜，讓你對網路有了**立體的理解**——不只懂某個協定，而是懂「網路作為一個整體怎麼運作」，從一個封包的旅程到整個網際網路的骨架。這正是本課的目標：把網路從「會設定的黑盒子」變成「理解每一層、能 debug 任何問題、能自己建構服務」的透明系統。Final Project 會讓你把這些整合成一個完整的生產部署，把全課的知識變成一個能展示的成果。恭喜你走到這裡——你現在對網路的理解，已經超越了大多數「會用但不懂」的工程師。
 
 ## 動手練習
 
-**1. 試 HTTP/3**
+1. 看 HTTP/3：用支援的 curl 或瀏覽器開發者工具，看哪些大網站用 HTTP/3（QUIC），對比 HTTP/2
 
-```bash
-# curl 編譯支援 HTTP/3 才能用
-curl --http3 -I https://www.google.com
-curl --http3 -I https://www.cloudflare.com
-```
+2. 理解 QUIC：說出 QUIC 解決了 TCP 的哪些問題（對照 Ch 6/7/11）
 
-如果你 curl 沒 HTTP/3：
+3. 看 BGP：用 bgp.he.net 或 bgp.tools 查一個 IP 屬於哪個 AS、它的 BGP 路由
 
-```bash
-# Chrome
-# Open chrome://flags
-# Enable "Experimental QUIC protocol"
-# 訪問 https://www.cloudflare.com，看 Network panel 的 protocol
-```
+4. 理解 AS：查你的 ISP 的 AS 號，理解「網際網路是 AS 組成的」
 
-**2. 看你 ISP 的 AS**
+5. 回顧全課：不看書，畫出從 Ch 1（封包旅程）到 Ch 39 的知識地圖，串起所有 Part
 
-```bash
-mtr --aslookup -n example.com
-# 或線上：https://bgp.he.net/   你的 IP
-```
+## 本章重點整理
 
-**3. 看 BGP 全景**
-
-```
-https://bgp.he.net/dns/example.com
-```
-
-看 example.com 的 IP 屬於哪個 AS、AS 的 peering 關係。
-
-**4. 開 nginx HTTP/3**
-
-```nginx
-listen 443 quic reuseport;
-listen 443 ssl http2;
-add_header Alt-Svc 'h3=":443"; ma=86400';
-```
-
-需要 nginx 1.25+。
-
-```bash
-# 從外面 test
-curl --http3-only https://your-domain.com
-```
-
-**5. 看 RPKI 驗證**
-
-```
-https://www.cloudflare.com/learning/security/glossary/what-is-bgp-hijacking/
-```
-
-讀 BGP hijacking 案例。
+- QUIC 在 UDP 上重建傳輸層，解決 TCP 的隊頭阻塞/慢握手/連線綁 IP（Ch 6/7/11 的綜合演進）；內建 TLS 1.3
+- HTTP/3 = HTTP over QUIC，是 HTTP 演進的終點（Ch 10），連 TCP 層隊頭阻塞都解決；行動/高延遲下更快
+- BGP 是「路由的路由」——讓無數自治系統（AS）交換路由、連成一個網際網路；是網路的黏合劑
+- BGP 基於信任 → BGP 劫持（錯誤宣告路由）能造成大範圍中斷/竊聽，是網際網路的阿基里斯之踵
+- 全課從「一個封包」（Ch 1）到「全球路由」（BGP）——走完了網路從微觀到宏觀的完整光譜
 
 ## 自我檢核
 
-- [ ] 知道 QUIC 為什麼跑 UDP
-- [ ] HTTP/3 = HTTP over QUIC，跟 HTTP/2 差別
-- [ ] BGP 是 Internet 路由協定
-- [ ] AS / Peering / Transit 概念清楚
-- [ ] 知道 BGP hijacking 風險
-- [ ] 看過自己網路的 AS
+- [ ] 能解釋 QUIC 解決了 TCP 的哪些問題，HTTP/3 怎麼建在它上面
+- [ ] 理解 BGP 是什麼，為什麼它是網際網路的黏合劑
+- [ ] 知道 BGP 劫持的風險，為什麼 BGP 的信任模型脆弱
+- [ ] 能把全課的知識串成「從一個封包到全球網路」的完整地圖
+- [ ] 對網路有了從微觀（bit）到宏觀（全球路由）的立體理解
 
-Part 9 結束。最後 Final Project — 整合所有 part 的完整部署。
+## 延伸閱讀
 
-→ [Final Project：完整 VPS 部署](./final-project-complete-deployment.md)
+### QUIC / HTTP3
+
+- **[HTTP/3 explained](https://http3-explained.haxx.se/)** — Daniel Stenberg（curl 作者）
+  - **讀哪裡**：QUIC 的設計、為什麼比 TCP 好
+  - **為什麼值得讀**：QUIC/HTTP3 的權威免費書，本章的完整版
+
+- **[RFC 9000 — QUIC](https://www.rfc-editor.org/rfc/rfc9000)** — IETF
+  - **讀哪裡**：概覽那節
+  - **為什麼值得讀**：QUIC 的權威標準
+
+### BGP
+
+- **[How BGP works](https://www.cloudflare.com/learning/security/glossary/what-is-bgp/)** — Cloudflare
+  - **這篇說什麼**：BGP 的原理、AS、BGP 劫持
+  - **讀哪裡**：整篇
+  - **為什麼值得讀**：本章 BGP 那節的視覺化版
+
+- **[BGP 劫持事件分析](https://blog.cloudflare.com/rpki-and-the-art-of-the-routing/) / 各種 BGP incident 報告**
+  - **這篇說什麼**：真實的 BGP 劫持/洩漏事件
+  - **為什麼值得讀**：理解 BGP 脆弱性的真實影響
+
+### 工具
+
+- **[bgp.tools](https://bgp.tools/) / [bgp.he.net](https://bgp.he.net/)**
+  - **為什麼值得讀**：查任何 IP/AS 的 BGP 路由，親眼看「全球路由地圖」
+
+全課的章節到此完成——你從一個封包的旅程，走到了全球網路的骨架。最後是 Final Project，把全課的知識整合成一個完整的生產部署。
+
+→ [Final Project：完整部署一台生產 VPS](./final-project-complete-deployment.md)

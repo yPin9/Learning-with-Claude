@@ -1,287 +1,250 @@
-# Ch 8 — NAT 完整解析
+# Ch 8 — NAT 透徹理解
 
-> 目標：搞懂 NAT 怎麼讓多裝置共用 1 個公網 IP、各種 NAT 類型的差別、對 P2P 跟 VPN 的影響。
+> **目標**：把 NAT（網路位址轉換）講透——你家路由器怎麼讓一堆私有 IP（Ch 5）共用一個公網 IP、NAT 表怎麼追蹤連線、為什麼「內網能連外、外網連不進內網」、NAT 的類型（影響 P2P/打洞）、以及 port forwarding。NAT 是現代網路無所不在的機制，也是理解 VPN（Ch 23）、翻牆「打洞」、容器網路（Ch 37）的關鍵。
 
-## NAT 是什麼
+> **環境**：Linux（iptables/nftables 做 NAT）。實驗用 netns 建「內網 + NAT 路由器 + 外網」拓樸。
 
-**Network Address Translation** — 路由器把 packet 的**源 / 目標 IP 跟 port**改寫，達成多裝置共用 1 個公網 IP。
+## 為什麼 NAT 無所不在？
 
-```
-                              公網 IP: 203.0.113.5
-                                      │
-   ┌──────────┐                       ▼
-   │ 192.168.1.10 │ ──┐         ┌──────────┐
-   ├──────────┤      ├─────────►│ 路由器   │ ─────► Internet
-   │ 192.168.1.20 │ ──┤         │ (NAT)    │
-   ├──────────┤      ├          └──────────┘
-   │ 192.168.1.30 │ ──┘
-   └──────────┘
-```
+Ch 5 說 IPv4 不夠用，內網用私有 IP。但私有 IP 不能上公網（它在公網沒有意義）——那你家裡十幾台裝置（手機、電腦、電視）怎麼同時上網？答案是 **NAT**：你家路由器把所有內網裝置的私有 IP，在出公網時「翻譯」成路由器的那**一個**公網 IP。
 
-3 台設備共用 1 個公網 IP。每個對外連線時，**路由器改寫** packet，讓對方以為是路由器在連。
+NAT 是現代網路的基石，也是很多「為什麼」的答案：為什麼內網能主動連外網、外網卻連不進內網（防火牆效果）？為什麼 P2P/視訊通話需要「打洞」？為什麼 VPN 和翻牆要處理 NAT 穿透？為什麼 Docker 容器要做 NAT 才能上網？理解 NAT，這些都通了。它也是 Ch 5（私有 IP）的另一半——私有 IP 靠 NAT 才能上公網。
 
-## NAT 怎麼運作
-
-家裡 192.168.1.10 想連 example.com (93.184.216.34:443)：
-
-### Step 1：你送 SYN
+## 先建立直覺:公司總機分機
 
 ```
- src: 192.168.1.10:54321
- dst: 93.184.216.34:443
+NAT = 公司只有一個對外電話號碼，內部有很多分機
+
+  外面的人打公司：02-1234-5678（一個公網號碼）
+  公司內部：分機 101, 102, 103...（私有 IP）
+        │
+  總機（NAT 路由器）的工作：
+    內部分機 101 打外線 → 總機用公司號碼撥出
+       並記下「這通是 101 打的」
+    外面回電 → 總機查記錄「這是回給 101 的」→ 轉接分機 101
+        │
+  關鍵：總機維護一張表
+    「哪通對外通話 ↔ 哪個內部分機」
+    回應來時靠這張表轉回正確的分機
+        │
+  → NAT 路由器把「多個私有 IP」對應到「一個公網 IP」
+    靠「NAT 表」記住每個連線是哪台內網機器發的
+    回應來時查表，轉回正確的內網機器
 ```
 
-到路由器。
+關鍵心智：NAT 像公司總機——對外只有一個公網 IP（一個電話號碼），內部很多私有 IP（分機）。NAT 路由器維護一張「NAT 表」記住「每個對外連線是哪台內網機器發的」，回應來時查表轉回正確的內網機器。這就是十幾台裝置共用一個公網 IP 的祕密。
 
-### Step 2：路由器改寫（SNAT）
+> NAT 建立在 Ch 5 的私有 IP 之上——私有 IP（10.x/192.168.x）不能上公網，靠 NAT 翻譯成公網 IP。如果對私有 IP 不熟，回看 [Ch 5](./05-ip-addressing-cidr.md)。NAT 也用到 Ch 6/7 的 port（NAT 靠 port 區分連線）。
 
-```
- src: 203.0.113.5:62000  ← 改成路由器公網 IP + 路由器選的新 port
- dst: 93.184.216.34:443
-```
-
-**路由器記住對應**：
+## NAT 怎麼運作:改寫 IP 和 port
 
 ```
- NAT table:
- 內部                     外部
- 192.168.1.10:54321 ◄──► 203.0.113.5:62000
+NAPT（最常見的 NAT，也叫 PAT/masquerade）的運作：
+
+  內網機器 192.168.1.10 連 example.com(93.184.216.34:443)
+        │
+  封包出去前，NAT 路由器改寫「來源」：
+    原始：  來源 192.168.1.10:54321 → 目標 93.184.216.34:443
+    改寫後：來源 1.2.3.4:60000      → 目標 93.184.216.34:443
+            （路由器的公網IP:新port）
+        │
+  NAT 表記下這個對應：
+    1.2.3.4:60000 ↔ 192.168.1.10:54321
+        │
+  回應回來（目標是 1.2.3.4:60000）：
+    原始：  來源 93.184.216.34:443 → 目標 1.2.3.4:60000
+    NAT 查表 → 60000 是給 192.168.1.10:54321 的
+    改寫後：來源 93.184.216.34:443 → 目標 192.168.1.10:54321
+        │
+  → NAT 改寫「來源 IP+port」（出）和「目標 IP+port」（回）
+    用 port 區分不同內網機器的連線（所以叫 PAT，port translation）
 ```
 
-送出去。
+```bash
+# 看你的內網 IP 和公網 IP 不同（NAT 的證據）
+ip addr | grep 'inet '          # 192.168.x.x（內網私有 IP）
+curl -s ifconfig.me             # 1.2.3.4（NAT 後的公網 IP，可能整個社區共用）
 
-### Step 3：server 回包
-
-```
- src: 93.184.216.34:443
- dst: 203.0.113.5:62000   ← 看到的是路由器
-```
-
-到路由器。
-
-### Step 4：路由器改寫（DNAT）回去
-
-```
- src: 93.184.216.34:443
- dst: 192.168.1.10:54321   ← 查 NAT table 反向改寫
+# 在 netns 建一個 NAT 實驗（內網 → NAT 路由器 → 外網）
+# （完整拓樸見 Ch 22，這裡示意 NAT 規則）
+# NAT 規則（讓內網能透過路由器上外網）：
+# sudo iptables -t nat -A POSTROUTING -s 192.168.1.0/24 -o eth0 -j MASQUERADE
+#   MASQUERADE = 把來源改成出口介面的 IP（NAT 的核心動作）
+#   這一條就是「讓內網能上網」的關鍵（Ch 18 iptables 詳述）
 ```
 
-送給 192.168.1.10。
+> **NAT 改寫封包的「來源 IP+port」並維護 NAT 表——`MASQUERADE` 是 Linux 做 NAT 的核心動作**。最常見的 NAT 是 **NAPT/PAT**（也叫 masquerade）——它不只改 IP，還改 **port**。內網機器的封包出去時，NAT 把「來源 192.168.1.10:54321」改成「路由器公網 1.2.3.4:60000」，並在 NAT 表記下對應。為什麼要改 port？因為多台內網機器可能用相同的來源 port，光改 IP 會撞——改成不同的對外 port（60000、60001…）才能區分。回應封包（目標 1.2.3.4:60000）來時，NAT 查表知道「60000 是給 192.168.1.10:54321 的」，改寫目標 IP+port 轉回去。這就是 Ch 2 說的「NAT 打破分層」——路由器（本該只看網路層 IP）偷看並修改了傳輸層的 port。在 Linux，一條 iptables 規則 `MASQUERADE`（Ch 18）就實現了「讓整個內網共用路由器 IP 上網」——這也是 VPN（Ch 23）和容器（Ch 37）讓流量出網的關鍵動作。
 
-整個過程：
+## 為什麼外網連不進內網
 
-- 你以為自己直接跟 server 通
-- server 以為是路由器跟它通
-- 路由器當「**翻譯員**」
-
-## 4 種 NAT 類型（Cone NAT 分類）
-
-按「**外部 IP 的對應規則**」分：
-
-### 1. Full Cone NAT（最開放）
-
-「同一個內部 IP:port → 永遠用同一個外部 IP:port」、「**任何外部主機**都能用這外部 port 主動連回」
+NAT 有個重要的副作用——它天然阻擋了外網主動連入：
 
 ```
- 內部 192.168.1.10:54321 ◄──► 外部 203.0.113.5:62000
- 任何 server 都能送到 203.0.113.5:62000，路由器轉給你
+NAT 的「單向性」：內網能連外，外網連不進
+
+  內網主動連外：
+    192.168.1.10 連 example.com
+    → NAT 建立表項，記住這個連線
+    → 回應能正確轉回（因為表裡有記錄）
+        │
+  外網主動連內：
+    某人想連 1.2.3.4:80（你的公網 IP）
+    → NAT 路由器收到，查表：「80 對應哪台內網機器？」
+    → 表裡沒有！（沒有內網機器主動建立過這個連線）
+    → NAT 不知道轉給誰 → 丟棄
+        │
+  → NAT 天然是個「單向閘門」：
+    內網發起的連線能雙向通（有表項）
+    外網發起的連線進不來（沒表項，不知道轉給誰）
+    → 這給內網機器一層「天然防火牆」效果
 ```
 
-### 2. Restricted Cone NAT
-
-跟 Full Cone 同，但**只有「你主動連過的 IP」**能用這 port 連回。
-
-### 3. Port-Restricted Cone NAT
-
-更嚴：只有「**你主動連過的 IP:port**」能用這 port 連回。
-
-### 4. Symmetric NAT（最封閉）
-
-「同一個內部 IP:port，但連**不同 server** 就用**不同的外部 port**」 + 「只有那個 server 能用對應外部 port 連回」。
-
 ```
- 內部 192.168.1.10:54321 → server A (1.2.3.4) → 用 203.0.113.5:62000
- 內部 192.168.1.10:54321 → server B (5.6.7.8) → 用 203.0.113.5:62001  ← 不同 port！
+解法：port forwarding（手動建立表項，讓外網能連進特定服務）
+
+  你在內網 192.168.1.10 架了 web 服務（port 80）
+  想讓外網能訪問 → 在路由器設 port forwarding：
+    「公網 1.2.3.4:80 → 內網 192.168.1.10:80」
+        │
+  → 手動在 NAT 表「預先」建一個對應
+    外網連 1.2.3.4:80 → NAT 查到這條 → 轉給 192.168.1.10:80
+        │
+  這就是「為什麼自架伺服器要設 port forwarding」
+  （或者直接用有公網 IP 的 VPS，Part 8，省去這問題）
 ```
 
-「**同樣的內部 socket，外部對不同 server 不同 port**」 — 這破壞了 P2P 的假設。
+> **NAT 天然阻擋外網主動連入——這既是「免費防火牆」也是「P2P 和自架服務的障礙」**。NAT 表只記錄「內網主動發起」的連線，所以內網連外能雙向通（有表項），但外網想主動連你的內網機器時，NAT 查表找不到對應（沒有內網機器建立過這個連線），不知道轉給誰，就丟棄。這是 NAT 的「單向閘門」特性——**內網機器因此有了天然的保護**（外網掃描你的公網 IP 也連不進內網裝置）。但這也是障礙：(1) **自架服務**——你在內網架 web，外網連不進來，要設 **port forwarding**（在 NAT 表手動預建一條「公網 port → 內網機器」的對應）；(2) **P2P/視訊通話**——雙方都在 NAT 後面，誰都連不進對方，需要「打洞」技術（後述）。這就是為什麼**用有公網 IP 的 VPS（Part 8）更省事**——VPS 直接有公網 IP，不在 NAT 後面，外網能直接連，不用搞 port forwarding。理解 NAT 的單向性，你就懂了「為什麼我家架的伺服器外面連不到」「為什麼視訊通話要打洞」「為什麼買 VPS 比家裡架方便」。
 
-家用路由器多數是 Restricted / Port-Restricted；企業 / CGNAT 常是 Symmetric。
+## NAT 類型與打洞
 
-## NAT 對 P2P 的影響
-
-P2P（如 BitTorrent / WebRTC / VoIP）需要兩台設備互相直連：
+NAT 有不同「嚴格程度」，直接影響 P2P 能不能打洞成功：
 
 ```
- A (NAT 後)  ←─────?─────→  B (NAT 後)
+NAT 類型（從寬鬆到嚴格，影響 P2P 打洞難度）：
+
+  Full Cone（全錐）：最寬鬆
+    內網一旦建立對外映射，「任何」外部都能透過這個對外 port 連進來
+    → 容易打洞
+        │
+  Restricted Cone（限制錐）：
+    只有「你連過的那個外部 IP」能連回來
+        │
+  Port Restricted Cone：
+    只有「你連過的那個外部 IP+port」能連回來
+        │
+  Symmetric（對稱）：最嚴格
+    對「不同目標」用「不同的對外 port」
+    → 外部很難預測你的對外 port → 打洞困難
+        │
+  → P2P 打洞（NAT traversal）：
+    兩台都在 NAT 後的機器想直連
+    透過一個公網的「中介伺服器」（STUN）互相告知對外 IP:port
+    然後「同時」往對方打 → 趁 NAT 表還在時建立直連
+    對稱 NAT 因為 port 不可預測，常打洞失敗 → 退回中繼（TURN）
 ```
 
-兩端都在 NAT 後 → 都沒公網 IP → 怎麼連？
+> **NAT 類型決定 P2P 能不能「打洞」直連——這是視訊通話、遊戲、翻牆都要面對的問題**。當兩台機器都在 NAT 後面（如你和朋友視訊），誰都無法主動連進對方的內網。**打洞（NAT traversal）** 的技巧：透過一個有公網 IP 的**中介伺服器**（STUN）——兩台機器各自連 STUN，STUN 告訴它們「你的對外 IP:port 是什麼」，然後兩台機器**同時**往對方的對外 IP:port 發包。因為各自剛發過包，NAT 表裡有了臨時表項，對方的包就能「趁隙」進來，建立直連。但這依賴 NAT 類型——**Full Cone**（寬鬆）容易打洞，**Symmetric**（對稱，對不同目標用不同 port，對外 port 不可預測）常打洞失敗，只能退回用中繼伺服器（**TURN**）轉發所有流量（慢、耗中繼頻寬）。這就是 WebRTC（視訊通話）的 ICE 框架（STUN+TURN）在做的事。理解 NAT 類型，你就懂了為什麼「有些網路環境視訊通話特別卡」（對稱 NAT 打洞失敗走中繼）、為什麼翻牆/VPN 有時要處理 NAT 穿透。本課的 WireGuard（Ch 24）也面對這問題（兩端 NAT 後要打洞或靠有公網 IP 的一端）。
 
-### NAT 穿透（NAT traversal）
+## 故意弄壞:NAT 表過期造成連線斷
 
-幾種技術：
+```bash
+# NAT 表項有「過期時間」—— 長時間不活動的連線會被清掉
+# 這造成一個經典問題：長連線（SSH/WebSocket）莫名斷線
 
-#### 1. **STUN**（Session Traversal Utilities for NAT）
+# 概念：NAT 表項的生命週期
+# TCP 連線在 NAT 表的預設超時可能是幾分鐘到幾小時
+# UDP 更短（UDP 無連線，NAT 不知道何時結束，超時更激進）
+# 長時間沒流量 → NAT 清掉表項 → 之後的封包找不到對應 → 連線斷
 
-A 跟 B 各自連到一個公網 STUN server，server 告訴他們各自的「**外部 IP:port**」。然後兩端嘗試直連對方的外部位址。
+# 看 Linux 的 conntrack 表（NAT/連線追蹤的實際表）
+sudo conntrack -L 2>/dev/null | head    # 需要 conntrack-tools
+# 或看核心的連線追蹤
+cat /proc/net/nf_conntrack 2>/dev/null | head
+#   每行是一個被追蹤的連線，含超時時間
 
-對 Cone NAT 通常成功；對 Symmetric NAT 通常失敗。
-
-#### 2. **TURN**（Traversal Using Relays around NAT）
-
-如果 STUN 失敗 → 用第三方 server 中繼。
-
-代價：流量都過 server，貴、慢。
-
-#### 3. **ICE**（Interactive Connectivity Establishment）
-
-WebRTC 的標準 — 同時試 STUN 跟 TURN，挑成功的。
-
-#### 4. **Hole Punching**
-
-兩端**同時**對對方送 packet，建立 NAT mapping。
-
-#### 5. **UPnP / NAT-PMP**
-
-家用路由器允許設備「**主動要求**」開個 port forwarding。但很多路由器禁用 / 不支援。
-
-## Port forwarding
-
-**主動把外部 port 轉到內部設備**。家用路由器設定：
-
-```
-外部 port 8080 → 內部 192.168.1.20:80
+# 解法：keepalive（定期送小封包，讓 NAT 表項不過期）
+# SSH 的 ServerAliveInterval、TCP keepalive、WireGuard 的 PersistentKeepalive(Ch 24)
+# 都是為了「餵活」NAT 表項，防止長連線被 NAT 清掉
 ```
 
-對外 `203.0.113.5:8080` = 內部設備的 web server。
+> **NAT 表項會過期，這造成「長連線莫名斷線」——keepalive 是解法**。NAT 表的每個表項有**超時時間**——長時間沒流量的連線，NAT 路由器會清掉表項（回收資源）。這造成經典問題：**閒置的長連線**（SSH session、WebSocket、資料庫連線池）在沒活動一段時間後，NAT 表項被清，之後的封包找不到對應而被丟棄，連線「莫名其妙」斷了（你回來敲鍵盤發現 SSH 卡死）。TCP 表項通常超時較長（分鐘到小時），**UDP 更短**（UDP 無連線，NAT 不知道何時結束，超時更激進）——這對 UDP-based 的 VPN（WireGuard，Ch 24）是重要問題。解法是 **keepalive**——定期送個小封包「餵活」NAT 表項，防止它過期。SSH 的 `ServerAliveInterval`、TCP keepalive、WireGuard 的 `PersistentKeepalive`（Ch 24，預設關閉，NAT 後面要開）都是這個目的。在 Linux，NAT/連線追蹤的實際狀態在 **conntrack** 表（`conntrack -L` 或 `/proc/net/nf_conntrack`）——這是 debug NAT 問題的工具。理解 NAT 表會過期，你就懂了「為什麼閒置的 SSH/VPN 會斷」以及 keepalive 為什麼必要。
 
-用途：
-
-- 自架 web server / SSH server
-- 家裡某設備接收連線（遊戲主機 / NAS）
-- 雖然在 NAT 後，但**手動戳一個洞**
-
-## CGNAT（Carrier-Grade NAT）
-
-ISP 級的 NAT — **多用戶共用 1 個公網 IP**。
+## 進階:NAT 的代價與 IPv6 的願景
 
 ```
-       公網 IP: 100.64.50.5     ←  ISP 用 100.64.0.0/10 範圍
-                  │
-        ┌─────────┴─────────┐
-        ▼                   ▼
-   用戶 A 路由器       用戶 B 路由器
-   (內部 192.168.1.x)  (內部 192.168.1.x)
+NAT 解決了 IPv4 不夠用，但有代價：
+
+  代價：
+    1. 打破「端到端」原則（任意兩台機器能直連的網際網路初衷）
+       → P2P 困難、要打洞、要中繼
+    2. 路由器要維護狀態（NAT 表）→ 路由器負擔、單點
+    3. 某些協定難穿透（協定在 payload 帶 IP 時，NAT 改了外層沒改內層）
+    4. 連線追蹤的超時造成長連線斷線（上節）
+        │
+  IPv6 的願景：位址夠多，不需要 NAT
+    每台裝置都有全球唯一的公網 IPv6 → 端到端直連復活
+    （但也要配防火牆，因為沒了 NAT 的「天然單向閘門」）
+        │
+  現實：IPv4 + NAT 還會存在很久
+    IPv6 普及緩慢（Ch 38），NAT 短期不會消失
 ```
 
-ISP 沒夠多公網 IP 給每個用戶 → 多用戶共用 → 兩層 NAT。
-
-副作用：
-
-- 用戶**完全無法**架 server / port forward
-- P2P 更難
-- 看起來「同一個 IP」共享，但實際上是 1000+ 用戶共享
-
-亞太區 / 行動網路 / 4G LTE 大量用 CGNAT。
-
-要避開：
-
-- 買付費「公網 IP」option
-- 用 VPN 到自己 VPS（VPS 有真公網 IP）
-
-## NAT 對協定的影響
-
-NAT 只認 TCP / UDP（看 port）。其他 protocol 麻煩：
-
-- **ICMP**：理論上沒 port，但 NAT 用 ID 欄位當 port 模擬
-- **IPSec ESP**：傳輸模式 break NAT（Ch 26 詳細）
-- **GRE / 其他 tunnel**：看 NAT 設備支援
-
-某些 NAT 設備有「**ALG（Application Layer Gateway）**」 — 看應用層協定（FTP / SIP）改寫內容。但常常壞事，建議 disable。
-
-## 一個常見誤解：「NAT 是安全機制」
-
-**部分對**。NAT 帶來「**外部主動連不進來**」的副作用，看似 firewall。
-
-但 **NAT 設計目的是省 IP，不是安全**。真正 firewall 要明確配規則（Ch 18）。
-
-「NAT = 安全」依賴的話，內網單一漏洞就突破。
-
-## 一個常見誤解：「IPv6 沒 NAT」
-
-**部分對**。IPv6 位址夠多，**理論上不需要 NAT**。但實務上：
-
-- **NAT66**：IPv6 的 NAT，少用但存在
-- **NPTv6**：IPv6 prefix translation
-- 多數家用 IPv6 不做 NAT，每設備直接對外
-
-但「**沒 NAT** = 每設備直接暴露到 Internet」，所以 IPv6 預設 firewall 也要配好。
-
-## 一個常見誤解：「Symmetric NAT 完全無解」
-
-**錯**。WebRTC 的 TURN 一定能繞過。代價是流量過 TURN server。
-
-某些「**hole punching**」技巧也能繞過 Symmetric NAT，雖然成功率低。
+> **NAT 是 IPv4 短缺的「權宜之計」，它打破了網際網路的「端到端」初衷——IPv6 想終結它但普及緩慢**。網際網路最初的願景是「**端到端**」——任意兩台機器能直接連線（像電話，任何號碼能打任何號碼）。NAT 打破了這個——NAT 後的機器不能被主動連入，P2P 要打洞、要中繼，路由器要維護狀態（NAT 表），某些協定（payload 裡帶 IP 的，如 FTP/SIP）難穿透（NAT 改了外層 IP 但沒改 payload 裡的）。這些都是 NAT 的「技術債」。**IPv6**（Ch 38）的願景是終結 NAT——位址多到每台裝置（甚至每個燈泡）都有全球唯一的公網 IPv6，端到端直連復活，不需要 NAT。但要注意：沒了 NAT 的「天然單向閘門」，IPv6 要靠**防火牆**主動保護（不能再依賴 NAT 的副作用擋外連）。現實是 IPv4+NAT 還會存在很久（IPv6 普及緩慢，Ch 38）——所以理解 NAT 仍是必備。NAT 是「務實妥協 vs 理想設計」的經典案例：它醜陋、破壞原則，但解決了真實的位址短缺問題，讓網際網路撐過了 IPv4 耗盡的危機。
 
 ## 動手練習
 
-**1. 看自己的 NAT mapping**
+1. 看 NAT 證據：`ip addr`（內網 IP）vs `curl ifconfig.me`（公網 IP），確認它們不同
 
-```bash
-# 連個 server 後立刻看
-curl https://example.com &
-ss -tan
-```
+2. 理解單向性：從手機/電腦能連外網（主動），但外網不能主動連你的裝置（NAT 擋），思考為什麼
 
-看 src port = 你的內部 port。對方看到的是你公網 IP + 路由器分配的 port（不同）。
+3. 看 conntrack：`sudo conntrack -L` 或 `cat /proc/net/nf_conntrack`，看你機器追蹤的連線和超時
 
-**2. 公網 IP vs 內部 IP**
+4. NAT 拓樸（Ch 22 後）：在 netns 建「內網 + MASQUERADE 路由器 + 外網」，看封包的來源 IP 怎麼被改寫
 
-```bash
-ip a                       # 內部 IP
-curl ifconfig.me           # 公網 IP
-```
+5. 思考打洞：理解為什麼兩台 NAT 後的機器要 STUN 才能直連，對稱 NAT 為什麼難打洞
 
-通常不同（除非你直接連到公網）。
+## 本章重點整理
 
-**3. 試 STUN server**
-
-```bash
-# 安裝 stun 工具
-sudo apt install stuntman-client
-stunclient stun.l.google.com 19302
-# 印出你的「外部 IP:port」
-```
-
-跑兩次，**如果你 NAT 是 Symmetric，兩次 port 不同**。Cone NAT 兩次 port 一樣。
-
-**4. 設 port forward（如果家裡能進路由器設定）**
-
-家裡路由器 admin page → port forwarding → 設一個 forward。例如：
-
-```
- 外部 8080 → 192.168.1.10:80
-```
-
-從外部試 `curl http://YOUR_PUBLIC_IP:8080`。
-
-**5. NAT 對 SSH 的影響**
-
-家裡電腦不能直接從外面 SSH（除非 port forward）。試：
-
-- 在 VPS 上 SSH 你家 → 失敗（沒公網 IP）
-- 在家裡 SSH VPS → 成功（VPS 有公網 IP）
+- NAT 讓多個私有 IP 共用一個公網 IP（像總機+分機）；維護 NAT 表記住「每個對外連線是哪台內網機器發的」
+- NAPT/PAT 改寫來源 IP+port（出）和目標 IP+port（回），用 port 區分內網機器；Linux 用 MASQUERADE
+- NAT 天然單向：內網能連外（有表項），外網連不進（無表項）——免費防火牆，但 P2P/自架要打洞或 port forwarding
+- NAT 類型（Full Cone 到 Symmetric）影響 P2P 打洞難度；對稱 NAT 常打洞失敗走中繼（STUN/TURN）
+- NAT 表項會過期 → 長連線莫名斷線 → keepalive 餵活；NAT 打破端到端原則，IPv6 想終結它但普及慢
 
 ## 自我檢核
 
-- [ ] 解釋 NAT 怎麼運作（4 步流程）
-- [ ] 知道 4 種 NAT 類型對 P2P 的影響
-- [ ] 知道 STUN / TURN / ICE 是什麼
-- [ ] 知道 CGNAT 為什麼存在、影響什麼
-- [ ] 跑過 STUN client 看自己 NAT 類型
-- [ ] 知道「NAT ≠ firewall」
+- [ ] 能解釋 NAT 怎麼讓多台裝置共用一個公網 IP（NAT 表 + 改 IP/port）
+- [ ] 知道為什麼內網能連外、外網連不進內網（NAT 單向性）
+- [ ] 理解 port forwarding 解決什麼問題，以及為什麼 VPS 不用搞這個
+- [ ] 知道 NAT 類型影響 P2P 打洞，對稱 NAT 為什麼麻煩
+- [ ] 理解 NAT 表過期造成長連線斷，keepalive 為什麼必要
 
-Part 2 結束。下一個 Part 看應用層 — DNS / HTTP / TLS / SSH。
+## 延伸閱讀
+
+### 書籍
+
+- **《TCP/IP Illustrated, Volume 1》— Ch 7 (Firewalls and NAT)** — Stevens & Fall
+  - **讀哪幾章**：Ch 7（NAT 的類型、NAPT、穿透）
+  - **這本書的定位**：NAT 機制的權威，把各種 NAT 類型講清楚
+  - **前提**：Ch 5-7
+
+### 文章
+
+- **[How NAT traversal works](https://tailscale.com/blog/how-nat-traversal-works/)** — Tailscale
+  - **核心貢獻**：極其詳盡地解釋 NAT 打洞的原理、各種 NAT 類型、STUN/TURN，Tailscale（WireGuard-based VPN）的實戰經驗
+  - **讀哪裡**：整篇（長但精彩）
+  - **和本章的關聯**：本章「NAT 類型與打洞」的權威深入版，是理解 P2P/VPN 穿透的最佳資料
+
+- **[The trouble with NAT](https://www.cloudflare.com/learning/network-layer/what-is-nat/)** — Cloudflare
+  - **這篇說什麼**：NAT 的原理和它對網際網路架構的影響
+  - **為什麼值得讀**：補充 NAT 的「打破端到端」討論
+
+### 官方文件
+
+- **[RFC 3022 — Traditional IP NAT](https://www.rfc-editor.org/rfc/rfc3022)** — IETF
+  - **讀哪裡**：Section 2-3（NAT 和 NAPT 的定義）
+  - **為什麼值得讀**：NAT 的權威定義；理解 NAPT（PAT）的標準
+
+Part 2（TCP/IP 核心）到此完成——你已經掌握了從連結層到傳輸層、從定址到 NAT 的完整協定棧。下一章進入應用層，從 DNS 開始（你每次上網的第一步）。
 
 → [Ch 9 DNS](./09-dns.md)

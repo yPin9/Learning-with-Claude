@@ -1,290 +1,271 @@
-# Ch 11 — TLS / HTTPS
+# Ch 11 — TLS 與 HTTPS
 
-> 目標：搞懂 TLS 怎麼做加密 + 驗證、憑證鏈如何運作、TLS 1.2 vs 1.3 差別。
+> **目標**：把 HTTPS 的「S」講透——TLS 怎麼在 TCP 上建立加密通道、對稱/非對稱加密的分工、TLS 握手的完整流程、憑證和 CA 怎麼防止中間人（Ch 3 ARP 欺騙的剋星）、TLS 1.3 怎麼變快、以及常見的 TLS 錯誤。這是現代網路安全的基石——你每天看到的「鎖頭」背後的完整機制。
 
-## TLS 是什麼
+> **環境**：Linux（openssl s_client / curl）。TLS 1.3 是現代主流。
 
-**Transport Layer Security** — 在 TCP 上加：
+## 為什麼 TLS 是現代網路的基石？
 
-1. **加密**：別人聽不到內容
-2. **驗證**：確認對方真的是它聲稱的（防 MITM）
-3. **完整性**：內容沒被改
+Ch 3 的 ARP 欺騙告訴我們：底層網路不可信，中間人能竊聽和竄改流量。Ch 9 的 DNS 明文也洩漏你的足跡。那怎麼在不可信的網路上安全通訊？答案是 **TLS**（傳輸層安全協定，前身 SSL）——它在 TCP 之上建立一個**加密、防竄改、能驗證對方身分**的通道。HTTPS 就是 HTTP + TLS。
 
-歷史：SSL 1.0 → 2.0 → 3.0 → TLS 1.0 → 1.1 → 1.2 → 1.3。
+TLS 解決三個問題：**機密性**（加密，中間人看不到內容）、**完整性**（防竄改，改了會被發現）、**身分驗證**（憑證，確認你連的真的是該網站不是冒牌的）。理解 TLS 回答了核心問題：為什麼 HTTPS 安全（即使被 ARP 欺騙）？憑證和 CA 怎麼運作？為什麼會有「憑證錯誤」警告？這是 web 安全、API 安全、VPN（Ch 23 也用類似的加密原理）的基礎。
 
-**SSL 已死**，TLS 1.0 / 1.1 也已被 deprecate。**現代只用 TLS 1.2 / 1.3**。
-
-## HTTPS = HTTP over TLS
+## 先建立直覺:保險箱與簽名信
 
 ```
- application: HTTP
-              ↓
-       TLS (encryption)
-              ↓
-       TCP (transport)
-              ↓
-       IP (routing)
+TLS 要同時解決三件事（用三種密碼學工具）：
+
+  1. 機密性（別人看不到內容）→ 對稱加密
+     雙方有「同一把鑰匙」，用它加解密
+     像兩人共用一個保險箱密碼
+        │
+  2. 怎麼安全交換那把鑰匙（在不可信的網路上）？→ 非對稱加密
+     公鑰加密、私鑰解密（公鑰能公開，私鑰自己留）
+     用對方的公鑰加密「對稱鑰匙」送過去，只有對方私鑰能解
+        │
+  3. 怎麼確認對方是「真的那個網站」？→ 憑證 + CA
+     憑證 = 「可信第三方（CA）簽名的身分證」
+     CA 用它的私鑰簽名網站的公鑰 → 你能驗證這簽名
+        │
+  → TLS = 非對稱加密（安全交換鑰匙）
+         + 對稱加密（高效加密大量資料）
+         + 憑證/CA（驗證對方身分）
+    三者組合，在不可信網路上建立可信通道
 ```
 
-HTTPS 預設 port 443（HTTP 是 80）。
+關鍵心智：TLS 組合三種密碼學工具——**非對稱加密**（安全地交換對稱鑰匙）、**對稱加密**（用交換好的鑰匙高效加密大量資料）、**憑證+CA**（驗證對方身分，防中間人冒充）。為什麼不全用非對稱？因為非對稱加密慢，只用來「交換鑰匙」這一步，之後的資料用快的對稱加密。
 
-## TLS 1.2 握手（最經典）
+> TLS 在 TCP（Ch 6）之上、應用層（HTTP，Ch 10）之下。它是 Ch 3 ARP 欺騙、Ch 9 DNS 污染的剋星——即使流量被中間人攔截，TLS 讓他看不到也改不了。如果對「為什麼底層不可信」不熟，回看 [Ch 3](./03-link-layer-ethernet-arp.md)。
 
-```
- client                              server
-   │                                   │
-   ├── ClientHello ────────────────────►│
-   │   - TLS 版本                        │
-   │   - 支援的 cipher suites            │
-   │   - 隨機數 R1                       │
-   │   - SNI: example.com                │
-   │                                   │
-   │◄── ServerHello, Certificate, ──────┤
-   │    ServerKeyExchange,                │
-   │    ServerHelloDone                   │
-   │   - 選的 cipher suite               │
-   │   - 隨機數 R2                       │
-   │   - server 憑證                     │
-   │   - server 公鑰                     │
-   │                                   │
-   │ (client 驗證憑證)                   │
-   │                                   │
-   ├── ClientKeyExchange ──────────────►│
-   │   - 用 server 公鑰加密的 pre-master  │
-   │                                   │
-   │ (雙方各自計算 master secret)        │
-   │                                   │
-   ├── ChangeCipherSpec, Finished ─────►│
-   │                                   │
-   │◄── ChangeCipherSpec, Finished ─────┤
-   │                                   │
-   │  = 加密管道建立，2 RTT =           │
-```
-
-## TLS 1.3 握手（簡化 + 更快）
-
-主要變化：
-
-- **1 RTT**（vs 1.2 的 2 RTT）
-- 0-RTT（resumption 重連時）
-- 只支援 PFS cipher suites
-- 移除舊算法（RC4, SHA-1, MD5, ...）
+## 對稱 vs 非對稱加密
 
 ```
- client                              server
-   │                                   │
-   ├── ClientHello + KeyShare ─────────►│
-   │   (含 client 的 keyshare)          │
-   │                                   │
-   │◄── ServerHello + KeyShare,─────────┤
-   │    Certificate, EncryptedExt,      │
-   │    Finished                        │
-   │                                   │
-   ├── Finished ──────────────────────►│
-   │                                   │
-   │  = 1 RTT 完成 =                   │
+兩種加密的分工：
+
+  對稱加密（AES 等）：
+    加密和解密用「同一把鑰匙」
+    優點：快（適合加密大量資料）
+    問題：怎麼讓雙方安全地有「同一把鑰匙」？
+          （在不可信網路上直接傳鑰匙 = 被中間人偷走）
+        │
+  非對稱加密（RSA, ECDHE 等）：
+    一對鑰匙：公鑰（public）+ 私鑰（private）
+    公鑰加密的，只有私鑰能解（反之亦然）
+    公鑰可以公開，私鑰自己保管
+    優點：解決「鑰匙交換」問題（用公鑰加密對稱鑰匙）
+    缺點：慢（不適合加密大量資料）
+        │
+  TLS 的聰明組合：
+    用非對稱（慢但安全）→ 交換一把「對稱鑰匙」（session key）
+    之後用對稱（快）→ 加密實際的資料
+    → 兼得「安全交換」和「高效加密」
 ```
 
-**TLS 1.3 普及**：browsers 預設用 1.3，server 都該支援。
+> **TLS 用非對稱加密「交換鑰匙」、對稱加密「傳資料」——這個組合是它效能和安全兼得的關鍵**。**對稱加密**（AES）快，但雙方要有「同一把鑰匙」，而在不可信網路上直接傳鑰匙會被中間人偷走。**非對稱加密**（公鑰/私鑰）解決了交換問題——公鑰能公開（用它加密的只有私鑰能解），所以你能用對方的公鑰加密一把「對稱鑰匙」送過去，只有對方的私鑰能解開，中間人偷到也沒用（沒有私鑰）。但非對稱慢，不適合加密大量資料。所以 TLS **只用非對稱來交換一把對稱鑰匙（session key）**，之後的實際資料都用快的對稱加密。現代 TLS 用 **ECDHE**（橢圓曲線 Diffie-Hellman）做鑰匙交換，它還提供**前向保密**（forward secrecy）——每次連線用臨時的鑰匙，即使日後私鑰洩漏，也無法解密過去錄下的流量（因為每次的對稱鑰匙是臨時的、用完即棄）。這是現代 TLS 的重要安全特性。理解這個「非對稱換鑰匙、對稱傳資料」的分工，你就懂了 TLS 握手在做什麼。
 
-## 憑證（Certificate）
-
-server 的「**身份證**」：
+## TLS 握手流程
 
 ```
-Certificate:
-    Data:
-        Version: 3 (0x2)
-        Serial Number: 04:00:00:00:00:01:1d:90:9f:b1:e1
-        Signature Algorithm: sha256WithRSAEncryption
-        Issuer: C=US, O=Let's Encrypt, CN=R3
-        Validity:
-            Not Before: 2025-01-01
-            Not After:  2025-04-01
-        Subject: CN=example.com
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-            Public-Key: (2048 bit)
-            ...
-        X509v3 Subject Alternative Name:
-            DNS: example.com, DNS: www.example.com, DNS: api.example.com
-    Signature Algorithm: sha256WithRSAEncryption
-    Signature: <由 issuer 簽>
+TLS 1.2 握手（建立加密通道，在 TCP 握手之後）：
+
+  客戶端                              伺服器
+    │── ClientHello ─────────────────▶│  「我支援這些加密套件、TLS版本」
+    │                                  │
+    │◀── ServerHello ─────────────────│  「就用這個加密套件」
+    │◀── Certificate ─────────────────│  「這是我的憑證（含公鑰）」
+    │◀── ServerHelloDone ─────────────│
+    │                                  │
+    │  [驗證憑證：是可信 CA 簽的嗎？      │
+    │   域名對嗎？沒過期嗎？]            │
+    │                                  │
+    │── 鑰匙交換（用憑證的公鑰）────────▶│  交換出「對稱鑰匙」
+    │── ChangeCipherSpec ─────────────▶│  「之後開始加密」
+    │◀── ChangeCipherSpec ─────────────│
+    │                                  │
+    │═══════ 加密通道建立，傳 HTTP ══════│
+        │
+  TLS 1.2：2 個 RTT（往返）
+  TLS 1.3：簡化成 1 個 RTT（甚至 0-RTT 重連）→ 快很多
 ```
 
-關鍵欄位：
+```bash
+# 看完整的 TLS 握手（openssl s_client）
+openssl s_client -connect example.com:443 -servername example.com < /dev/null 2>&1 | head -40
+# CONNECTED
+# depth=2 ... CN = ... (CA 鏈)
+# Server certificate
+# subject=CN = example.com           ← 憑證的域名
+# issuer=CN = ... CA                  ← 簽發的 CA
+# Protocol  : TLSv1.3                 ← TLS 版本
+# Cipher    : TLS_AES_256_GCM_SHA384  ← 加密套件
+# Verify return code: 0 (ok)          ← 憑證驗證通過
 
-- **Issuer**：誰簽的（CA）
-- **Subject**：給誰用的（domain）
-- **Validity**：有效期
-- **Public Key**：公鑰
-- **SAN**（Subject Alternative Name）：其他適用的 domain
-- **Signature**：CA 用自己私鑰簽
-
-## 憑證鏈（Certificate Chain）
-
-server 憑證 → 簽它的中間 CA → 簽 CA 的 root CA：
-
-```
- ┌────────────────────────────┐
- │ server cert (example.com)  │  ← 憑證
- │ Issuer: Let's Encrypt R3   │
- └────────────┬───────────────┘
-              │ R3 簽
-              ▼
- ┌────────────────────────────┐
- │ Intermediate (R3)          │
- │ Issuer: ISRG Root X1       │
- └────────────┬───────────────┘
-              │ Root X1 簽
-              ▼
- ┌────────────────────────────┐
- │ Root CA (ISRG Root X1)     │  ← 內建在 OS / 瀏覽器
- │ Self-signed                │
- └────────────────────────────┘
+# 抓 TLS 握手封包（看 ClientHello/ServerHello）
+sudo tcpdump -i any -n 'tcp port 443' -A 2>/dev/null | grep -a -i 'hello' &
+curl -sI https://example.com > /dev/null
+sudo pkill tcpdump
 ```
 
-驗證：你信任 root → root 簽中間 → 中間簽 server → 你信任 server。
+> **TLS 握手在 TCP 握手之後，建立加密通道——TLS 1.3 把它從 2-RTT 簡化到 1-RTT，是重要的效能進步**。完整流程：TCP 三次握手（Ch 6）建立連線後，TLS 握手開始——ClientHello（我支援這些加密套件/版本）、ServerHello（就用這個）、Certificate（這是我的憑證，含公鑰）、客戶端**驗證憑證**（是可信 CA 簽的嗎？域名對嗎？沒過期嗎？）、鑰匙交換（用憑證公鑰交換出對稱 session key）、之後加密通信。**TLS 1.2 要 2 個 RTT**（兩次往返），加上 TCP 握手就是 3 個 RTT 才能開始傳資料——在高延遲網路（行動/跨國）這很慢。**TLS 1.3 簡化到 1 個 RTT**（合併步驟、預設前向保密、移除過時的加密套件），重連甚至 **0-RTT**（用之前的資訊直接帶資料）——這對網頁速度影響顯著。`openssl s_client` 是看 TLS 握手細節的工具（憑證鏈、加密套件、TLS 版本）——debug TLS 問題（憑證錯、版本不符、加密套件不相容）的核心。記住 TLS 1.3 是現代主流，1.0/1.1 已被淘汰（不安全），1.2 仍廣泛使用。
 
-**root CA 預先安裝**在你的 OS / 瀏覽器（幾百個）。
+## 憑證與 CA:信任鏈
 
-## 常見 CA
-
-| CA | 特點 |
-|---|---|
-| **Let's Encrypt** | 免費、自動化、最廣用 |
-| DigiCert | 商業，企業多 |
-| GlobalSign | 商業 |
-| Sectigo (前 Comodo) | 商業 |
-| Google Trust Services | Google 自家 |
-
-**Let's Encrypt 改變了世界** — 之前 SSL cert 一年幾千塊，現在免費。**現代 web 90% HTTPS** 因為它。
-
-## TLS 1.3 cipher suite
-
-cipher suite 規定用什麼算法：
+憑證和 CA 是「怎麼確認對方真的是該網站」的答案——這是防中間人的關鍵：
 
 ```
- TLS_AES_256_GCM_SHA384
- │   │      │   │
- │   │      │   └── HMAC（完整性）
- │   │      └────── mode（GCM = Galois/Counter Mode）
- │   └─────────── 對稱加密（AES-256）
- └───────────── TLS 版本
+憑證信任鏈（為什麼你能信任一個網站的憑證）：
+
+  問題：網站給你一個公鑰，你怎麼知道這公鑰真的是該網站的？
+        （中間人也能給你「他的」公鑰冒充網站）
+        │
+  解法：可信第三方（CA, Certificate Authority）背書
+        │
+  信任鏈：
+    根 CA（Root CA）—— 你的作業系統/瀏覽器「內建信任」的
+      ↓ 簽名
+    中間 CA（Intermediate CA）
+      ↓ 簽名
+    網站憑證（example.com，含網站公鑰）
+        │
+  驗證過程（你的瀏覽器做的）：
+    1. 網站給你它的憑證 + 中間 CA 憑證
+    2. 中間 CA 的簽名 ← 用根 CA 的公鑰驗證
+    3. 根 CA 在你的「信任清單」裡（OS/瀏覽器內建）→ 信任成立
+    4. 還檢查：域名對嗎、沒過期嗎、沒被撤銷嗎
+        │
+  → 信任的根基：你的 OS/瀏覽器內建了一組「可信根 CA」
+    任何由它們（或它們簽的中間 CA）簽發的憑證，你都信任
 ```
 
-TLS 1.3 cipher suite 只剩 5 個（vs 1.2 的數十個）。**簡化 = 少 bug**。
+```bash
+# 看憑證的信任鏈
+openssl s_client -connect example.com:443 -showcerts < /dev/null 2>&1 | grep -E 's:|i:'
+# s:CN=example.com           ← subject（憑證主體）
+# i:CN=...CA                  ← issuer（簽發者）
+#   一層層往上到根 CA
 
-## SNI（Server Name Indication）
+# 看憑證細節（有效期、域名、簽發者）
+echo | openssl s_client -connect example.com:443 2>/dev/null | openssl x509 -noout -text | grep -E 'Subject:|Issuer:|Not After|DNS:'
+# Subject: CN=example.com
+# Issuer: ... CA
+# Not After : ...           ← 過期時間
+# DNS:example.com, DNS:www.example.com   ← 憑證涵蓋的域名（SAN）
 
-問題：1 個 IP 跑多個 HTTPS domain，server 怎麼知道要回哪個 domain 的憑證？
-
-解：client 在 ClientHello 中**明文**告訴 server 「我要連 example.com」（SNI extension）。
-
-副作用：**ISP / 防火牆能看到你連哪個 domain**（雖然內容加密）。
-
-新解：**Encrypted ClientHello (ECH)** — 連 SNI 都加密。2024 年起逐漸部署。
-
-## HSTS
-
-「**這個 domain 永遠用 HTTPS**」 — server 回 header：
-
-```
-Strict-Transport-Security: max-age=31536000; includeSubDomains
+# 看你系統信任的根 CA
+ls /etc/ssl/certs/ | head    # 系統內建的可信 CA 憑證
 ```
 
-瀏覽器之後**一年內**對這 domain 的 `http://` request 自動轉 `https://`。
+> **憑證信任鏈的根基是「你的 OS/瀏覽器內建一組可信根 CA」——這是整個 web 信任的基礎，也是它的脆弱點**。當網站給你公鑰，你怎麼知道它真的是該網站的（而非中間人冒充）？靠 **CA（憑證頒發機構）背書**——CA 用它的私鑰**簽名**網站的憑證，你用 CA 的公鑰驗證簽名。信任鏈：根 CA（你的系統內建信任）→ 簽中間 CA → 簽網站憑證。你的瀏覽器驗證時，一層層往上驗到「內建信任的根 CA」，信任就成立。加上檢查域名匹配、未過期、未被撤銷。這個系統讓你能信任從沒見過的網站。**但它的脆弱點**：(1) 整個信任建立在「根 CA 不作惡、不被入侵」——如果一個 CA 被攻破（歷史上發生過，如 DigiNotar），攻擊者能簽發任何網站的假憑證；(2) 任何受信任的 CA 都能簽發任何域名的憑證（所以有 CT/Certificate Transparency 來監督）；(3) 公司/政府能在你的設備安裝自己的根 CA，從而能解密你的 HTTPS（企業內網監控、某些國家的做法）。**Let's Encrypt**（免費 CA，Ch 36）讓 HTTPS 普及——自動簽發、90 天有效、自動更新。理解信任鏈，你就懂了「憑證錯誤」警告的意義（信任鏈斷了，可能是中間人，也可能只是憑證過期/域名不符），以及為什麼**絕不要忽略憑證警告**（那可能是真的攻擊）。
 
-防止 SSL stripping 攻擊。
+## TLS 怎麼剋制中間人
 
-## 一個常見誤解：「HTTPS 防一切」
+```
+TLS 怎麼讓 ARP 欺騙（Ch 3）的中間人無效：
 
-**部分對**。HTTPS 提供：
+  攻擊者 ARP 欺騙成功，所有流量經過他（中間人）
+        │
+  但有 TLS：
+    1. 竊聽？ → 流量加密，看到的是亂碼（對稱加密）
+    2. 竄改？ → 改了會被發現（完整性校驗，MAC）
+    3. 冒充網站？ → 他沒有網站的私鑰，無法提供有效憑證
+       他能給「自己的」憑證，但：
+         - 沒有可信 CA 會簽「example.com」給攻擊者
+         - 他自簽的憑證 → 你的瀏覽器跳「憑證錯誤」警告
+        │
+  → TLS 讓中間人「看不到、改不了、冒充不了」
+    這就是為什麼即使在惡意 WiFi，HTTPS 仍安全
+    （前提：你「不要」忽略憑證警告！）
+        │
+  攻擊者唯一的機會：讓你忽略憑證警告，或在你設備裝假根 CA
+    → 所以「憑證警告」絕不能隨便點過
+```
 
-- 內容加密
-- 對方身份驗證
-- 完整性
+> **TLS 是 ARP 欺騙（Ch 3）中間人的剋星——這完成了 Ch 3 留下的「為什麼需要端到端加密」的論證**。回到 Ch 3 的 ARP 欺騙：攻擊者讓所有流量經過他（中間人）。但有了 TLS，他能做的有限：**竊聽**？流量加密，看到亂碼。**竄改**？TLS 有完整性校驗，改了會被發現（連線中斷）。**冒充網站**？他需要網站的私鑰才能提供有效憑證——而他沒有，沒有可信 CA 會簽「example.com」給他。他能給「自己的」自簽憑證，但你的瀏覽器會跳**憑證錯誤警告**（信任鏈驗證失敗）。所以 TLS 讓中間人「看不到、改不了、冒充不了」——這就是為什麼**即使在惡意公共 WiFi，HTTPS 仍然安全**。攻擊者唯一的機會是：(1) **騙你忽略憑證警告**（所以絕不要隨便點過憑證警告——那可能是真的攻擊）；(2) 在你的設備**安裝假的根 CA**（企業監控、惡意軟體會這樣做）。這完成了從 Ch 3 開始的論證：底層網路不可信（ARP 可欺騙、WiFi 可監聽），所以我們在上層用 TLS 做端到端加密——信任不放在網路，而放在密碼學和憑證系統。這是現代網路安全的核心思想。
 
-**HTTPS 不防**：
+## 故意弄壞:憑證錯誤的各種樣貌
 
-- DNS 查詢（你查什麼 domain 別人看得到，除非 DoH）
-- IP / 連線時間（traffic analysis）
-- SNI（看你連哪 domain，除非 ECH）
-- server 端的問題（server 被 hack 還是死）
+```bash
+# 各種憑證錯誤（理解「憑證警告」的不同原因）
 
-## 一個常見誤解：「自簽 cert 不安全」
+# 1. 自簽憑證（沒有可信 CA 簽 → 不被信任）
+curl https://self-signed.badssl.com/ 2>&1 | head -3
+# curl: (60) SSL certificate problem: self-signed certificate
+#   → 自簽 = 沒有可信 CA 背書（可能是測試，也可能是攻擊）
 
-**部分對**。自簽 cert 加密強度跟 CA 簽的一樣。問題在**驗證**：
+# 2. 過期憑證
+curl https://expired.badssl.com/ 2>&1 | head -3
+# curl: (60) SSL certificate problem: certificate has expired
+#   → 憑證過期（網站忘了更新，Let's Encrypt 自動更新就是防這個）
 
-- CA 簽的 → 瀏覽器自動信
-- 自簽 → 瀏覽器警告，要手動加例外
+# 3. 域名不符（憑證是給別的域名的）
+curl https://wrong.host.badssl.com/ 2>&1 | head -3
+# curl: (60) SSL: ... certificate subject name does not match
+#   → 憑證的域名和你連的不符（可能配置錯，也可能中間人用別的憑證）
 
-公網 server 用 CA 簽的（免費 Let's Encrypt）。內網 / 開發環境用自簽 OK。
+# 強制忽略（-k）—— 危險！只在測試時用
+curl -k https://self-signed.badssl.com/   # -k 跳過驗證（生產環境絕不要用）
 
-## 一個常見誤解：「TLS 1.3 完全相容 1.2」
+# badssl.com 提供各種 TLS 錯誤的測試站，值得逐一試
+```
 
-**部分對**。TLS 1.3 client 跟 1.2 server 能 fallback。但**老 client（IE 11、舊 Android）不支援 1.3**。
-
-server 通常開 1.2 + 1.3 雙支援。
-
-## 一個常見誤解：「憑證越貴越安全」
-
-**錯**。TLS 安全強度跟價錢無關。商業 CA 賣的「**EV（Extended Validation）**」憑證，瀏覽器以前顯示綠色公司名 — 但 2019 後瀏覽器移除了這 UI。
-
-EV 沒安全優勢，只是 marketing。**Let's Encrypt 的免費 cert 跟 1000 USD 的 EV 一樣安全**。
+> **憑證錯誤有多種原因，但都不該隨便忽略——`curl -k`（跳過驗證）在生產環境是大忌**。`badssl.com` 提供各種 TLS 錯誤的測試站，值得逐一體驗：**自簽憑證**（沒有可信 CA 背書——可能是內部測試，也可能是中間人攻擊）、**過期憑證**（網站忘了更新，這是 Let's Encrypt 自動更新要防的，Ch 36）、**域名不符**（憑證是給別的域名的——配置錯或中間人用了別的憑證）、**弱加密/過時 TLS 版本**等。每種錯誤都是信任鏈某環節斷裂的信號。`curl -k`（或 `--insecure`）跳過憑證驗證——**這在生產環境是嚴重的安全漏洞**（等於關掉 TLS 的身分驗證，中間人就能冒充），只該在「明知是自己的測試環境」時臨時用。同樣，瀏覽器的「繼續前往（不安全）」按鈕——除非你 100% 確定原因（如自己架的測試站用自簽憑證），否則不要點。理解這些憑證錯誤，你才能區分「真的攻擊」和「只是配置問題」，並知道正確的修法（更新憑證、修正域名、裝正確的 CA 鏈）而不是粗暴地 `-k` 繞過。這是 Ch 36 部署 HTTPS 時的重要知識。
 
 ## 動手練習
 
-**1. 看憑證**
+1. 看 TLS 握手：`openssl s_client -connect example.com:443`，找出 TLS 版本、加密套件、憑證鏈
 
-```bash
-openssl s_client -connect example.com:443 -servername example.com < /dev/null 2>/dev/null | openssl x509 -noout -text | head -30
-```
+2. 看憑證細節：用 openssl 看一個網站憑證的 Subject/Issuer/有效期/SAN（涵蓋的域名）
 
-**2. 看憑證鏈**
+3. 追信任鏈：`openssl s_client -showcerts`，看憑證一層層簽到根 CA
 
-```bash
-openssl s_client -connect example.com:443 -servername example.com -showcerts < /dev/null 2>/dev/null | grep "subject\|issuer"
-```
+4. 比較 TLS 版本：強制 `curl --tlsv1.2` vs `--tlsv1.3`，看握手差別
 
-**3. 看 cipher**
+5. 跑「故意弄壞」：逐一試 badssl.com 的各種錯誤站，理解每種憑證錯誤的原因
 
-```bash
-openssl s_client -connect example.com:443 -servername example.com < /dev/null 2>/dev/null | grep -E "Cipher|Protocol"
-```
+## 本章重點整理
 
-**4. 故意連過期 cert**
-
-```bash
-curl https://expired.badssl.com
-# error
-curl -k https://expired.badssl.com    # -k ignore cert
-```
-
-**5. tcpdump 看 TLS 握手**
-
-```bash
-sudo tcpdump -nn -i any 'host example.com and port 443' &
-curl https://example.com
-```
-
-看 ClientHello / ServerHello packet。
-
-**6. 測 server 支援的 TLS 版本**
-
-```bash
-nmap --script ssl-enum-ciphers -p 443 example.com
-```
+- TLS 在 TCP 上建立加密通道，解決機密性（加密）、完整性（防竄改）、身分驗證（憑證）三件事
+- 對稱加密快但要安全交換鑰匙；非對稱加密慢但能安全交換——TLS 用非對稱換對稱鑰匙、對稱傳資料
+- TLS 握手：ClientHello→ServerHello→憑證→驗證→鑰匙交換→加密通信；TLS 1.3 從 2-RTT 簡化到 1-RTT
+- 憑證信任鏈：根 CA（OS/瀏覽器內建信任）→中間 CA→網站憑證；驗證域名/有效期/簽名
+- TLS 剋制中間人（ARP 欺騙）：看不到（加密）、改不了（完整性）、冒充不了（無私鑰）——前提是不忽略憑證警告
 
 ## 自我檢核
 
-- [ ] 講得出 TLS 1.2 vs 1.3 的握手差異
-- [ ] 憑證鏈三層（server / intermediate / root）清楚
-- [ ] 知道 Let's Encrypt 為什麼改變了世界
-- [ ] SNI 是什麼、有什麼副作用
-- [ ] HSTS 防什麼
-- [ ] 用 openssl 看過憑證
+- [ ] 能解釋 TLS 用對稱和非對稱加密的分工，為什麼這樣組合
+- [ ] 能描述 TLS 握手流程，知道 TLS 1.3 為什麼比 1.2 快
+- [ ] 理解憑證信任鏈，知道信任的根基是內建的可信根 CA
+- [ ] 能解釋 TLS 為什麼剋制中間人，以及前提條件
+- [ ] 知道常見憑證錯誤的原因，為什麼不該隨便 `curl -k`
 
-下一章看 SSH 與其他應用層協定速覽。
+## 延伸閱讀
 
-→ [Ch 12 SSH 與其他應用層速覽](./12-ssh-and-others.md)
+### 必讀資源
+
+- **[The Illustrated TLS 1.3 Connection](https://tls13.xargs.org/)** — xargs
+  - **這篇說什麼**：逐 byte 圖解一次完整的 TLS 1.3 握手，每個欄位都標出來
+  - **讀哪裡**：整個（互動式）
+  - **為什麼值得讀**：把 TLS 握手講到 byte 級，是理解 TLS 內部最好的資源；本章握手的超詳細版
+
+### 書籍
+
+- **《Bulletproof TLS and PKI》** — Ivan Ristić（2nd ed）
+  - **讀哪幾章**：Ch 1-3（TLS 協定、PKI、憑證）
+  - **這本書的定位**：TLS/PKI 的權威巨著，把憑證、CA、信任鏈講到極致
+  - **前提**：本章
+
+### 文章
+
+- **[How HTTPS works (comic)](https://howhttps.works/)** — DNSimple
+  - **這篇說什麼**：用漫畫講 HTTPS/TLS，極易懂
+  - **為什麼值得讀**：TLS 概念的最友善入門，配本章的技術細節
+
+### 官方文件
+
+- **[RFC 8446 — TLS 1.3](https://www.rfc-editor.org/rfc/rfc8446)** — IETF
+  - **讀哪裡**：Section 2（握手協定概覽）
+  - **為什麼值得讀**：TLS 1.3 的權威定義；理解現代 TLS 的設計決策
+
+下一章看 SSH 和其他協定——SSH 怎麼用類似的加密原理做安全遠端登入（Part 8 VPS 管理的基礎），以及其他常見應用層協定速覽。
+
+→ [Ch 12 SSH 與其他協定](./12-ssh-and-others.md)

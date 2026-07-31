@@ -1,293 +1,227 @@
 # Ch 30 — V2Ray / Xray
 
-> 目標：認識 V2Ray / Xray 平台、4 大 protocol（VMess / VLESS / Trojan / Shadowsocks），知道現代翻牆生態。
+> **目標**：理解 V2Ray/Xray 的技術原理——它怎麼從 Shadowsocks 的「無特徵」進化到「主動偽裝成正常 HTTPS」、核心協定（VMess/VLESS）、傳輸偽裝（WebSocket+TLS、gRPC、REALITY）、為什麼「混在真實 HTTPS 流量裡」更難封鎖。這是反審查技術的當前巔峰，把 TLS（Ch 11）/HTTP（Ch 10）/流量分析的知識推到極致。**本章以理解審查對抗的技術原理為教育目的**，使用須遵守當地法律。
 
-## V2Ray 是什麼
+> **環境**：技術原理為主。延續 Ch 29 的倫理框架。
 
-2015 年起的「**proxy 平台**」，比 SS 更強：
+## 為什麼從 Shadowsocks 進化到 V2Ray？
 
-- 多 protocol 支援
-- 多 transport 支援（TCP / WebSocket / HTTP/2 / QUIC）
-- 路由規則複雜
-- 統計 / 監控
-- 可串接（chain）
+Ch 29 說 Shadowsocks 的「無特徵」（看起來隨機）在「滿是 HTTPS 的網路」裡反而可能異常——「太隨機」本身是線索。V2Ray/Xray 的核心進化是策略轉變：**不追求「什麼都不像」，而是「像最普通的 HTTPS」**——把代理流量包進真實的 TLS，混在大量正常的 HTTPS 流量中，讓審查者難以區分「這是翻牆還是有人在逛網站」。
 
-「**Shadowsocks 替代品**」。GFW 對 SS 識別好後，V2Ray 上位。
+V2Ray（後來的 Xray 是其高效能分支）是一個「模組化的代理平台」——它不只是一個工具，而是一個框架，能組合各種協定和傳輸方式。理解它讓你看到反審查技術的當前巔峰，以及「流量偽裝」的攻防本質。這也是 TLS/HTTP 知識的極致應用——它把代理藏在你每天用的 HTTPS 裡。
 
-## Xray 是什麼
-
-V2Ray 的 fork（2020 年起），由 RPRX 主導。原因：
-
-- V2Ray 開發節奏慢
-- Xray 加新 protocol（VLESS, XTLS）更積極
-
-**現代翻牆界 Xray 用得比 V2Ray 多**。配置高度相容（同設計）。
-
-## 4 大 protocol
-
-| Protocol | 特徵 | 對抗 GFW |
-|---|---|---|
-| **VMess** | V2Ray 自家加密 | 已被識別，不推 |
-| **VLESS** | 無加密 + UUID 認證 | 配 TLS 用，現代主流 |
-| **Trojan** | 偽裝 HTTPS | 強 |
-| **Shadowsocks** | 同 SS | 中-弱 |
-
-### VMess（過時）
-
-V2Ray 自家「加密 proxy」。問題：
-
-- 流量有特徵（被 GFW 識別）
-- 加密 overhead
-
-**已不推薦新部署**。
-
-### VLESS（現代主流）
-
-「**沒加密**」的傳輸 + UUID 身份驗證 — 看似 insecure，但**搭配 TLS 用**：
+## 先建立直覺:藏在人群裡 vs 隱形
 
 ```
- client ─── VLESS over TLS ──── server
-                ↑
-              加密由 TLS 提供
-              VLESS 只負責 routing
+Shadowsocks vs V2Ray 的策略差異：
+
+  Shadowsocks：「隱形」（無特徵）
+    流量看起來像隨機 bytes，不像任何已知協定
+    問題：在「大家都用 HTTPS」的網路裡，「隨機流量」反而顯眼
+        │
+  V2Ray：「藏在人群裡」（偽裝成 HTTPS）
+    流量看起來「就是一個正常的 HTTPS 連線」
+    甚至連到一個「真的網站」（前面是真網站，後面藏代理）
+    → 審查者看到的是「有人在連某個 HTTPS 網站」（太正常了）
+    → 要封它，得封掉所有 HTTPS（不可能）
+        │
+  類比：
+    Shadowsocks = 穿隱形衣（但隱形衣本身在人群中是異常）
+    V2Ray = 穿得和路人一模一樣（混在人群裡找不出來）
+        │
+  → V2Ray 的偽裝讓代理流量和「正常上網」無法區分
+    這是反審查的策略升級
 ```
 
-優點：
+關鍵心智：Shadowsocks 求「隱形」（無特徵，但在 HTTPS 海洋中「隨機」反而異常），V2Ray 求「藏在人群裡」（偽裝成最普通的 HTTPS，甚至連到真網站）。審查者看到 V2Ray 流量只覺得「有人在連某個 HTTPS 網站」——太正常了，要封它得封掉所有 HTTPS（不可能）。這是從「隱形」到「擬態」的策略升級。
 
-- 設計簡單
-- TLS 處理加密 → 看起來像 HTTPS
-- **支援 XTLS Vision / Reality** — 進階偽裝
+> V2Ray 把代理藏在 TLS（Ch 11）裡，偽裝成 HTTPS（Ch 10）。它是 Ch 29 Shadowsocks 的演進。如果對 TLS/HTTPS 不熟，回看 [Ch 11](./11-tls-https.md)。本章延續 Ch 29 的教育框架——理解技術原理，遵守當地法律。
 
-VLESS 是 2024-2025 翻牆主力。
-
-### Trojan
-
-直接用 TLS，連 VLESS layer 都沒。
+## V2Ray 的核心:協定與傳輸分離
 
 ```
- client ─── Trojan over TLS ──── server
-                ↑
-            完全偽裝 HTTPS server
+V2Ray 的模組化設計（協定 × 傳輸）：
+
+  V2Ray 把「代理」拆成兩層，可自由組合：
+        │
+  1. 協定層（怎麼代理）：
+     VMess（V2Ray 原創，有時間戳驗證）
+     VLESS（更輕量，無加密自帶，靠傳輸層的 TLS）
+     （也支援 Shadowsocks、Trojan 等）
+        │
+  2. 傳輸層（怎麼傳輸/偽裝）：
+     TCP / WebSocket / gRPC / HTTP/2 / QUIC
+     + TLS（關鍵：包一層 TLS 偽裝成 HTTPS）
+        │
+  常見組合（偽裝成 HTTPS）：
+    VLESS + WebSocket + TLS：
+      看起來像「WebSocket over HTTPS」（正常的即時通訊）
+    VLESS + gRPC + TLS：
+      看起來像「gRPC over HTTPS」（正常的 API 呼叫）
+        │
+  → 協定和傳輸分離 = 能組合出各種偽裝
+    核心都是「包一層 TLS，看起來像正常 HTTPS」
 ```
 
-從外觀看，**100% 是 HTTPS server**。沒辦法區分。
+```
+V2Ray 偽裝成 HTTPS 的運作（VLESS+WS+TLS）：
 
-「最強的偽裝」 = 跟真實 HTTPS server 共存（同 nginx 同 IP）。
-
-### Shadowsocks
-
-V2Ray / Xray 也支援 SS protocol（向下相容）。
-
-## Reality（最新）
-
-XTLS Reality 是 2023 年的新 protocol：
-
-- **不需要自己 cert**
-- 用「真實大公司 server 的 cert」做 TLS handshake（如 Apple / Cloudflare 的 cert）
-- 流量看起來是「**連 Apple**」
-
-對抗 GFW 的最新利器。**配置複雜，但成效驚人**。
-
-## 設定 Xray-VLESS-TLS（典型現代配置）
-
-### 前置：domain + cert
-
-需要：
-
-- 一個 domain（如 `vpn.yourdomain.com`）
-- DNS A record 指向 VPS
-- TLS cert（Let's Encrypt 免費）
-
-### Server 配置
-
-```bash
-# 安裝 Xray
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-
-# /usr/local/etc/xray/config.json
-{
-  "log": {
-    "loglevel": "warning"
-  },
-  "inbounds": [
-    {
-      "port": 443,
-      "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "your-uuid-here",
-            "flow": ""
-          }
-        ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "certificates": [
-            {
-              "certificateFile": "/etc/letsencrypt/live/vpn.yourdomain.com/fullchain.pem",
-              "keyFile": "/etc/letsencrypt/live/vpn.yourdomain.com/privkey.pem"
-            }
-          ]
-        }
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "protocol": "freedom"
-    }
-  ]
-}
+  你的流量 → V2Ray client
+    → 包成 WebSocket（Ch 12）
+    → 包進 TLS（Ch 11，真的 TLS 憑證！）
+    → 送到 V2Ray server（在一個「真網站」後面）
+        │
+  審查者看到：
+    一個正常的 HTTPS 連線到某網站
+    TLS 握手正常（真憑證）、流量是加密的 HTTPS
+    → 和「正常訪問那個網站」完全一樣，無法區分
+        │
+  server 端：
+    nginx（reverse proxy，Ch 28/36）在前面
+    正常路徑 → 顯示真網站（騙審查者的主動探測）
+    特定路徑（如 /secret-ws）→ 轉給 V2Ray（真正的代理）
+        │
+  → 前面是真網站、後面藏代理 = 「域名前置」/「回落」
+    主動探測連它 → 看到真網站（探測不出代理）
 ```
 
-UUID 用 `xray uuid` 生成。
+> **V2Ray 的「協定 × 傳輸分離」+「TLS 偽裝」讓代理流量和正常 HTTPS 無法區分——甚至前面放真網站騙主動探測**。V2Ray 的模組化是關鍵——**協定層**（VMess/VLESS，怎麼代理）和**傳輸層**（TCP/WebSocket/gRPC + TLS，怎麼傳輸偽裝）分離，能自由組合。最強的組合是 **VLESS + WebSocket + TLS**——你的流量包成 WebSocket（Ch 12，正常的即時通訊協定）再包進**真的 TLS**（Ch 11，用真憑證），送到藏在「真網站」後面的 server。審查者看到的是「一個正常的 HTTPS 連線到某網站」——TLS 握手正常、憑證真實、流量是加密 HTTPS，**和正常訪問那個網站完全一樣，無法區分**。更巧妙的是 **server 端用 nginx（reverse proxy，Ch 28/36）做「回落」**——正常路徑顯示真網站（騙過審查者的主動探測，Ch 29——探測者連它只看到真網站，看不出代理），只有特定密路徑（如 `/secret-ws`）才轉給 V2Ray。這就是「前面真網站、後面藏代理」的設計。要封這種流量，審查者得「封掉所有連到該網站的 HTTPS」——但那個網站看起來完全正常，封了會誤傷正常用戶。這是 V2Ray 偽裝的威力：**讓代理流量寄生在正常 HTTPS 生態裡**。理解這個，你看到 TLS/HTTP/WebSocket/reverse proxy 的知識怎麼被組合成精巧的偽裝。
 
-啟動：
-
-```bash
-sudo systemctl restart xray
-sudo systemctl status xray
-```
-
-### Client 配置
-
-各種 GUI client：
-
-- **v2rayN**（Windows）
-- **Shadowrocket / Quantumult X**（iOS，付費）
-- **v2rayNG**（Android）
-- **Qv2ray**（跨平台）
-
-設定：
+## REALITY:最新的偽裝技術
 
 ```
-Protocol: VLESS
-Address: vpn.yourdomain.com
-Port: 443
-UUID: <your-uuid>
-Network: tcp
-Security: tls
-SNI: vpn.yourdomain.com
+REALITY（Xray 的創新，偽裝的新高度）：
+
+  傳統 TLS 偽裝（VLESS+TLS）的弱點：
+    你要有一個「自己的域名 + 憑證」
+    審查者能分析這個域名的 TLS 特徵
+    （憑證、TLS 指紋可能露餡）
+        │
+  REALITY 的創新：
+    「借用」一個真實的大網站的 TLS 握手
+    你的 client 連 server 時，TLS 握手「看起來」
+    像在連某個真實的大網站（如 microsoft.com）
+    → 借用它的 TLS 指紋和憑證特徵
+    → 審查者以為你在連那個大網站
+        │
+  → REALITY 不用自己的憑證，借用真網站的「門面」
+    讓 TLS 握手和真連那個網站「指紋一致」
+    這是偽裝技術的最新一步（2023+）
+        │
+  反審查的軍備競賽持續：
+    Shadowsocks（無特徵）→ V2Ray（偽裝HTTPS）→ REALITY（借真網站門面）
 ```
 
-## 路由規則（V2Ray / Xray 強項）
+> **REALITY 是偽裝技術的最新一步——它「借用」真實大網站的 TLS 門面，連憑證和指紋都一致**。傳統的 TLS 偽裝（VLESS+TLS）有個弱點：你需要**自己的域名和憑證**，而審查者能分析這個域名的 TLS 特徵（憑證細節、TLS 指紋、SNI），可能露餡（如「這個小域名怎麼這麼多流量」）。**REALITY**（Xray 2023 的創新）解決了這個——它讓你的 TLS 握手「**借用**」一個真實大網站（如 microsoft.com 等）的門面：client 連 server 時，TLS 握手的指紋、憑證特徵都「看起來像在連那個大網站」，審查者以為你在連 microsoft（一個沒人會封的大站）。它不用你自己的憑證，而是借用真網站的「TLS 門面」，做到指紋一致。這是「藏在人群裡」的極致——不只偽裝成 HTTPS，而是偽裝成「連一個具體的、沒人會封的大網站」。這展示了反審查的**持續軍備競賽**：Shadowsocks（無特徵）→ V2Ray/TLS（偽裝成 HTTPS）→ REALITY（借真網站門面）。每一步都是對審查者新識別手段的回應。理解這個演進，你看到 TLS 指紋、SNI、憑證這些 Ch 11 的細節怎麼成為攻防的戰場。這也說明流量分析和反分析是個沒有終點的領域——只要審查存在，技術就會持續演進。但要記住本課的框架：理解這些技術原理是為了理解網路、隱私、和流量分析的深度，實際使用須遵守當地法律。
 
-可以設「**哪些 traffic 走 proxy、哪些直連**」：
+## 複雜度的代價
 
-```json
-{
-  "routing": {
-    "rules": [
-      {
-        "type": "field",
-        "domain": ["geosite:cn"],
-        "outboundTag": "direct"
-      },
-      {
-        "type": "field",
-        "ip": ["geoip:cn"],
-        "outboundTag": "direct"
-      },
-      {
-        "type": "field",
-        "outboundTag": "proxy",
-        "network": "tcp,udp"
-      }
-    ]
-  }
-}
+```
+V2Ray/Xray 的代價（強大但複雜）：
+
+  1. 設定極複雜：
+     協定 + 傳輸 + TLS + 偽裝 + 回落 + nginx...
+     JSON 設定動輒上百行（對比 Shadowsocks 幾行）
+        │
+  2. 需要更多基礎設施：
+     一個域名、一個真憑證、一個真網站當門面、nginx...
+        │
+  3. 維護成本高：
+     要跟上協定演進（VMess→VLESS→REALITY）
+        │
+  4. 過度工程的風險：
+     對「沒那麼嚴格的審查」，Shadowsocks 就夠
+     V2Ray 的複雜可能是過度的
+        │
+  → V2Ray 強大但複雜，是「最嚴格審查」的解法
+    一般情況 Shadowsocks 或 WireGuard 更簡單夠用
+    （呼應 Ch 24/27 的「簡單是美德」）
 ```
 
-中國 domain / IP 直連，其他走 proxy。**「智能分流」標準配置**。
+> **V2Ray/Xray 強大但極複雜——這呼應了 Ch 24「簡單是美德」，提醒「別過度工程」**。V2Ray 的能力（多協定、多傳輸、TLS 偽裝、回落、REALITY）來自巨大的複雜性——設定動輒上百行 JSON（對比 Shadowsocks 幾行、WireGuard 幾行），需要域名+真憑證+真網站門面+nginx 等基礎設施，且要持續跟上協定演進（VMess→VLESS→REALITY 的更迭）。這個複雜是有代價的：難設定、難維護、易出錯。**關鍵判斷**：V2Ray 是「最嚴格審查環境」的解法——當 Shadowsocks 都被識別封鎖時，V2Ray 的深度偽裝才有必要。對「沒那麼嚴格的審查」或一般的隱私需求，**Shadowsocks（Ch 29）或 WireGuard（Ch 24）更簡單夠用**——用 V2Ray 是過度工程。這呼應了 Ch 24/27 反覆強調的「簡單是美德」——不要因為一個工具「最強」就用它，要看實際需求。技術選擇的智慧在於「用剛好夠的複雜度」。理解 V2Ray 的強大和它的代價，你才能在「需要它的場景」用它、在「不需要的場景」選更簡單的。這也是整個 Part 6-7 的一個主題：從 WireGuard（簡單）到 Shadowsocks（無特徵）到 V2Ray（深度偽裝），複雜度隨「對抗審查的強度需求」遞增——你的需求決定你該停在哪一級。
 
-## 一個常見誤解：「VLESS 不加密就不安全」
+## 故意弄壞:理解偽裝的攻防邊界
 
-**錯**。VLESS 自身不加密，但**配 TLS 用**就有加密。
+```
+偽裝的攻防邊界（理解技術的極限，教育目的）：
 
-「**TLS 處理加密、VLESS 處理路由 / 認證**」是現代設計哲學 — 一個 protocol 做一件事。
+  V2Ray 的偽裝再強，仍有理論上的攻擊面：
+        │
+  1. 流量行為分析：
+     即使偽裝成 HTTPS，「翻牆的流量模式」可能不同
+     （持續大流量、特定的時序、雙向對稱...）
+     → 機器學習可能從「行為」而非「特徵」識別
+        │
+  2. 主動探測的進階：
+     審查者連你的「門面網站」，測試各種路徑/行為
+     → REALITY 等用「借真網站門面」對抗
+        │
+  3. 全面封鎖的代價：
+     審查者最終能「白名單」（只允許已知的安全網站）
+     → 但這會嚴重影響正常網路（經濟代價）
+        │
+  → 偽裝的本質是「提高審查的成本」
+    讓「封鎖代理」的代價（誤傷正常流量）高到不值得
+    這是攻防的經濟學，不是絕對的「無法封鎖」
+        │
+  → 理解這個邊界：沒有絕對隱形，只有「成本/效益」的攻防
+```
 
-## 一個常見誤解：「翻牆工具排隊：SS → SSR → V2Ray → Trojan → ...」
-
-**部分對**。新工具不一定取代舊：
-
-- SS 還能用（弱場景）
-- V2Ray 還流行
-- Trojan 強但不適合所有場景
-- Reality 最新但配置複雜
-
-「**多備幾個工具**」是翻牆老手的策略。
-
-## 一個常見誤解：「翻牆工具越多越安全」
-
-**錯**。**一個專注配置的工具** > **多個半設好的工具**。
-
-每個翻牆工具都需要：
-
-- 強 password / UUID
-- Server 安全配置（fail2ban, firewall）
-- 定期更新
-
-選 1-2 個用熟比 5 個都半生不熟好。
-
-## 一個常見誤解：「翻牆對網路安全不影響」
-
-**錯**。多數翻牆工具：
-
-- 開了端口暴露 server
-- 流量都過 VPS（第三方）
-- VPS provider 可能 log
-
-「**翻牆 = 信任 VPS provider 跟 protocol**」。
+> **偽裝的本質是「提高審查成本到不值得」，不是「絕對無法封鎖」——這是理解反審查的關鍵認知**。即使 V2Ray/REALITY 偽裝再強，仍有理論攻擊面：(1) **流量行為分析**——即使偽裝成 HTTPS，「翻牆的流量行為」（持續大流量、特定時序、雙向對稱性）可能和「正常瀏覽」不同，機器學習可能從**行為**（而非協定特徵）識別；(2) **主動探測進階**——審查者深度測試你的門面網站，REALITY 用「借真網站門面」對抗；(3) **終極手段是白名單**——審查者理論上能「只允許已知安全網站」（封掉其他一切），但這會嚴重損害正常網路和經濟（巨大代價）。所以**偽裝的本質是攻防經濟學**——不是讓流量「絕對無法被封」，而是讓「封鎖它的代價」（誤傷大量正常 HTTPS 流量、損害經濟）**高到審查者不值得**。這是個重要的認知：**沒有絕對的隱形，只有成本/效益的動態平衡**。審查者和反審查者都在計算成本——審查者權衡「封鎖的徹底性 vs 對正常網路的損害」，反審查者權衡「偽裝的強度 vs 複雜度」。理解這個「攻防經濟學」框架，你就不會有「某工具絕對安全」的錯覺，也理解為什麼這是個持續演進、沒有終局的領域。這對資安/隱私工程師是重要的思維方式——安全不是絕對的，是成本的博弈。再次強調本課框架：理解這些技術和攻防原理是教育目的，培養對網路、隱私、流量分析的深度理解，實際行為須遵守當地法律。
 
 ## 動手練習
 
-**1. 自架 Xray + VLESS + TLS**
+1. 理解策略差異：說明 Shadowsocks（隱形）和 V2Ray（藏人群裡）的策略區別
 
-要：
+2. 理解模組化：畫出 V2Ray 的協定層 × 傳輸層，說出 VLESS+WS+TLS 怎麼偽裝成 HTTPS
 
-- domain
-- VPS  
-- Let's Encrypt cert（Ch 36 詳細）
+3. 理解回落：解釋「前面真網站、後面藏代理」怎麼騙過主動探測（Ch 29）
 
-按本章流程，連得上 = 成功。
+4. 理解 REALITY：說明它怎麼「借用真網站門面」，比傳統 TLS 偽裝強在哪
 
-**2. 測連線**
+5. 理解攻防經濟學：說明「偽裝是提高審查成本」而非「絕對無法封鎖」的意義
 
-```bash
-# 連到 Xray-managed proxy
-curl --socks5 127.0.0.1:10808 ifconfig.me   # GUI client 預設 local port
-```
+## 本章重點整理
 
-**3. 看 traffic 像 HTTPS**
-
-```bash
-# 在 server
-sudo tcpdump -nn -i any -X 'port 443' -c 5
-```
-
-看 packet — 應該全是 TLS handshake / encrypted。**跟真 HTTPS 不可區分**。
-
-**4. 路由分流**
-
-設 routing rules，讓 google.com 走 proxy、example.com 直連。`curl ifconfig.me` 跟 `curl ifconfig.me --socks5 ...` 應該不同 IP。
-
-**5. 對比 V2Ray / Xray / Trojan**
-
-各設一份，相同 condition 跑 throughput 測試。看誰最快、誰最隱蔽。
+- V2Ray 策略：從 Shadowsocks 的「隱形」（無特徵）到「藏人群裡」（偽裝成正常 HTTPS）
+- 模組化：協定層（VMess/VLESS）× 傳輸層（TCP/WS/gRPC + TLS）自由組合；核心是包一層 TLS 偽裝成 HTTPS
+- VLESS+WS+TLS + nginx 回落：前面真網站、後面藏代理，主動探測只看到真網站
+- REALITY（Xray 2023）：借用真實大網站的 TLS 門面，連指紋憑證都一致——偽裝最新高度
+- 複雜度代價：V2Ray 強大但極複雜，是最嚴格審查的解法；一般用 Shadowsocks/WireGuard（簡單是美德）
+- 攻防經濟學：偽裝是「提高審查成本到不值得」，非「絕對無法封鎖」——沒有絕對隱形
 
 ## 自我檢核
 
-- [ ] 知道 V2Ray / Xray 是 proxy 平台
-- [ ] VMess / VLESS / Trojan / SS 4 種 protocol 對比
-- [ ] 知道 VLESS + TLS 是現代主流
-- [ ] Reality 是最新對抗 GFW 利器
-- [ ] 自架過 Xray VLESS（如果在乎翻牆）
-- [ ] 知道路由規則（geoip 分流）
+- [ ] 能解釋 V2Ray 和 Shadowsocks 的策略差異（偽裝 vs 隱形）
+- [ ] 理解 V2Ray 的協定×傳輸分離，以及 VLESS+WS+TLS 的偽裝
+- [ ] 知道「回落」怎麼用真網站騙主動探測
+- [ ] 理解 REALITY 的創新（借真網站門面）
+- [ ] 理解「偽裝是提高審查成本」的攻防經濟學，沒有絕對隱形
 
-下一章看 GFW 對抗演進史 — 為什麼工具一直在進化。
+## 延伸閱讀
 
-→ [Ch 31 GFW 對抗演進史](./31-gfw-evolution.md)
+### 技術文件
+
+- **[Project X (Xray) 官方文件](https://xtls.github.io/)** — Xray
+  - **讀哪裡**：VLESS、REALITY 的設計說明
+  - **為什麼值得讀**：Xray/REALITY 的權威技術文件
+  - **注意**：技術理解用，使用須遵守當地法律
+
+### 學術
+
+- **[How Great is the Great Firewall? Measuring China's DNS Censorship](https://www.usenix.org/conference/usenixsecurity21/presentation/hoang)** — USENIX Security 2021
+  - **核心貢獻**：學術測量 GFW 的審查能力和手段
+  - **為什麼值得讀**：理解審查者的真實能力（攻防的另一方）
+
+- **[GFW Report](https://gfw.report/)** — 審查研究社群
+  - **這篇說什麼**：持續追蹤審查技術和反審查的攻防
+  - **為什麼值得讀**：理解這場攻防的最新進展，學術嚴謹
+
+### 思考框架
+
+- **[The Economics of Censorship Resistance]** — 各種審查經濟學分析
+  - **為什麼值得讀**：理解「攻防是成本博弈」的框架，本章最後一節的延伸
+
+下一章是 Part 7 的總結——GFW 的演進史，把審查 vs 反審查的二十年攻防串成一個完整的歷史脈絡，這是本課最獨特的部分。
+
+→ [Ch 31 GFW 演進史與對抗](./31-gfw-evolution.md)

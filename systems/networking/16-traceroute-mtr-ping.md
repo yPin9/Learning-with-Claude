@@ -1,300 +1,190 @@
 # Ch 16 — traceroute / mtr / ping
 
-> 目標：精通網路路徑診斷工具，能找出延遲、丟包、路由問題在哪一跳。
+> **目標**：掌握路徑與連通診斷工具——ping（測連通與延遲）、traceroute（看封包經過哪些路由器，Ch 4 的 TTL 妙用）、mtr（traceroute + ping 的即時版，找丟包點）。Ch 4 講了 TTL/ICMP 原理，這章把它落到「怎麼診斷網路慢、丟包、不通在哪一段」。這些是 debug「連線品質問題」的核心工具。
 
-## ping：最簡單但最常用
+> **環境**：Linux（ping/traceroute/mtr）。部分需 root 或特定權限。
 
-測「對方 alive 嗎、RTT 多少」。Ch 4 講過 ICMP 的原理。
+## 為什麼需要路徑診斷工具？
+
+「網站很慢」「連線時好時壞」「某個服務連不上」——這些問題往往不在你的機器，而在**中間的某段網路**。封包要經過十幾個路由器才到目標（Ch 4 的逐跳轉送），任何一段出問題（某路由器壅塞、某段線路丟包）都會影響你，但你看不到是哪一段。
+
+ping/traceroute/mtr 讓你看到路徑——ping 測「能不能通、多快」，traceroute 看「經過哪些路由器」，mtr 持續監測「哪一跳在丟包」。它們把 Ch 4 的 TTL/ICMP 原理變成診斷工具。當問題在網路中間時，這些是唯一能定位「問題在哪一段」的工具。
+
+## ping:測連通與延遲
 
 ```bash
+# 基本：測連通和延遲（RTT）
 ping example.com
-ping -c 5 example.com           # 送 5 個就停
-ping -c 5 -i 0.2 example.com   # 0.2 秒一個（fast）
-ping -c 5 -s 1500 example.com  # 大 packet
-ping -c 5 -t 1 example.com     # TTL=1
-ping -c 5 -W 2 example.com     # timeout 2 秒
-ping -c 5 -I eth0 example.com  # 指定 source interface
+# 64 bytes from 93.184.216.34: icmp_seq=1 ttl=56 time=12.3 ms
+#   icmp_seq：序號（看有沒有丟包，序號跳號 = 丟了）
+#   ttl=56：回來的 TTL（Ch 4，反推經過幾跳）
+#   time=12.3 ms：往返時間（RTT，延遲）
+
+# 常用選項
+ping -c 4 example.com            # 送 4 個就停（-c count）
+ping -i 0.2 example.com          # 每 0.2 秒一個（-i interval，更密集）
+ping -s 1472 example.com         # 指定封包大小（測 MTU，Ch 4）
+ping -M do -s 1472 example.com   # 禁止分片（找 path MTU，Ch 4）
+ping6 example.com                # IPv6 ping
+
+# 看統計（Ctrl-C 後）
+# 4 packets transmitted, 4 received, 0% packet loss   ← 丟包率！
+# rtt min/avg/max/mdev = 11.8/12.3/13.1/0.5 ms        ← 延遲統計
+#   mdev（抖動 jitter）大 = 延遲不穩定（影響即時應用）
 ```
 
-輸出：
+> **ping 的三個關鍵指標：丟包率、RTT（延遲）、mdev（抖動）——它們各指向不同的網路問題**。**丟包率**（packet loss）：0% 正常，持續丟包代表線路品質差或壅塞（即使能連，體驗也差）。**RTT**（往返延遲）：同國通常 <50ms、跨國 100-300ms——RTT 高影響所有互動（網頁、SSH、遊戲）。**mdev/抖動**（jitter）：延遲的波動，抖動大代表網路不穩定，對即時應用（語音/視訊/遊戲）特別有害（即使平均延遲低，忽快忽慢也卡）。記住 ping 用 ICMP（Ch 4），而**很多伺服器/防火牆擋 ICMP**（Ch 4）——所以 **ping 不通不代表服務掛了**（可能只是 ICMP 被擋，TCP 服務正常），要用 `nc`/`curl` 測實際服務（Ch 17）。`ping -M do -s <大小>` 測 path MTU（Ch 4 的 MTU 黑洞 debug）。ping 是最基本的「機器活著嗎、網路通嗎、多快」的工具，但記住它的 ICMP 限制。
 
-```
-PING example.com (93.184.216.34) 56(84) bytes of data.
-64 bytes from 93.184.216.34: icmp_seq=1 ttl=49 time=180 ms
-64 bytes from 93.184.216.34: icmp_seq=2 ttl=49 time=181 ms
-64 bytes from 93.184.216.34: icmp_seq=3 ttl=49 time=180 ms
-
---- example.com ping statistics ---
-3 packets transmitted, 3 received, 0% packet loss, time 2003ms
-rtt min/avg/max/mdev = 180.0/180.3/181.0/0.4 ms
-```
-
-關鍵：
-
-- `time=180 ms` — RTT
-- `ttl=49` — server 預設 TTL 64，扣到 49 = 經過 15 跳
-- `0% packet loss` — 沒丟
-- `mdev=0.4` — 標準差（穩定）
-
-## ping 不到 ≠ 對方掛了
-
-可能：
-
-- 對方 firewall 擋 ICMP（很多公司 server 擋）
-- 中間 router 限速 ICMP
-- IPv4 vs IPv6 問題（用 `ping6` 確認）
-
-只能說「**ICMP echo 不通**」，不能說「**TCP / UDP 也不通**」。
+## traceroute:看封包的路徑
 
 ```bash
-# 試 TCP
-nc -zv example.com 443
-# 或 curl
-curl -I https://example.com
-```
-
-## traceroute
-
-「**packet 經過哪些 router**」 — 利用 TTL trick：
-
-1. 送 TTL=1 的 packet → 第 1 跳路由器 TTL 用完 → 回 ICMP TIME EXCEEDED → 知道第 1 跳是誰
-2. 送 TTL=2 → 第 2 跳回 → 知道第 2 跳
-3. ...
-4. 直到送到目的地（回 ICMP ECHO REPLY 或 ICMP DEST UNREACHABLE）
-
-```bash
+# traceroute：看封包經過哪些路由器（Ch 4 的 TTL 妙用）
 traceroute example.com
-traceroute -n example.com           # 不解 DNS（快很多）
-traceroute -I example.com           # 用 ICMP（預設 UDP）
-traceroute -T -p 443 example.com    # 用 TCP SYN（穿過某些 firewall）
-traceroute -m 30 example.com        # 最多 30 跳
+#  1  192.168.1.1 (router)        1.2 ms      ← 第 1 跳：你的路由器
+#  2  10.x.x.x (ISP)              5.3 ms      ← 第 2 跳：ISP
+#  3  ...                         12.1 ms
+#  ...
+#  12 93.184.216.34               45.2 ms     ← 到達目標
+#   每一行是一跳（一個路由器），顯示它的 IP 和延遲
+
+# 怎麼運作（Ch 4）：送 TTL=1,2,3... 的封包
+#   TTL=1 → 第 1 個路由器回 ICMP「TTL exceeded」（暴露它的 IP）
+#   TTL=2 → 第 2 個路由器回應... 逐步點亮路徑
+
+# 選項
+traceroute -n example.com        # 不解析域名（-n，快）
+traceroute -I example.com        # 用 ICMP（預設用 UDP，有些路徑要 -I）
+traceroute -T -p 443 example.com # 用 TCP SYN 到 443（繞過擋 UDP/ICMP 的防火牆）
+
+# 讀 traceroute：
+#  * * *  → 那一跳沒回應（路由器不回 ICMP，或防火牆擋）—— 常見，不一定是問題
+#  延遲突然暴增 → 那一段可能壅塞或繞遠路
+#  停在某跳之後全是 * → 可能那裡斷了（但也可能只是後面都不回 ICMP）
 ```
 
-輸出：
+> **traceroute 用 Ch 4 的 TTL 妙用「點亮」路徑，但讀它要小心——`* * *` 不一定是問題**。traceroute 送遞增 TTL 的封包（TTL=1,2,3…），每個路由器在 TTL 用完時回 ICMP「TTL exceeded」暴露自己的 IP，從而「點亮」整條路徑（Ch 4）。讀 traceroute 的陷阱：**`* * *`（某跳沒回應）很常見且不一定是問題**——很多路由器設定「不回 ICMP TTL exceeded」（安全/效能考量），所以那一跳顯示 `*`，但封包**還是穿過了它**（後面的跳有回應就證明）。只有「某跳之後**全部**都是 `*` 直到結束」才可能是真的斷在那裡（但也可能只是後面的路由器都不回 ICMP）。**延遲突然暴增**的那一跳可能是壅塞點或繞遠路（如封包繞到國外再回來）。注意 traceroute 預設用 UDP（有些防火牆擋），`-I`（ICMP）或 `-T -p 443`（TCP SYN 到 443，偽裝成正常連線）能繞過某些過濾——當預設 traceroute 卡住時換這些試。traceroute 適合「一次性看路徑」，但要持續監測丟包點，mtr 更好（下節）。
 
-```
-traceroute to example.com (93.184.216.34), 30 hops max, 60 byte packets
- 1  192.168.1.1 (192.168.1.1)  1.234 ms  1.123 ms  1.456 ms
- 2  10.10.10.1 (10.10.10.1)    5.678 ms  5.123 ms  5.789 ms
- 3  * * *
- 4  61.222.x.x (...)            12.345 ms  12.123 ms  12.456 ms
-...
-15  93.184.216.34 (93.184.216.34) 180.123 ms  180.456 ms  180.789 ms
-```
-
-每行 = 1 跳：
-
-- 跳號 + IP + RTT × 3（送 3 packet 取樣）
-- `* * *` — 該跳 router 不回 ICMP（但下一跳能繼續）
-
-## traceroute 為什麼用 UDP
-
-預設 UDP（送到隨機高 port，期待對方回 ICMP DEST UNREACHABLE）。
-
-但**很多 firewall 擋 UDP**，看不到中間跳。改用：
+## mtr:traceroute + ping 的即時版
 
 ```bash
-traceroute -I example.com       # ICMP（同 ping）
-traceroute -T -p 443 example.com   # TCP SYN to port 443
-```
-
-TCP 穿透性最高（HTTPS port 多數開）。
-
-## mtr：traceroute + ping 的組合
-
-`mtr` (My TraceRoute) — **持續送 packet 到每跳，統計丟包率**：
-
-```bash
+# mtr：持續監測每一跳的延遲和丟包（traceroute + ping 結合）
 mtr example.com
-mtr -n example.com           # 不解 DNS
-mtr -r -c 100 example.com    # 跑 100 cycle 後印 report
-mtr -T -P 443 example.com    # TCP
+# 即時更新的表格：
+# Host                  Loss%   Snt   Last   Avg  Best  Wrst StDev
+# 1. 192.168.1.1         0.0%    10    1.2   1.3   1.1   1.5   0.1
+# 2. 10.x.x.x            0.0%    10    5.3   5.5   5.1   6.0   0.3
+# 3. ...                 0.0%    10   12.1  12.3  ...
+# 8. some-router        20.0%    10   45.2  48.1  ...   ← 這一跳開始丟包！
+# ...
+#   Loss%：每一跳的丟包率（找出「哪一跳開始丟」）
+#   Avg/Best/Wrst：延遲統計
+
+mtr -r -c 100 example.com        # 報告模式（跑 100 次後出報告，-r report）
+mtr -n example.com               # 不解析域名（快）
+mtr -T -P 443 example.com        # 用 TCP 到 443（繞過 ICMP/UDP 過濾）
 ```
 
-輸出（互動式）：
-
 ```
-                                Packets               Pings
- Host                         Loss%   Snt   Last   Avg  Best  Wrst StDev
- 1. 192.168.1.1                0.0%    50    1.2   1.1   1.0   2.5   0.3
- 2. 10.10.10.1                 0.0%    50    5.6   5.5   5.0  10.0   0.8
- 3. ???                       100.0%    50    0.0   0.0   0.0   0.0   0.0
- 4. 61.222.x.x                10.0%    50   25.4  26.0  20.0  35.0   2.5
- 5. 93.184.216.34              0.0%    50  180.1 181.0 180.0 185.0   1.0
-```
+怎麼用 mtr 找「丟包在哪一段」：
 
-**丟包定位神器**。看到第 4 跳 `Loss% 10.0`，剩下都 0% → 第 4 跳路由器有問題。
-
-## 解讀 traceroute / mtr
-
-### 場景 1：第 N 跳完全 `* * *`
-
-可能：
-
-- 該 router 不回 ICMP（policy）
-- 該 router 過載
-- 對自己 IP 沒 reverse DNS
-
-**看下一跳是否正常**。如果下一跳正常，這跳只是「**靜默轉發**」，沒問題。
-
-### 場景 2：某跳之後全部 `* * *`
-
-該跳是真的斷了。有可能：
-
-- router 真的 down
-- 路徑黑洞
-- ISP 內部問題（你看不到）
-
-對策：換條路（VPN / 不同 ISP）。
-
-### 場景 3：某跳 RTT 突然飆高
-
-例：
-
-```
- 5. router-A   25 ms
- 6. router-B   120 ms      ← 這跳延遲爆增
- 7. router-C   125 ms
- 8. server     130 ms
+  正常：所有跳 Loss% = 0
+        │
+  情況 A：從第 N 跳開始都丟包
+    → 第 N 跳之後的網路有問題（那一段品質差）
+        │
+  情況 B：只有「中間某一跳」丟包，但「最後一跳」不丟
+    → 那個中間路由器「不回 ICMP」但「正常轉發」
+    → 不是真的丟包！（路由器限制 ICMP 回應，但封包有過）
+    → 看「最後一跳（目標）」的 Loss% 才是真的丟包率
+        │
+  → 關鍵：看「目標那一跳」的 Loss%
+    中間跳的 Loss% 可能是「路由器不回 ICMP」的假象
 ```
 
-第 6 跳延遲增加，後面跳也都帶這延遲（疊加）。**第 6 跳是瓶頸**。
+> **mtr 是找「丟包在哪一段」的最佳工具，但要看「目標跳」的丟包率，別被中間跳的假象騙**。mtr 結合 traceroute（看路徑）和 ping（持續測每跳的延遲/丟包），即時更新表格——你能看到**每一跳的丟包率**，定位「網路品質從哪裡開始變差」。但有個關鍵陷阱：**中間某跳的 Loss% 高，不一定代表真的丟包**——很多路由器「限制回 ICMP 的速率」（防止被 traceroute/ping 轟炸），所以對 mtr 的探測回應不全，顯示假的高 Loss%，但它**正常轉發**經過的封包。判斷真假：**看「目標那一跳（最後一行）」的 Loss%**——如果中間跳丟包但最後一跳 0%，那中間的是假象（封包都到了目標）；如果**從第 N 跳開始一路到目標都丟包**，那才是真的（第 N 跳那段網路有問題）。所以讀 mtr 的原則：關注「丟包是否一路延續到目標」，而非單看某中間跳。`mtr -r -c 100`（跑 100 次出報告）適合留證據（回報給 ISP「你們這段在丟包」）。`-T -P 443` 用 TCP 繞過 ICMP 限制，數據更可信。mtr 是診斷「連線時好時壞、丟包」這類最惱人問題的利器。
 
-可能原因：跨國 / 海底電纜 / overload。
-
-### 場景 4：某跳 loss% 高
-
-```
- 3. routerX  loss% 30   ← 30% 丟包
- 4. routerY  loss% 0    ← 但下一跳 0% loss？
-```
-
-奇怪？因為 mtr 對「中間跳」的 loss 計算可能有偏差（router 處理 ICMP 的優先順序低）。
-
-**看「最終目的地」的 loss% 才準**。如果 destination loss% 0，前面跳的 loss% 是 router 計策，不是真丟。
-
-## ping vs traceroute vs mtr
-
-| 工具 | 用途 |
-|---|---|
-| ping | 對方 alive？RTT？ |
-| traceroute | 路由經過誰？哪跳卡？ |
-| mtr | 持續監控、找丟包跳 |
-
-debug 順序：
-
-1. `ping` — 對方通嗎
-2. `traceroute` — 路徑哪段斷
-3. `mtr -r -c 100` — 持續觀察哪段丟包
-
-## MTU 探測
-
-「**Path MTU**」 — 整條路徑的最小 MTU。如果 packet 大於最小 MTU，路徑會出問題。
+## 故意弄壞:診斷不同的網路問題
 
 ```bash
-# 設定 don't fragment + 大 packet
-ping -M do -s 1472 -c 1 example.com
-# 1472 + 28 (ICMP+IP header) = 1500，正好 Ethernet MTU
+# 用 ping/traceroute/mtr 診斷不同症狀
 
-# 試大一點
-ping -M do -s 2000 -c 1 example.com
-# From ... Frag needed and DF set (mtu = 1500)
+# 症狀 1：完全不通
+ping -c2 target.com
+#   100% loss + traceroute 停在某跳 → 路由斷了或目標掛了
+#   但記得：可能只是 ICMP 被擋，用 nc 測 TCP（Ch 17）
+
+# 症狀 2：通但很慢
+ping -c4 target.com               # RTT 高嗎？
+traceroute target.com             # 哪一跳開始延遲暴增？
+#   → 定位延遲在哪一段（你的網路？ISP？跨國段？目標附近？）
+
+# 症狀 3：時好時壞（最惱人）
+mtr -c 100 target.com             # 持續監測，找「哪一跳間歇丟包」
+#   看目標跳的 Loss% —— 持續丟包 = 那段品質差
+
+# 症狀 4：只有大封包有問題（MTU，Ch 4）
+ping -c2 -M do -s 1472 target.com  # 大封包通嗎？
+ping -c2 -s 100 target.com         # 小封包通嗎？
+#   小通大不通 → MTU 黑洞（Ch 4）
+
+# 綜合判斷：本機問題 vs 中間網路 vs 目標問題
+traceroute target.com
+#   第 1 跳（你的路由器）就不通 → 本機/區網問題
+#   中間某段延遲暴增/丟包 → ISP 或跨國段問題（你無能為力，回報 ISP）
+#   只有最後幾跳有問題 → 目標附近或目標本身問題
 ```
 
-二分搜尋找最小 MTU：
-
-```bash
-for size in 1500 1480 1472 1460 1450 1420; do
-    echo "=== size $size ==="
-    ping -M do -s $((size - 28)) -c 1 -W 2 example.com
-done
-```
-
-VPN 連線常用：找 VPN 的最佳 MTU，避免 fragmentation。
-
-## 一個常見誤解：「traceroute 走的路徑就是反向也走」
-
-**錯**。網路常**不對稱**（forward 跟 backward 走不同路）。
-
-你看的 traceroute 是「**你 → 對方**」的路徑。對方回你可能走完全不同路。
-
-要看反向：在對方 server 跑 traceroute 對你（前提是你能 SSH 進去）。
-
-## 一個常見誤解：「丟包率 1% 就糟」
-
-**部分對**。對 TCP：
-
-- 1% 丟包 → throughput 會慢 50-90%（TCP 擁塞控制）
-- 5% 丟包 → 幾乎無法用
-
-對 UDP / 即時應用：
-
-- 1% 可接受
-- 5%+ 開始有感
-
-「**TCP 對丟包極敏感**」。
-
-## 一個常見誤解：「RTT 高 = 網路爛」
-
-**部分對**。RTT 高可能是物理距離（光速限制）。台灣 → 美國光纖往返 ~150ms 是物理極限。
-
-「**慢但穩定**」 vs 「**有時快有時慢**」 — 後者更壞（jitter 大）。
+> **ping/traceroute/mtr 的綜合運用能定位「問題在你、在中間、還是在目標」——這決定你能不能解、該找誰**。診斷流程：先 `ping`（通不通、多慢、丟不丟包），再 `traceroute`（路徑哪裡異常），持續性問題用 `mtr`（哪一跳間歇丟包）。關鍵是**定位責任段**：如果 traceroute **第 1 跳（你的路由器）就不通**——是你的本機/區網問題（你能修：檢查網線/WiFi/路由器）；**中間某段（ISP/跨國）延遲暴增或丟包**——是中間網路問題（你無能為力，只能回報 ISP 或等它恢復，附上 mtr 報告當證據）；**只有最後幾跳/目標有問題**——是目標伺服器附近或目標本身的問題（連絡服務方）。這個「定位責任段」很重要——它告訴你「這問題是不是我能解的」。很多「網站慢」其實是中間某段跨國線路壅塞（尤其晚上尖峰），你改本機設定沒用。配合 Ch 4 的 MTU 診斷（小封包通大封包不通=MTU 黑洞）。這些工具加上 Ch 14 的抓封包，組成 debug 網路的完整武器庫，練習 B 會綜合運用。
 
 ## 動手練習
 
-**1. ping 各種對象**
+1. ping 基礎：ping 國內外不同網站，比較 RTT、丟包率、抖動（mdev），理解延遲和距離的關係
 
-```bash
-ping -c 3 127.0.0.1            # localhost (~0.05ms)
-ping -c 3 192.168.1.1          # router (~1ms)
-ping -c 3 8.8.8.8              # google (~10-30ms)
-ping -c 3 example.com          # 跨國 (~150ms)
-```
+2. traceroute 看路徑：traceroute 一個國外網站，數經過幾跳、看哪裡延遲暴增（跨國段）、理解 `*` 的意義
 
-**2. traceroute 比較**
+3. mtr 找丟包：`mtr -c 50` 一個網站，看每跳 Loss%，特別看目標跳，理解中間跳丟包的真假
 
-```bash
-traceroute -n 8.8.8.8                # UDP
-traceroute -n -I 8.8.8.8             # ICMP
-traceroute -n -T -p 443 example.com  # TCP
-```
+4. MTU 診斷：`ping -M do -s` 遞增大小找 path MTU，對照 Ch 4
 
-對比結果。
+5. 跑「故意弄壞」：對一個慢/不穩的連線，用三個工具綜合判斷問題在你/中間/目標
 
-**3. mtr 找問題**
+## 本章重點整理
 
-```bash
-mtr -r -c 50 example.com
-```
-
-把 report 看一遍。哪跳 RTT 增加、哪跳 loss%。
-
-**4. MTU 探測**
-
-```bash
-for size in 1472 1452 1420 1380; do
-    echo "=== $size ==="
-    ping -M do -s $size -c 1 example.com
-done
-```
-
-**5. 對 VPS 跑 mtr**
-
-```bash
-mtr -r -c 30 <YOUR_VPS_IP>
-```
-
-看到的是你 → VPS 的路徑質量。
+- ping 測連通/延遲/丟包：關鍵指標 RTT（延遲）、packet loss（丟包率）、mdev（抖動）；ICMP 常被擋（ping 不通≠服務掛）
+- traceroute 用 TTL 妙用點亮路徑；`* * *` 常見且不一定是問題（路由器不回 ICMP）；只有「之後全 *」才可能真斷
+- mtr 是找丟包點的利器：看每跳 Loss%，但要看「目標跳」的（中間跳丟包可能是 ICMP 限速假象）
+- 綜合運用定位責任段：第 1 跳問題=你的、中間段=ISP/跨國、最後幾跳=目標——決定你能不能解
+- `-T -p 443`/`-I` 繞過擋 UDP/ICMP 的過濾；小封包通大封包不通=MTU 黑洞（Ch 4）
 
 ## 自我檢核
 
-- [ ] ping 不通不代表掛掉（可能擋 ICMP）
-- [ ] 知道 traceroute 用 TTL trick
-- [ ] 用 mtr 找過丟包跳
-- [ ] 知道 traceroute UDP vs ICMP vs TCP 差別
-- [ ] MTU 探測做過至少 1 次
-- [ ] 知道網路路徑常不對稱
+- [ ] 能用 ping 的三個指標（RTT/丟包/抖動）判斷網路品質
+- [ ] 理解 traceroute 怎麼運作，會讀它的輸出（特別是 `*` 的意義）
+- [ ] 會用 mtr 找丟包點，知道為什麼要看「目標跳」的 Loss%
+- [ ] 能綜合三個工具定位問題在你/中間/目標
+- [ ] 知道 ICMP 被擋的影響，何時改用 TCP 模式（-T）
 
-下一章看 nmap / netcat / curl 進階。
+## 延伸閱讀
 
-→ [Ch 17 nmap / netcat / curl 進階](./17-nmap-netcat-curl.md)
+### 文章
+
+- **[How traceroute works](https://www.cloudflare.com/learning/network-layer/what-is-traceroute/)** — Cloudflare
+  - **這篇說什麼**：traceroute 的 TTL 原理和輸出解讀
+  - **讀哪裡**：整篇
+  - **為什麼值得讀**：本章 traceroute 那節的視覺化版
+
+- **[mtr 教學與解讀](https://www.linode.com/docs/guides/diagnosing-network-issues-with-mtr/)** — Linode
+  - **這篇說什麼**：用 mtr 診斷網路問題，特別是怎麼正確解讀丟包
+  - **讀哪裡**：解讀那節（中間跳丟包的真假）
+  - **為什麼值得讀**：本章「mtr 找丟包」的權威版，破除「中間跳丟包」的誤解
+
+### 書籍
+
+- **《TCP/IP Illustrated, Volume 1》— Ch 8 (ICMP)** — Stevens & Fall
+  - **讀哪幾章**：Ch 8（ICMP，含 traceroute/ping 的底層）
+  - **這本書的定位**：traceroute/ping 底層 ICMP 機制的權威
+  - **前提**：Ch 4
+
+下一章是工具章的最後一站——nmap/netcat/curl，掃描端口、萬用 TCP 工具、HTTP 客戶端，這些是探測和測試服務的利器。
+
+→ [Ch 17 nmap / netcat / curl](./17-nmap-netcat-curl.md)

@@ -1,236 +1,252 @@
-# Ch 7 — UDP 與 TCP 的選擇
+# Ch 7 — UDP vs TCP
 
-> 目標：搞懂 UDP 跟 TCP 的本質差別，知道什麼時候該用哪個。新時代 QUIC 在 UDP 上重建 TCP 也是這章背景。
+> **目標**：理解 UDP——它「不做什麼」（沒有握手、沒有可靠保證、沒有順序、沒有壅塞控制）、為什麼這種「不可靠」反而適合某些場景（DNS、影音、遊戲、QUIC）、UDP 和 TCP 的根本取捨、以及為什麼現代 HTTP/3 選擇在 UDP 上重建可靠性。這章把傳輸層的另一半補上，讓你知道「什麼時候不該用 TCP」。
 
-## UDP 是什麼
+> **環境**：Linux（nc -u / tcpdump）。
 
-**User Datagram Protocol** — 在 IP 上加最小必要資訊：
+## 為什麼需要 UDP？
+
+學完 TCP（Ch 6）你可能想：可靠傳輸這麼好，為什麼還要 UDP 這種「不可靠」的東西？因為 TCP 的可靠是有**代價**的——握手延遲（建立連線要一個來回）、有序保證（一個封包丟了，後面的要等它重傳，即使後面的已經到了）、壅塞控制（慢啟動爬升）。這些代價在某些場景**不划算甚至有害**。
+
+UDP 是「極簡」的傳輸層——它幾乎什麼都不做，只加個 port 和長度就把封包丟出去。這種「不做」反而是它的價值：低延遲、無連線、應用層能完全掌控。DNS 為什麼用 UDP？影音串流為什麼能接受丟幀但不能卡？線上遊戲為什麼用 UDP？HTTP/3 為什麼放棄 TCP 改用 UDP？這章回答這些，讓你理解傳輸層的選擇是個**取捨**，沒有「TCP 一定比較好」。
+
+## 先建立直覺:掛號信 vs 明信片
 
 ```
- ┌──────────────────────────────────────────────┐
- │ Source Port (16) │ Dest Port (16)            │
- ├──────────────────────────────────────────────┤
- │ Length (16)      │ Checksum (16)             │
- ├──────────────────────────────────────────────┤
- │ Payload                                       │
- └──────────────────────────────────────────────┘
+TCP vs UDP（掛號信 vs 明信片）：
+
+  TCP = 掛號信：
+    寄前要先確認對方在（握手）
+    保證送達（沒收到會重寄）
+    保證順序（按寄出順序到達）
+    對方確認收到（ACK）
+    → 可靠，但慢、有額外手續
+        │
+  UDP = 明信片：
+    直接丟進郵筒（無握手）
+    不保證送達（丟了就丟了）
+    不保證順序（後寄的可能先到）
+    不確認（寄出就不管了）
+    → 快、簡單，但「盡力而為」
+        │
+  → UDP 把「可靠性」這個責任「丟回給應用層」
+    應用需要可靠就自己做，不需要就享受低延遲
 ```
 
-只有 **8 byte header**。
+關鍵心智：UDP 是「明信片」——直接丟出去，不握手、不保證送達、不保證順序、不確認。它把可靠性的責任**交還給應用層**。需要可靠的應用自己在 UDP 上實作（如 QUIC），不需要的就享受低延遲和簡單。TCP 是「掛號信」——可靠但有代價（握手、重傳、有序、壅塞控制）。
 
-UDP 提供：
-- src/dst port（區分程式）
-- 簡單 checksum
-- **沒了**
+> UDP 和 TCP 都是傳輸層（Ch 2），都跑在 IP 上、都用 port 區分連線。差別在「提供什麼保證」。如果還沒讀 TCP，先看 [Ch 6](./06-tcp-deep-dive.md)——理解 TCP 做了什麼，才懂 UDP 省略了什麼。
 
-UDP 不提供：
-- 連線（沒 handshake）
-- 可靠性（沒重傳）
-- 順序（沒 sequence num）
-- 流控
-- 擁塞控制
+## UDP 的極簡:只有 8 bytes 標頭
 
-**UDP = IP + port，幾乎沒加東西**。
+```
+UDP 標頭（只有 8 bytes，對比 TCP 的 20+ bytes）：
+
+  ┌──────────┬──────────┐
+  │ 來源 port │ 目標 port │   ← 區分應用（和 TCP 一樣）
+  ├──────────┼──────────┤
+  │  長度    │  校驗和   │   ← 長度 + 簡單校驗
+  └──────────┴──────────┘
+       接著是 payload（應用資料）
+        │
+  UDP「沒有」的東西（對比 TCP）：
+    沒有序號（不保證順序）
+    沒有 ACK（不確認送達）
+    沒有 window（不做流量控制）
+    沒有連線狀態（無握手、無狀態機）
+    沒有壅塞控制（不會自己減速）
+        │
+  → UDP 標頭只有 8 bytes，幾乎只是「IP + port」
+    它的價值就在「什麼都不做」=「沒有額外延遲和開銷」
+```
+
+```bash
+# UDP 通訊（用 nc -u）
+# 終端機 1：UDP 監聽
+nc -u -l 9999
+# 終端機 2：UDP 送資料
+echo "hello udp" | nc -u 127.0.0.1 9999
+
+# 抓 UDP 封包，看它有多簡單
+sudo tcpdump -i any -n -v udp port 9999 &
+echo "test" | nc -u 127.0.0.1 9999
+# IP ...> 127.0.0.1.9999: UDP, length 5    ← 就這樣，沒有 flags/seq/ack
+sudo pkill tcpdump
+#   對比 TCP 有 [S]/[.]/[P.] 等 flags、seq、ack —— UDP 全沒有
+```
+
+> **UDP 的價值就在「什麼都不做」——8 bytes 標頭，沒有握手、沒有狀態、沒有重傳**。對比 TCP 的 20+ bytes 標頭和複雜機制，UDP 標頭只有 4 個欄位（來源/目標 port、長度、校驗和），幾乎只是「在 IP 上加個 port」。它**沒有**序號（不保證順序）、ACK（不確認送達）、window（不做流量控制）、連線狀態（無握手——你 `nc -u` 送出去對方在不在都送）、壅塞控制（不自己減速）。這些「沒有」帶來的是：**零握手延遲**（不用先建連線，第一個封包就帶資料）、**無隊頭阻塞**（一個封包丟了不影響其他，因為本來就不保證順序）、**應用層完全掌控**（要可靠自己做、要什麼語意自己定）。tcpdump 看 UDP 封包就一行（`UDP, length N`），對比 TCP 的一堆 flags/seq/ack——這個簡單就是 UDP 的全部。
+
+## 為什麼有些場景 UDP 更好
+
+```
+UDP 適合的場景（TCP 的「可靠」反而有害的地方）：
+
+  1. DNS 查詢（Ch 9）：
+     一問一答，資料小（一個封包就夠）
+     TCP 握手要 1 個 RTT，DNS 用 UDP 省掉這個延遲
+     丟了？重問一次就好（應用層簡單重試）
+        │
+  2. 影音串流 / 語音通話：
+     即時性 > 完整性
+     一個視訊幀丟了，重傳它沒意義（等重傳到，畫面早過去了）
+     TCP 的「有序保證」反而造成卡頓（隊頭阻塞）
+     UDP：丟了就丟了，繼續播下一幀（寧可花一下也不要卡）
+        │
+  3. 線上遊戲：
+     最新的位置資訊最重要
+     舊的封包丟了無所謂（下一個更新就覆蓋了）
+     TCP 會卡著等舊封包重傳 → 延遲爆增
+        │
+  4. QUIC / HTTP3（Ch 39）：
+     在 UDP 上「自己重建」可靠性，但避開 TCP 的缺點
+     （無隊頭阻塞、更快握手、連線遷移）
+```
+
+```
+隊頭阻塞（head-of-line blocking）—— TCP 的致命傷：
+
+  TCP 保證「有序交付」，所以：
+    收到封包 1,2,4,5（封包 3 丟了）
+    → 應用層只能拿到 1,2（4,5 被卡住等 3 重傳）
+    → 即使 4,5 已經到了，也不能用！
+        │
+  對影音/遊戲：這是災難
+    為了等一個丟失的舊封包，把後面新的都卡住
+        │
+  UDP 沒這問題：
+    收到 1,2,4,5 就交給應用 1,2,4,5
+    應用自己決定怎麼處理丟失的 3（通常：不管它）
+```
+
+> **隊頭阻塞（head-of-line blocking）是 TCP「有序保證」的代價，也是即時應用選 UDP 的核心原因**。TCP 保證應用層「按順序」拿到資料——所以如果封包 3 丟了，即使封包 4、5 已經到達，TCP **也不交給應用**（要等 3 重傳到才能按序給 3,4,5）。對檔案傳輸這沒問題（反正要完整）。但對**即時影音/遊戲**這是災難——為了等一個丟失的「舊」封包（如某個視訊幀），把後面「新」的資料都卡住，造成卡頓。UDP 沒這問題：收到什麼就交給應用什麼，應用自己決定怎麼處理丟失（影音通常「不管它，繼續播下一幀」——寧可花一下畫面也不要卡）。這就是為什麼 **DNS**（省握手延遲）、**影音/語音**（即時性 > 完整性）、**遊戲**（最新狀態最重要）選 UDP。而 **QUIC/HTTP3**（Ch 39）最聰明——它在 UDP 上**重建可靠性**，但用「多個獨立串流」避開隊頭阻塞（一個串流丟包不卡其他串流），同時享受更快握手和連線遷移。理解隊頭阻塞，你就懂了 HTTP/3 為什麼放棄 TCP。
 
 ## TCP vs UDP 對照
 
-| 特性 | TCP | UDP |
+| 面向 | TCP | UDP |
 |---|---|---|
-| 連線 | 有（3 次握手） | 沒（直接送） |
-| 可靠 | 有（重傳） | 沒 |
-| 順序 | 保證 | 不保證 |
-| 流控 | 有 | 沒 |
-| 擁塞控制 | 有 | 沒 |
-| Header 大小 | 20+ byte | 8 byte |
-| 速度 | 慢（overhead 大） | 快 |
-| 一次送的大小 | 任意（會分段） | 通常 < MTU |
-| 適合 | 檔案 / web / SSH | DNS / 遊戲 / 影片 |
-
-## 何時用 UDP
-
-### 1. 一問一答（短）
-
-DNS 查詢：「這個 domain 的 IP？」 + 回「IP 是 X」。一個 packet 一來一回，TCP 握手浪費。
-
-### 2. 即時性 > 可靠性
-
-影片串流：丟 1 frame 沒事，重傳那 frame 反而**讓你聽到/看到延遲版**。直接放棄。
-
-遊戲：玩家位置每 16ms 送一次。舊位置已沒意義，重傳浪費。
-
-### 3. Multicast / Broadcast
-
-TCP 點對點，沒辦法 1 對多。UDP 能。
-
-### 4. 自己重新實作可靠性
-
-QUIC（HTTP/3 底層）就是「在 UDP 上重建 TCP」。為什麼？因為 OS kernel 改 TCP 演算法太慢，UDP 讓你在 user space 自由做。
-
-## 何時用 TCP
-
-### 1. 檔案傳輸 / Web
-
-需要保證每個 byte 都到、順序對。FTP / HTTP / SSH 都用 TCP。
-
-### 2. 大量資料
-
-TCP 流控 + 擁塞控制讓大檔傳輸不會塞網路。UDP 自己做這個太累。
-
-### 3. 雙向互動
-
-SSH 互動：每個按鍵需要可靠傳。
-
-## DNS 在 UDP 跟 TCP
-
-DNS 預設用 **UDP port 53**。原因：
-
-- query 通常 < 100 byte
-- 一問一答
-- 應用層自己 retry 1 次
-
-**特殊**：
-
-- query 太大（> 512 byte，DNSSEC 簽章會超過）→ fall back 到 TCP
-- zone transfer（DNS 主從同步）→ 一定 TCP
+| 連線 | 有（三次握手）| 無（直接送）|
+| 可靠性 | 保證送達（重傳）| 不保證（丟了就丟）|
+| 順序 | 保證有序 | 不保證 |
+| 速度 | 較慢（握手+壅塞控制）| 快（無額外開銷）|
+| 標頭 | 20+ bytes | 8 bytes |
+| 流量控制 | 有（滑動視窗）| 無 |
+| 壅塞控制 | 有（慢啟動）| 無（應用自理）|
+| 隊頭阻塞 | 有（有序的代價）| 無 |
+| 適用 | 網頁/API/SSH/檔案 | DNS/影音/遊戲/QUIC |
 
 ```bash
-# UDP 查詢（預設）
-dig example.com
-
-# 強制 TCP
-dig +tcp example.com
+# 看你系統上的 TCP 和 UDP 連線/監聽
+ss -tan    # TCP（有狀態：ESTAB/LISTEN/TIME-WAIT...）
+ss -uan    # UDP（無連線狀態，只有 UNCONN/ESTAB）
+#   注意 UDP 大多是 UNCONN（無連線）—— 因為 UDP 本來就無連線
 ```
 
-## QUIC：UDP 上的新 TCP
+> **選 TCP 還是 UDP 是「可靠 vs 即時」的取捨，沒有絕對的好壞**。需要**完整正確**的資料（網頁、API、檔案傳輸、SSH、資料庫）用 TCP——丟一個 byte 都不行，TCP 的可靠保證值得那點延遲。需要**即時、能容忍丟失**的（影音、語音、遊戲、DNS 這種小查詢）用 UDP——晚到的資料不如沒有，低延遲比完整性重要。觀察：`ss -tan`（TCP，有豐富的連線狀態）vs `ss -uan`（UDP，大多是 UNCONN 無連線）——這直接反映了「TCP 有狀態、UDP 無狀態」。注意 UDP「無連線」不代表不能雙向通訊——應用層可以在 UDP 上做請求-回應（如 DNS），只是傳輸層不維護連線狀態。趨勢值得注意：**UDP 正在復興**——QUIC/HTTP3 證明了「在 UDP 上自己做可靠性」能兼得兩者優點（可靠 + 無隊頭阻塞 + 快握手），這是傳輸層二十年來最大的變革（Ch 39）。
 
-HTTP/3 不再用 TCP，改用 **QUIC** (Quick UDP Internet Connections)：
+## 故意弄壞:UDP 丟包無感 vs TCP 重傳
 
-- 跑在 UDP 上
-- 自己實作可靠 / 順序 / 擁塞控制
-- 整合 TLS（連線建立 + 加密一起做）
-- 多 stream 在 1 個連線內，互不阻塞（解決 HTTP/2 head-of-line blocking）
+```bash
+# 體會 UDP「丟了就丟了」vs TCP「會重傳」
 
-**為什麼 UDP 不直接用 TCP**：
+# UDP：送出去不管對方在不在（無連線）
+echo "into the void" | nc -u 192.0.2.1 9999    # 送給一個收不到的地方
+# 立刻返回（成功送出），但對方根本沒收到 —— UDP 不在乎
+echo "exit: $?"                                 # 0（nc 認為「送出」成功）
+#   → UDP 沒有「對方有沒有收到」的概念
 
-1. TCP 演算法在 OS kernel，更新慢
-2. TCP 跟 TLS 兩次握手累
-3. 中間設備（路由器、firewall）對 TCP option 處理保守，限制創新
-4. UDP 自由
+# TCP：對方不在 → 連不上（要握手）
+echo "into the void" | nc --tcp 192.0.2.1 9999 -w 3   # TCP 嘗試連
+# 等 timeout（TCP 要先握手，握不上就失敗）
+#   → TCP 在乎「對方在不在」（無法握手就失敗）
 
-QUIC 是「**TCP 的精神繼承者**」，但跑在 UDP 上。Ch 39 進階速覽。
+# 模擬丟包看 TCP 重傳 vs UDP 不管（用 tc 加丟包，進階）
+# sudo tc qdisc add dev lo root netem loss 50%   # lo 介面 50% 丟包
+# TCP 傳輸：會變慢但「完整」（重傳補上丟的）
+# UDP 傳輸：直接少 50% 資料（不重傳）
+# sudo tc qdisc del dev lo root                   # 移除
+```
 
-## 一個常見誤解：「UDP 就是不可靠」
+> **UDP「送出就不管」vs TCP「在乎對方在不在」——這個差異在 `nc` 行為上一目了然**。用 `nc -u`（UDP）送資料給一個收不到的地方，nc **立刻成功返回**（exit 0）——因為 UDP 只是「把封包交給 IP 送出」，至於對方收不收得到、在不在，UDP 一概不管（無連線、無確認）。而 `nc`（TCP）連同一個地方會 **timeout 失敗**——因為 TCP 要先三次握手（Ch 6），握不上就連不了。這直觀展示了核心差異：**UDP 是「fire and forget」（送出即忘），TCP 是「establish and confirm」（建立並確認）**。進階實驗：用 `tc netem` 人為加丟包，看 TCP 傳輸「變慢但完整」（重傳補上）vs UDP「直接少資料」（不重傳）——這讓你親身體會兩者對丟包的不同反應。理解這個，你就知道為什麼 UDP 應用必須「自己處理丟包」（重試、容錯、或乾脆忽略），而 TCP 應用可以假設「資料一定完整到達」。
 
-**部分對**。UDP **協定本身不可靠**，但**應用可以建可靠性在它上面**。
+## 進階:UDP 之上重建可靠性（QUIC 的啟示）
 
-QUIC、自家遊戲協定、DTLS 都是「**UDP + 自家可靠機制**」。
+```
+為什麼現代趨勢是「UDP + 應用層可靠性」（QUIC/HTTP3）：
 
-## 一個常見誤解：「UDP 永遠快」
+  TCP 的問題（無法解決，因為在 kernel 裡）：
+    1. 隊頭阻塞（有序保證的代價）
+    2. 握手慢（TCP 握手 + TLS 握手 = 2-3 個 RTT）
+    3. 連線綁定 IP（換網路 WiFi→4G 連線就斷）
+    4. 改進困難（TCP 在 kernel，更新慢，中間設備會干擾）
+        │
+  QUIC 的解法：在 UDP 上自己實作傳輸層
+    - 多個獨立串流（一個丟包不卡其他 → 解決隊頭阻塞）
+    - 握手 + 加密合併（1 個 RTT，甚至 0-RTT）
+    - 連線 ID（換網路不斷線，連線遷移）
+    - 在「應用層」（用戶空間），更新快、不受中間設備干擾
+        │
+  → UDP 的「什麼都不做」反而成了優勢
+    它是「白紙」，讓 QUIC 在上面畫出更好的傳輸層
+    Ch 39 深入 QUIC/HTTP3
+```
 
-**錯**。UDP 沒擁塞控制 → 大量送會塞網路 → 對自己 / 別人都壞。
-
-「**正常用法的 UDP**」快；「**亂送的 UDP**」可能比 TCP 還慢（因為 packet drop）。
-
-## 一個常見誤解：「TCP 連線永遠 alive」
-
-**錯**。TCP 連線可以**死掉但雙方都不知道**：
-
-- 中間網路 down 一段時間
-- 對方主機被拔電源
-- NAT 表 timeout
-
-「**dead connection**」直到下次有人想送 packet 才發現。
-
-解決：應用層 keepalive（每幾秒送個 ping）或 SO_KEEPALIVE socket option。
-
-## 一個常見誤解：「sendto() 後 UDP 一定在網路上了」
-
-**部分對**。OS buffer 可能還沒送出去。對方收到的時候已經是「**最終狀態**」 — 但**送出之前**有一段時間在你的 buffer / 網卡 queue / 路由器 queue / ...。
-
-UDP「**送出 ≠ 已送達**」。要回信才知。
+> **現代趨勢「UDP + 應用層可靠性」（QUIC）證明了 UDP 的「白紙」特性是優勢**。TCP 有些問題**無法在 TCP 內解決**——因為 TCP 在 kernel（更新慢、中間設備會干擾它的封包）、有序保證造成隊頭阻塞、連線綁定 IP（換 WiFi 到 4G 連線就斷）。QUIC 的革命性想法是：**不修 TCP，而是在 UDP 上從頭實作一個更好的傳輸層**。因為 UDP「什麼都不做」（白紙），QUIC 能在上面自由設計：多個獨立串流（解決隊頭阻塞——一個串流丟包不卡其他）、握手與加密合併（1 個 RTT 甚至 0-RTT，對比 TCP+TLS 的 2-3 RTT）、連線 ID（換網路不斷線）。而且 QUIC 在**用戶空間**（應用層），更新快、不受中間設備干擾。這是傳輸層的範式轉移——Google 推動、HTTP/3 採用、現在大量網站在用。它的啟示：UDP 不是「比 TCP 差」，而是「更底層的原料」，讓應用能打造最適合自己的傳輸層。Ch 39 會深入 QUIC 的細節。理解這個趨勢，你對「傳輸層的未來」就有了視野。
 
 ## 動手練習
 
-**1. UDP 應用看一看**
+1. UDP 通訊：用 `nc -u` 一端監聽一端送，抓封包看 UDP 有多簡單（對比 TCP 的 flags/seq/ack）
 
-```bash
-# DNS 用 UDP
-sudo tcpdump -nn -i any 'udp port 53' &
-dig example.com
+2. UDP 無連線：`nc -u` 送資料給收不到的 IP，看它「成功」返回（exit 0），理解 fire-and-forget
 
-# NTP 用 UDP
-sudo tcpdump -nn -i any 'udp port 123' &
-ntpdate -q pool.ntp.org
-```
+3. TCP vs UDP 行為：同樣連一個收不到的地方，UDP 立刻成功 vs TCP timeout，理解「在乎對方在不在」
 
-**2. TCP vs UDP 速度測試**
+4. 看連線狀態：`ss -tan`（TCP 有狀態）vs `ss -uan`（UDP 多為 UNCONN），理解有狀態 vs 無狀態
 
-```bash
-# server: TCP
-iperf3 -s
+5. 思考選擇：列出你常用的 5 個應用/協定，判斷它們用 TCP 還 UDP，為什麼
 
-# client: TCP
-iperf3 -c <server>
+## 本章重點整理
 
-# UDP（要指定 bandwidth）
-iperf3 -c <server> -u -b 100M
-```
-
-對比 throughput / loss rate。
-
-**3. 故意 UDP 丟包**
-
-```bash
-# server
-iperf3 -s
-
-# client（限頻寬讓網路塞）
-iperf3 -c <server> -u -b 1G
-```
-
-`-b 1G` 比網路能 handle 多 → 大量 drop。看 lost rate。
-
-**4. 看 QUIC traffic**
-
-```bash
-sudo tcpdump -nn -i any 'udp port 443' &
-curl --http3 https://www.google.com -o /dev/null
-```
-
-(curl 要 HTTP/3 編譯版，多數系統沒有，用 Chrome 觀察就好)
-
-**5. 寫個 UDP echo server**
-
-```python
-# server.py
-import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.bind(('0.0.0.0', 9999))
-while True:
-    data, addr = s.recvfrom(1024)
-    print(f"from {addr}: {data}")
-    s.sendto(data, addr)
-```
-
-```python
-# client.py
-import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.sendto(b"hello", ('127.0.0.1', 9999))
-print(s.recvfrom(1024))
-```
-
-跑起來。再用 tcpdump 看 packet。
+- UDP 是「明信片」：8 bytes 標頭，無握手、無可靠保證、無順序、無壅塞控制——把可靠性責任交還應用層
+- UDP 的價值在「什麼都不做」：零握手延遲、無隊頭阻塞、應用層完全掌控
+- 隊頭阻塞是 TCP「有序保證」的代價——即時應用（影音/遊戲）選 UDP 避開它
+- 選擇是取捨：需要完整正確用 TCP（網頁/API/檔案），需要即時容錯用 UDP（DNS/影音/遊戲）
+- 趨勢：QUIC/HTTP3 在 UDP 上重建可靠性，避開 TCP 缺點（隊頭阻塞、握手慢、連線綁 IP）——UDP 的「白紙」成了優勢
 
 ## 自我檢核
 
-- [ ] UDP header 8 byte 內容講得出
-- [ ] TCP vs UDP 對照表 5+ 項記得
-- [ ] 知道何時該用 UDP（DNS / 遊戲 / 影片 / multicast）
-- [ ] 知道 QUIC 是什麼、為什麼基於 UDP
-- [ ] 寫過 UDP echo server / client
-- [ ] 跑過 iperf3 對比 TCP / UDP
+- [ ] 能說出 UDP「不做」哪些 TCP 做的事，以及這為什麼有時是優點
+- [ ] 能解釋隊頭阻塞，以及為什麼影音/遊戲選 UDP
+- [ ] 知道 DNS 為什麼用 UDP（省握手、查詢小、易重試）
+- [ ] 能判斷一個應用該用 TCP 還 UDP
+- [ ] 理解 QUIC 為什麼選擇在 UDP 上重建傳輸層
 
-下一章看 NAT — 為什麼家用網路只有 1 個公網 IP 卻能多裝置上網。
+## 延伸閱讀
 
-→ [Ch 8 NAT 完整解析](./08-nat-explained.md)
+### 書籍
+
+- **《TCP/IP Illustrated, Volume 1》— Ch 10 (UDP)** — Stevens & Fall
+  - **讀哪幾章**：Ch 10（UDP 完整，含校驗和、長度）
+  - **這本書的定位**：UDP 機制的權威；對比 TCP 章看「省略了什麼」
+  - **前提**：Ch 6
+
+### 文章
+
+- **[Head-of-line blocking 詳解](https://http3-explained.haxx.se/en/why-quic/why-tcphol)** — Daniel Stenberg（HTTP/3 explained）
+  - **這篇說什麼**：TCP 隊頭阻塞的圖解，以及 QUIC 怎麼用多串流解決
+  - **讀哪裡**：why-quic 那幾節
+  - **為什麼值得讀**：本章「隊頭阻塞」和「QUIC」的權威版，curl 作者寫的
+
+- **[When to use UDP instead of TCP](https://www.cloudflare.com/learning/ddos/glossary/user-datagram-protocol-udp/)** — Cloudflare
+  - **這篇說什麼**：UDP 的適用場景和 DDoS 風險（UDP 反射攻擊）
+  - **為什麼值得讀**：補充 UDP 的安全面向（UDP 無連線使它易被用於放大攻擊）
+
+### 官方文件
+
+- **[RFC 768 — User Datagram Protocol](https://www.rfc-editor.org/rfc/rfc768)** — IETF（1980）
+  - **讀哪裡**：整篇（極短，3 頁！）
+  - **為什麼值得讀**：UDP 簡單到 RFC 只有 3 頁——對比 TCP 的數十頁，直接體會「UDP 什麼都不做」
+
+下一章把 NAT 講透——你家路由器怎麼讓一堆私有 IP 共用一個公網 IP，這是 Ch 5 私有 IP 的另一半，也是理解 VPN/翻牆「為什麼要打洞」的基礎。
+
+→ [Ch 8 NAT 透徹理解](./08-nat-explained.md)

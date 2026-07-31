@@ -1,234 +1,252 @@
 # Ch 2 — OSI 與 TCP/IP 模型
 
-> 目標：搞清楚 7 層 OSI 跟 4 層 TCP/IP 模型差在哪、為什麼這分層、實務上怎麼用。
+> **目標**：理解網路分層模型——OSI 七層（理論框架）和 TCP/IP 四層（實際運作的）的關係、每一層的職責、封裝（encapsulation）怎麼把資料層層打包、為什麼「封裝」是分層的物理實現。這是 Ch 1 旅程的架構化，也是後面每一章的座標系——之後說「這是第幾層的事」你才知道指哪。
 
-## 為什麼要分層
+> **環境**：概念章為主，搭配 tcpdump 觀察封裝的真實層次。
 
-網路太複雜，任何人都做不完所有事。**分層** 讓不同人專注不同問題：
+## 為什麼要兩個模型？
 
-- 寫網頁的人 → 用 HTTP，不必管 packet 怎麼到 server
-- 寫 OS 的人 → 實作 TCP / IP，不必管網路卡怎麼接收電訊號
-- 做網卡的人 → 處理電訊號，不必管 TCP 怎麼運作
+你會在網路書和面試遇到兩套分層：OSI 七層（應用/表示/會議/傳輸/網路/連結/實體）和 TCP/IP 四層。為什麼有兩套？哪個是真的？這常讓初學者困惑。
 
-**每層只看自己負責的事**，跟上下層用標準介面溝通。
+簡短答案：**OSI 是理論參考框架，TCP/IP 是實際在運作的**。OSI 設計得很完整但太理想化，現實沒人完全照它實作；TCP/IP 比較粗但就是今天網際網路在跑的。理解兩者的關係，你才能在「面試官問 OSI 七層」和「實際 debug 看 TCP/IP」之間自如切換。更重要的是理解**封裝**——分層不是抽象概念，它是真實的「資料被一層層加標頭」的物理過程，tcpdump 能看見每一層。
 
-## OSI 7 層模型
-
-1984 年 ISO 提出的「**理想中**」分層：
+## 先建立直覺:俄羅斯套娃
 
 ```
- 7. Application  │ HTTP / SMTP / FTP / DNS / SSH         （程式跟使用者互動）
- 6. Presentation │ TLS / 編碼 / 壓縮 / 加密              （資料表示）
- 5. Session      │ 建立 / 維持 / 終止 session            （連線管理）
- 4. Transport    │ TCP / UDP                             （端到端傳輸）
- 3. Network      │ IP / ICMP / 路由                      （跨網段傳輸）
- 2. Data Link    │ Ethernet / WiFi / ARP                 （同網段傳輸）
- 1. Physical     │ 電 / 光 / 電磁波 / 網線               （物理訊號）
+封裝（encapsulation）= 俄羅斯套娃
+
+  你的資料（"GET / HTTP/1.1..."）
+        ↓ 套上 TCP 標頭（來源port/目標port/序號...）
+  [TCP標頭][你的資料]
+        ↓ 套上 IP 標頭（來源IP/目標IP/...）
+  [IP標頭][TCP標頭][你的資料]
+        ↓ 套上 Ethernet 標頭（來源MAC/目標MAC/...）
+  [Eth標頭][IP標頭][TCP標頭][你的資料][Eth尾]
+        ↓ 變成電訊號/光/無線電送出
+        │
+  對方收到 → 反過程（一層層拆套娃）：
+    拆 Eth 標頭 → 拆 IP 標頭 → 拆 TCP 標頭 → 拿到你的資料
+        │
+  → 每一層「只加自己的標頭」，不動別層的
+    每一層「只讀自己的標頭」，不管別層裝什麼
+    這就是分層的物理實現
 ```
 
-**現實**：很少人嚴格按這 7 層分。Session / Presentation 在實務中常常跟 Application 混在一起。
+關鍵心智：分層的物理實現是**封裝**——你的資料像俄羅斯套娃，被一層層套上標頭（TCP→IP→Ethernet）再送出，對方一層層拆開。每層只加/讀自己的標頭，不管別層裝什麼。這個「套娃」結構你能用 tcpdump 親眼看到。
 
-OSI 模型主要用在**教學跟術語對齊**。
+> 如果你還沒讀 Ch 1 的封包旅程，先回看 [Ch 1 — 一個封包的旅程](./01-internet-journey.md)。本章是那趟旅程的「分層架構」版——把旅程的步驟對應到分層。
 
-## TCP/IP 4 層模型
+## TCP/IP 四層:實際在跑的模型
 
-實際 Internet 用的模型：
-
-```
- 4. Application  │ HTTP / SMTP / FTP / DNS / SSH / TLS
- 3. Transport    │ TCP / UDP
- 2. Internet     │ IP / ICMP
- 1. Link         │ Ethernet / WiFi / ARP / Physical
-```
-
-把 OSI 的 7 層壓成 4 層：
-
-- OSI 的 5/6/7 → TCP/IP 的 Application
-- OSI 的 4 → Transport
-- OSI 的 3 → Internet
-- OSI 的 1/2 → Link
-
-**現實中 TCP/IP 模型更實用**，因為它跟實際 protocol 對應好。
-
-## 兩個模型對照
+我們先講實際的 TCP/IP 模型（因為這是真的在運作的）：
 
 ```
-   OSI                    TCP/IP                 例
- ┌─────────────┐         ┌──────────────┐
- │ 7 App       │         │              │       HTTP, SSH
- │ 6 Present.  │ ──────► │ 4 App        │       TLS（也算 6）
- │ 5 Session   │         │              │       
- ├─────────────┤         ├──────────────┤
- │ 4 Transport │ ──────► │ 3 Transport  │       TCP, UDP
- ├─────────────┤         ├──────────────┤
- │ 3 Network   │ ──────► │ 2 Internet   │       IP, ICMP
- ├─────────────┤         ├──────────────┤
- │ 2 Data Link │         │              │       Ethernet, ARP
- │             │ ──────► │ 1 Link       │       
- │ 1 Physical  │         │              │       電 / 光
- └─────────────┘         └──────────────┘
+TCP/IP 四層模型（由上而下）：
+
+  ┌─────────────────────────────────────────────┐
+  │ 應用層 (Application)                          │
+  │   HTTP, DNS, SSH, TLS, FTP, SMTP...           │
+  │   職責：應用程式的資料格式與邏輯              │ ← Part 3
+  ├─────────────────────────────────────────────┤
+  │ 傳輸層 (Transport)                            │
+  │   TCP（可靠）, UDP（快速）                     │
+  │   職責：端到端通訊、port、可靠性              │ ← Ch 6/7
+  ├─────────────────────────────────────────────┤
+  │ 網路層 (Internet)                             │
+  │   IP, ICMP, 路由                              │
+  │   職責：跨網路定址與轉送（IP 位址、路由）     │ ← Ch 4/5
+  ├─────────────────────────────────────────────┤
+  │ 連結層 (Link)                                 │
+  │   Ethernet, WiFi, ARP                         │
+  │   職責：同一個區網內的傳輸（MAC 位址）        │ ← Ch 3
+  └─────────────────────────────────────────────┘
+        │
+  資料往下走（送出）：每層加標頭
+  資料往上走（收到）：每層拆標頭
 ```
 
-實務上講「**第幾層**」常常是 OSI 的編號（特別是企業網路），但概念是 TCP/IP。
+| 層 | 定址用什麼 | 資料單位叫什麼 | 代表協定 | 對應章節 |
+|---|---|---|---|---|
+| 應用層 | 域名/URL | message / data | HTTP/DNS/SSH | Part 3 |
+| 傳輸層 | port（埠號）| segment（TCP）/ datagram（UDP）| TCP/UDP | Ch 6/7 |
+| 網路層 | IP 位址 | packet（封包）| IP/ICMP | Ch 4/5 |
+| 連結層 | MAC 位址 | frame（訊框）| Ethernet/WiFi | Ch 3 |
 
-## 封裝（Encapsulation）
+> **每一層用「不同的位址」定址——這是理解網路的關鍵**。連結層用 **MAC 位址**（網卡的硬體位址，只在同一區網內有意義）、網路層用 **IP 位址**（全球定址，跨網路）、傳輸層用 **port**（區分同一台機器上的不同程式/連線）、應用層用**域名**（給人看的名字）。一個封包同時帶著這四種位址——MAC 說「這個區網內送給誰」、IP 說「全世界範圍送給哪台機器」、port 說「那台機器上的哪個程式」。為什麼需要這麼多種?因為它們解決不同範圍的問題：MAC 解決「同一條網線/WiFi 上的鄰居」、IP 解決「跨越整個網際網路找到目標機器」、port 解決「同一台機器上有很多程式，給哪個」。Ch 3-7 會逐一深入每種定址。
 
-每往下一層，**加上自己的 header（包裝）**：
+## OSI 七層:理論參考框架
 
-```
-                                    Application data
-                                          │
-                                          ▼ (App data)
-                              ┌─ App data ─┐
-                              │  HTTP header │
-                                          │
-                                          ▼ (with HTTP header)
-                              ┌─ TCP header ─┬─ HTTP + data ─┐
-                                          │
-                                          ▼ (with TCP header)
-                              ┌─ IP header ─┬─ TCP + HTTP + data ─┐
-                                          │
-                                          ▼ (with IP header)
-                              ┌─ Eth header ─┬─ IP + TCP + HTTP + data ─┬─ Eth trailer ─┐
-                                          │
-                                          ▼
-                                       到網路上
-```
-
-每層 header 是「**這層的元資料**」：
-
-| 層 | header 含 |
-|---|---|
-| Ethernet | 來源 MAC、目標 MAC、type |
-| IP | 來源 IP、目標 IP、TTL、protocol |
-| TCP | 來源 port、目標 port、seq、ack、flag |
-| HTTP | method、URL、headers |
-
-**反方向（接收）**：每層**剝掉自己的 header**，往上交。
-
-## 一個 HTTP 請求的封裝
-
-實際看一個 `curl https://example.com` 的 packet：
+OSI 模型把 TCP/IP 的應用層細分，多了表示層和會議層：
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│ Ethernet header (14 bytes)                                       │
-│   - dst MAC: aa:bb:cc:dd:ee:ff (路由器)                          │
-│   - src MAC: 11:22:33:44:55:66 (你)                              │
-│   - type: 0x0800 (IP)                                            │
-├──────────────────────────────────────────────────────────────────┤
-│ IP header (20 bytes)                                             │
-│   - dst IP: 93.184.216.34 (example.com)                          │
-│   - src IP: 192.168.1.10 (你)                                    │
-│   - protocol: 6 (TCP)                                            │
-│   - TTL: 64                                                      │
-├──────────────────────────────────────────────────────────────────┤
-│ TCP header (20 bytes)                                            │
-│   - src port: 54321                                              │
-│   - dst port: 443                                                │
-│   - flags: ACK, PSH                                              │
-├──────────────────────────────────────────────────────────────────┤
-│ TLS record (5 bytes header + encrypted payload)                  │
-├──────────────────────────────────────────────────────────────────┤
-│ HTTP/2 frame (encrypted in TLS)                                  │
-│   - method: GET                                                  │
-│   - path: /                                                      │
-└──────────────────────────────────────────────────────────────────┘
+OSI 七層 vs TCP/IP 四層的對應：
+
+  OSI 七層                      TCP/IP 四層
+  ┌──────────────┐
+  │ 7 應用層      │ ┐
+  │ 6 表示層      │ ├─────────▶  應用層
+  │ 5 會議層      │ ┘            （TCP/IP 把這三層合一）
+  ├──────────────┤
+  │ 4 傳輸層      │ ─────────▶  傳輸層
+  ├──────────────┤
+  │ 3 網路層      │ ─────────▶  網路層
+  ├──────────────┤
+  │ 2 連結層      │ ┐
+  │ 1 實體層      │ ├─────────▶  連結層
+  └──────────────┘ ┘            （TCP/IP 不細分實體層）
+        │
+  OSI 多出來的層（在 TCP/IP 裡併入應用層）：
+    表示層：資料格式/加密/壓縮（如 TLS 有人歸這層）
+    會議層：對話管理（建立/維持/結束 session）
+    實體層：電壓/光/無線電的物理規格（網線、光纖規格）
 ```
 
-每層 header 都有自己的「目的」 — TCP 不關心 IP 的目標，IP 不關心 Ethernet 的 MAC。每層 abstract。
-
-## 「同層通訊」
-
-**邏輯上**：你的 HTTP layer 直接跟 server 的 HTTP layer 對話。
-**實際上**：訊息往下封裝、過網路、上封裝。
-
 ```
-  你的 HTTP  ─────邏輯上───►  server 的 HTTP
-       │                              ▲
-       ▼                              │
-   你的 TCP                       server TCP
-       │                              ▲
-       ▼                              │
-   你的 IP                        server IP
-       │                              ▲
-       ▼                              │
-   你的網卡 ─── 真實網路 ───►  server 網卡
+OSI 七層的記憶法（由下而上）：
+  1 實體 Physical    —— 電壓、光、無線電（物理訊號）
+  2 連結 Data Link   —— MAC、訊框、交換器
+  3 網路 Network     —— IP、路由、路由器
+  4 傳輸 Transport   —— TCP/UDP、port
+  5 會議 Session     —— 對話管理
+  6 表示 Presentation—— 編碼、加密、壓縮
+  7 應用 Application —— HTTP、應用邏輯
+
+  英文助記：Please Do Not Throw Sausage Pizza Away
+           (Physical Data-link Network Transport Session Presentation Application)
 ```
 
-每層**「以為」**自己在跟對端同層直接溝通。這個 abstraction 是分層的核心。
+> **OSI 是「理想的參考框架」，TCP/IP 是「實際在跑的」——別把 OSI 當成現實**。OSI 七層是 1980 年代國際標準組織設計的「完美分層」，但它太理想化、太複雜，現實的網際網路是按更早、更實用的 TCP/IP 建起來的。所以**今天真正在運作的是 TCP/IP 四層**，OSI 主要當「溝通用的參考座標」——當有人說「這是第 7 層的問題」（應用層）或「第 4 層負載平衡」（傳輸層/TCP），他們用 OSI 的層號當共同語言。實務中常聽到「L2 交換器」（連結層）、「L3 路由」（網路層）、「L4/L7 負載平衡」（傳輸層/應用層）——這些 L2-L7 就是 OSI 層號。爭議點：TLS 該算第幾層？有人說表示層（6）、有人說它跨會議+表示。HTTPS 的 S 介於傳輸和應用之間。這些「歸哪層」的爭論正說明 OSI 的理論性——別太糾結，理解「它大概在傳輸層之上、應用層之下」就夠。**面試會問 OSI 七層（背起來），實際 debug 用 TCP/IP 四層（理解它）**。
 
-## 一個常見誤解：「OSI 模型是事實」
+## 親眼看封裝:tcpdump 拆套娃
 
-**錯**。OSI 是 1980s 的「**理想模型**」，但 ISO 自己推的 OSI protocol stack（X.25 系列）失敗了。
+理論講完，動手看真實封包的分層結構：
 
-實際 Internet 用的是**TCP/IP**（1970s DARPA 的設計）。OSI 模型保留下來是**教學**用，幫助人們對齊術語。
+```bash
+# 抓一個封包，看它的分層結構（-e 顯示連結層，-v 詳細）
+sudo tcpdump -i any -n -e -v -c 1 'tcp port 443' &
+curl -sI https://example.com > /dev/null
+# 輸出（一個封包，但能看到多層標頭）：
+# aa:bb:cc:dd:ee:ff > 11:22:33:44:55:66, ethertype IPv4    ← 連結層（MAC 位址）
+#   192.168.1.100.54321 > 93.184.216.34.443: ...           ← 網路層(IP) + 傳輸層(port)
+#   Flags [S], seq ...                                       ← TCP 標頭（SYN）
+sudo pkill tcpdump
 
-## 一個常見誤解：「TLS 是第 6 層」
+# 用 Wireshark 看更清楚（圖形化的分層）
+# sudo tcpdump -i any -w ~/netlab/captures/sample.pcap -c 20 'tcp port 443'
+# 然後用 wireshark 開 sample.pcap，每個封包能展開看：
+#   ▶ Ethernet II        (連結層：來源/目標 MAC)
+#   ▶ Internet Protocol  (網路層：來源/目標 IP, TTL...)
+#   ▶ Transmission Control Protocol (傳輸層：port, 序號, flags...)
+#   ▶ (應用層資料)
+```
 
-**部分對**。TLS 在 OSI 模型勉強對到 Presentation（6）。但實務上講 TLS 通常算 Application（4，TCP/IP）。
+```
+tcpdump -e 輸出對應的分層：
 
-「TLS 是第 7 層」「TLS 是第 6 層」「TLS 是第 5 層」 — 都有人講。**別執著於分類**。
+  aa:bb:cc... > 11:22:33...     ← 連結層（Ethernet，MAC 位址）
+  ethertype IPv4                ← 連結層說「裡面裝的是 IPv4」
+  192.168.1.100 > 93.184...     ← 網路層（IP 位址）
+  .54321 > .443                 ← 傳輸層（port）
+  Flags [S], seq ...            ← 傳輸層（TCP 的 SYN flag）
+        │
+  → 一個封包，tcpdump 幫你拆出每一層
+    Wireshark 更直觀（樹狀展開每層的每個欄位）
+```
 
-## 一個常見誤解：「分層必須嚴格遵守」
+> **Wireshark 的「樹狀展開」是理解封裝的最佳工具——它把套娃一層層拆給你看**。抓一個封包用 Wireshark 開，你能展開看到 `Ethernet II`（連結層，含來源/目標 MAC）→ `Internet Protocol`（網路層，含 IP、TTL）→ `Transmission Control Protocol`（傳輸層，含 port、序號、flags）→ 應用層資料。這就是封裝的真實樣貌——一個封包確實是「標頭套標頭」的結構。建議練習 A（Ch 12 後）會用 Wireshark 完整解剖一次 HTTPS 連線，你會親眼看到每一層。現在先建立這個認知：**分層不是抽象比喻，是封包裡真實的 bytes 排列**。每一層的標頭都有固定格式（Ch 3-6 會逐一拆解每個欄位），加起來就是線上傳輸的那串 bytes。
 
-**錯**。實務有大量「跨層」設計：
+## 對比:分層的好處與代價
 
-- TCP fast open 把 application 資料放進 SYN packet
-- HTTP/2 / 3 跟下層 TLS / QUIC 緊密綁定
-- HTTPS 重設 SNI 攔截 — 路由器看 TLS 內容
-- DPI 防火牆 — 根據應用層內容做網路層決策
+| 面向 | 分層的好處 | 分層的代價 |
+|---|---|---|
+| 演進 | 每層獨立升級（HTTP/1→2→3 不動 TCP）| —— |
+| 替換 | 換實體媒介（WiFi/光纖）只動連結層 | —— |
+| 除錯 | 能定位「問題在哪一層」 | —— |
+| 開銷 | —— | 每層加標頭（bytes 開銷）|
+| 重複 | —— | 多層做類似的事（如多層都有錯誤檢查）|
+| 效能 | —— | 嚴格分層有時妨礙優化（跨層優化被禁止）|
 
-「分層」是**參考框架**，不是法律。
+> **分層有真實代價，現實會「打破分層」來換效能**。每層加自己的標頭是 bytes 開銷（一個小封包可能標頭比資料還大）。多層做重複的事（連結層有 CRC 校驗、TCP 也有 checksum）。嚴格分層有時妨礙優化——所以現實常「跨層」：NAT（Ch 8）就是路由器偷看並修改傳輸層的 port（違反「路由器只看網路層」的分層原則）；負載平衡器看到應用層的 HTTP 標頭來決定轉發（L7 負載平衡）；QUIC（Ch 39）把傳輸層和加密層合併以減少握手延遲。這些「分層違規」不是設計失誤，是務實的效能取捨。理解「分層是理想、現實會妥協」，你才不會在看到 NAT/L7 LB 時困惑「這不符合分層啊」。分層是強大的組織原則，但不是不可違背的鐵律。
+
+## 故意弄壞:在錯的層找問題
+
+```bash
+# 體會「定位問題在哪一層」的價值
+# 用「分層」系統化排查一個「連不上」問題：
+target="example.com"
+
+ping -c2 "$target"              # 通嗎？→ 網路層 OK（能到達主機）
+                                #        不通 → 網路層問題（路由/IP）
+nc -zv "$target" 443            # port 開嗎？→ 傳輸層 OK（TCP 連得上）
+                                #             refused → 傳輸層（服務沒開/防火牆）
+curl -I "https://$target"       # HTTP 回應正常嗎？→ 應用層 OK
+                                #                   錯誤 → 應用層問題
+# → 一層層往上排，定位問題在哪層，對應到該層的工具
+
+# 各層問題的典型症狀：
+# 連結層（Ch 3）：MAC/ARP 不通 → 同網段都連不上
+# 網路層（Ch 4）：路由錯/IP 錯 → 跨網段不通，但同網段通
+# 傳輸層（Ch 6）：port 沒開/防火牆擋 → ping 通但連不上服務
+# 應用層（Ch 10）：服務本身錯 → TCP 連得上但回應錯誤
+```
+
+> **「問題在哪一層」是 debug 網路的核心思路——分層給了你系統化排查的地圖**。當「連不上」時，不要亂猜，而是一層層驗證：`ping`（網路層通嗎？能到達那台機器嗎？）→ `nc -zv host port`（傳輸層通嗎？那個 port 的 TCP 連得上嗎？）→ `curl`（應用層通嗎？HTTP 有正常回應嗎？）。每一層通過，問題就在更上層。`ping 通但 nc 不通` = 機器在但服務的 port 沒開或被防火牆擋（傳輸層）；`nc 通但 curl 錯` = TCP 連得上但應用層出問題。這個「自底向上逐層排查」是 Ch 16 和練習 B 的核心方法。分層模型不只是理論——它是你 debug 時的座標系，讓你知道「現在該查哪一層、用哪個工具」。
 
 ## 動手練習
 
-**1. 看一個 packet 的所有層**
+1. 背 OSI 七層：用助記句記住七層順序，並說出每層的職責和代表協定
 
-```bash
-sudo tcpdump -nn -X -i any 'host example.com' -c 1
-```
+2. 對應兩個模型：畫出 OSI 七層和 TCP/IP 四層的對應關係，標出哪些層被合併
 
-`-X` 印 hex + ASCII。看到的是 Ethernet header + IP header + TCP header + payload。
+3. 看封裝：用 `tcpdump -e -v` 抓一個封包，指出輸出裡的連結層（MAC）、網路層（IP）、傳輸層（port）
 
-對照本章 header 結構解析。
+4. Wireshark 拆套娃：抓幾個封包用 Wireshark 開，展開一個封包的每一層，看每層的欄位
 
-**2. wireshark 看 packet 樹狀**
+5. 跑「分層排查」：對一個網站依序 ping→nc→curl，理解每步驗證哪一層
 
-```bash
-sudo wireshark
-# capture interface, filter "host example.com"
-# 開 browser 訪問 https://example.com
-# 點任一個 packet → 看左下「分層」面板
-```
+## 本章重點整理
 
-Wireshark 自動把 packet 拆成 Ethernet → IP → TCP → TLS → HTTP/2 樹狀，每層 header 點開看。
-
-**3. 數 header 大小**
-
-對 `curl https://example.com` 的 GET 請求：
-
-- Ethernet header: ? bytes
-- IP header: ? bytes
-- TCP header: ? bytes
-- TLS overhead: ? bytes
-- HTTP payload: ? bytes
-- 總共: ? bytes
-
-正常 small request 約 100-200 bytes overhead + payload。
-
-**4. 找個「跨層」例子**
-
-研究 TCP Fast Open（TFO）：它怎麼把 application data 塞進 SYN packet？這違反分層原則嗎？
+- 分層的物理實現是封裝（encapsulation）：資料像套娃被層層加標頭（TCP→IP→Ethernet）再送出，對方層層拆開
+- TCP/IP 四層（應用/傳輸/網路/連結）是實際在跑的；OSI 七層是理論參考框架（多了表示/會議/實體）
+- 每層用不同位址定址：MAC（同區網）、IP（跨網路）、port（同機器的不同程式）、域名（給人看）
+- 分層好處是獨立演進/替換/除錯；代價是標頭開銷和重複工作——現實會「打破分層」換效能（NAT、L7 LB、QUIC）
+- 「問題在哪一層」是 debug 核心：ping（網路層）→nc（傳輸層）→curl（應用層）逐層排查
 
 ## 自我檢核
 
-- [ ] OSI 7 層每層名字 + 例 protocol 講得出
-- [ ] TCP/IP 4 層對應到 OSI 哪些層
-- [ ] 「封裝」概念清楚（每層加 header）
-- [ ] 知道實務上分層不是嚴格遵守
-- [ ] 用 wireshark 看過 packet 的分層
+- [ ] 能說出 TCP/IP 四層和 OSI 七層，以及它們的對應關係
+- [ ] 知道每層用什麼定址（MAC/IP/port/域名），為什麼需要這麼多種
+- [ ] 能解釋封裝（套娃），並在 tcpdump/Wireshark 裡指認每一層
+- [ ] 知道為什麼有兩個模型，何時用 OSI（溝通）何時用 TCP/IP（實作）
+- [ ] 能用「分層」系統化排查一個連不上的問題
 
-下一章正式進鏈結層 — Ethernet 與 ARP，從最底層往上爬。
+## 延伸閱讀
 
-→ [Ch 3 鏈結層：Ethernet / ARP](./03-link-layer-ethernet-arp.md)
+### 書籍
+
+- **《TCP/IP Illustrated, Volume 1》— Ch 1** — Stevens & Fall
+  - **讀哪幾章**：Ch 1.2-1.3（分層與封裝），用真實封包講分層
+  - **這本書的定位**：本課協定聖經；封裝那節是本章的權威版
+  - **前提**：無
+
+- **《Computer Networking: A Top-Down Approach》— Ch 1** — Kurose & Ross
+  - **讀哪幾章**：Ch 1.5（協定層與服務模型）
+  - **這本書的定位**：大學網路課標準教材，分層講得學術完整
+  - **前提**：無
+
+### 文章
+
+- **[The OSI model explained](https://www.cloudflare.com/learning/ddos/glossary/open-systems-interconnection-model-osi/)** — Cloudflare
+  - **這篇說什麼**：OSI 七層每層的職責，配 DDoS 攻擊發生在哪層的實例
+  - **讀哪裡**：整篇（短）
+  - **為什麼值得讀**：把抽象的 OSI 層和真實的攻擊/工程場景連起來
+
+### 官方文件
+
+- **[RFC 1122 — Requirements for Internet Hosts](https://www.rfc-editor.org/rfc/rfc1122)** — IETF
+  - **讀哪裡**：Section 1.1.3（TCP/IP 的分層架構，官方定義）
+  - **為什麼值得讀**：TCP/IP 四層模型的權威原始定義；理解「實際在跑的模型」怎麼被規範
+
+下一章我們從最底層開始挖——連結層的 Ethernet 和 ARP，看「同一個區網內，封包怎麼靠 MAC 位址送到鄰居」。
+
+→ [Ch 3 連結層：Ethernet 與 ARP](./03-link-layer-ethernet-arp.md)

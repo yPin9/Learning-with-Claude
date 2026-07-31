@@ -1,215 +1,167 @@
-# Ch 27 — 三家對比與選擇
+# Ch 27 — 三家 VPN 比較
 
-> 目標：對比 WireGuard / OpenVPN / IPSec，知道在不同場景該選哪個。
+> **目標**：把 WireGuard（Ch 24）、OpenVPN（Ch 25）、IPSec（Ch 26）放在一起做完整比較，給你一個清楚的決策框架——什麼場景選什麼、各自的真實取捨、效能/安全/易用性/相容性的權衡。這章是 Part 6 的總結，不引入新技術，而是整合三章的知識成「實際選擇 VPN 時怎麼決定」的能力。讀完你能在任何 VPN 場景做出有根據的選擇。
 
-## 完整對照表
+> **環境**：總結章，無新實作。
 
-| 維度 | WireGuard | OpenVPN | IPSec |
-|---|---|---|---|
-| 出生 | 2018 | 2001 | 1995 |
-| 程式碼 | ~4k 行 | ~70k 行 | 數百 k |
-| 預設位置 | kernel | user-space | kernel |
-| Protocol | UDP only | UDP / TCP | ESP (50) + IKE (UDP 500/4500) |
-| Port 偽裝 | 任意 UDP | TCP 443 (好) | 不能 |
-| 加密選擇 | 固定（強） | 多選 | 多選 |
-| 設定複雜度 | **低** | 中 | 高 |
-| 連線速度 | **最快** | 中 | 快 |
-| 行動 roaming | **好** | 中 | 差 |
-| NAT 穿透 | 好 | 好 | 中 |
-| 跨平台 | 全 | 全 | 全（OS 內建） |
-| 企業 admin | 弱 | 中 | **強** |
-| Cert revocation | 手動 | **PKI 完整** | **PKI 完整** |
-| 防火牆對抗 | 弱-中 | **強** (TCP 443) | 弱 |
-| 社群成熟度 | 高 | 高 | 高 |
+## 為什麼需要一章專門比較？
 
-## 場景推薦
+學了三家 VPN，但實際要架/選 VPN 時，「該用哪個」常讓人困惑。網路上的對比文章常流於表面（「WireGuard 最快」）或有偏見（賣某產品的）。這章給你一個**有根據、無偏見**的決策框架——基於前三章的原理理解，而非行銷話術。
 
-### 個人 VPN（自架）
+決策框架比記住「哪個最好」有價值——因為沒有「最好」，只有「最適合這個場景」。理解每家的真實取捨（不只優點，還有限制），你才能在面對具體需求（個人翻牆？企業 site-to-site？行動裝置？）時做對選擇。這章也是 Part 6 的整合複習，把三家的知識編織成決策能力。
 
-**WireGuard** — 沒競爭。簡單、快、安全。
+## 完整對比表
 
-### 翻牆（中國 GFW）
+```
+WireGuard / OpenVPN / IPSec 全面對比：
 
-**OpenVPN over TCP 443** > **V2Ray / Trojan**（Ch 30）> **WireGuard**
+  ┌──────────────┬────────────┬────────────┬────────────┐
+  │ 面向          │ WireGuard  │ OpenVPN    │ IPSec      │
+  ├──────────────┼────────────┼────────────┼────────────┤
+  │ 速度          │ ★★★★★    │ ★★★      │ ★★★★     │
+  │ 簡單度        │ ★★★★★    │ ★★        │ ★         │
+  │ 安全（現代）  │ ★★★★★    │ ★★★★     │ ★★★★     │
+  │ 偽裝能力      │ ★★        │ ★★★★(TCP)│ ★★        │
+  │ 設備相容      │ ★★★      │ ★★★★     │ ★★★★★   │
+  │ 行動體驗      │ ★★★★★    │ ★★★      │ ★★★★     │
+  │ 企業/互通     │ ★★★      │ ★★★      │ ★★★★★   │
+  │ 成熟度        │ ★★★      │ ★★★★★   │ ★★★★★   │
+  └──────────────┴────────────┴────────────┴────────────┘
+        │
+  協定基礎：Noise        TLS          IKE+ESP
+  執行位置：kernel       用戶空間      kernel
+  程式碼量：~4k 行       ~100k 行     龐大
+```
 
-GFW 對 WireGuard UDP 流量越來越敏感。OpenVPN TCP 443 偽裝成 HTTPS 較強，但**真的對抗 GFW 用 V2Ray / Trojan / Shadowsocks**。
-
-### 企業 site-to-site
-
-**IPSec** — 跟硬體 router / 廠商整合好。
-
-如果**雙方都你管的 Linux**，**WireGuard 也很好**且簡單。
-
-### 企業 remote access（員工連回辦公室）
-
-歷史用 **OpenVPN** 或 **IPSec**（含 cert + AD 整合）。
-
-新公司開始改 **Tailscale / Twingate**（基於 WireGuard 的 zero-trust 平台）— 大幅簡化管理。
-
-### 行動裝置友善
-
-**WireGuard**（roaming 好）= **IKEv2** > OpenVPN
-
-iPhone / Android 切換 WiFi / 4G 時不斷線 → WireGuard / IKEv2 更穩。
-
-### Production server-to-server
-
-**WireGuard** — 簡單、快、好維護。
-
-### 跨大洲低延遲
-
-**WireGuard** — 加密 overhead 最低。
-
-## Tailscale / Headscale
-
-值得單獨提的「**現代 VPN 解決方案**」：
-
-**Tailscale**：
-
-- 基於 WireGuard
-- 自動 NAT 穿透 + relay
-- 不需要 public IP server
-- 集中管理（webconsole）
-- 免費 < 100 device
-- 商業 / 企業付費
-
-**Headscale**：
-
-- Tailscale 的開源 self-hosted control server
-- 你自己跑，不依賴 Tailscale 公司
-
-**現代 「VPN as service」標配**。家庭 / 小團隊極推。
-
-## 性能對比（典型）
-
-| VPN | Throughput (1Gbps link) | CPU 用 |
+| 需求 | 推薦 | 為什麼 |
 |---|---|---|
-| WireGuard | 950 Mbps | 5-10% |
-| IPSec (kernel) | 900 Mbps | 10-15% |
-| OpenVPN | 200-500 Mbps | 30-50% |
+| 個人自架 VPN | **WireGuard** | 簡單、快、安全 |
+| 行動裝置常用 | **WireGuard** | 漫遊好、省電 |
+| 繞嚴格審查（GFW）| OpenVPN/TCP 或專門工具（Ch 29-30）| 偽裝成 HTTPS |
+| 企業 site-to-site | **IPSec** | 標準、設備互通 |
+| 連雲端 VPC | IPSec 或 WireGuard | 看雲商支援 |
+| 維護現有 OpenVPN | OpenVPN | 不必遷移 |
+| 需要 iOS 原生（不裝 app）| IPSec | 系統內建 |
 
-WireGuard / IPSec 接近 wire speed。OpenVPN 因 user-space 限制較慢。
-
-## 安全成熟度
-
-3 家都「**安全**」（用最新 cipher）。差別：
-
-- **WireGuard**：code 量小、audit 容易、cipher 固定（少 misconfiguration）
-- **OpenVPN**：歷史長、社群大、bug 都被找過。**選錯 cipher 不安全**
-- **IPSec**：歷史長、企業生態成熟。但**RFC 多到不可能全 audit**
-
-「**WireGuard 因為簡單而安全**」是設計哲學。
-
-## 「我想自架，怎麼選」決策樹
+## 決策框架:三個問題
 
 ```
- 你要 VPN
-    │
-    ▼
- 個人 / 小團體？─── 是 ──► WireGuard（或 Tailscale 簡化版）
-    │
-   否
-    │
-    ▼
- 企業 site-to-site？──── 是 ──► IPSec（廠商互通）+ WireGuard（單一 vendor）
-    │
-   否
-    │
-    ▼
- 企業遠端接入？──── 是 ──► OpenVPN + AD（傳統）/ Tailscale（現代）
-    │
-   否
-    │
-    ▼
- 翻牆 / 強防火牆？──── 是 ──► V2Ray / Shadowsocks（不是 VPN，是 proxy，Ch 29-30）
-                              或 OpenVPN TCP 443
+選 VPN 的決策樹（問三個問題）：
+
+  問題 1：是「個人/小型」還是「企業/設備互通」？
+    企業/site-to-site/設備互通 → IPSec（標準化）
+    個人/小型 → 往下
+        │
+  問題 2：需要「偽裝繞審查」嗎？
+    需要繞嚴格審查（GFW 封 VPN）→ 
+      OpenVPN/TCP 443 偽裝 或 專門翻牆工具（Ch 29-30，更好）
+    不需要 → 往下
+        │
+  問題 3：有特殊相容/認證需求嗎？
+    需要複雜認證（憑證+MFA）/相容老系統 → OpenVPN
+    沒有特殊需求 → WireGuard（預設首選）
+        │
+  → 大多數個人場景的答案是 WireGuard
+    特殊需求才往 OpenVPN/IPSec
 ```
 
-## 多家混用
+> **選 VPN 的決策可以濃縮成三個問題，而大多數個人場景的答案是 WireGuard**。**問題 1：個人還是企業？** 企業 site-to-site、設備互通（不同廠牌路由器/防火牆要互連）→ **IPSec**（它的標準化和廣泛內建是企業需要的，Ch 26）。**問題 2：需要偽裝繞審查嗎？** 在 GFW 等嚴格審查環境（會封 WireGuard 的 UDP、OpenVPN 的特徵）→ **OpenVPN/TCP 443**（偽裝成 HTTPS）或更好的**專門翻牆工具**（Ch 29-30，Shadowsocks/V2Ray 專為對抗審查設計，比 VPN 更隱蔽）。**問題 3：有特殊相容/認證需求嗎？** 需要複雜認證（企業 PKI、MFA）或相容老系統 → **OpenVPN**。**都不是** → **WireGuard**（預設首選，Ch 24）。這個決策樹的關鍵洞察：**WireGuard 是預設，特殊需求才偏離**。對本課的核心場景（個人買 VPS 自架 VPN，Part 8）——沒有企業互通需求、不在最嚴格審查環境、不需複雜認證——答案就是 WireGuard。這也是為什麼練習 C 和 Final 用 WireGuard。理解這個框架，你面對任何 VPN 選擇都能快速定位到對的答案，而非被行銷或片面資訊誤導。
 
-實際 production 常常多種混用：
+## 各家的真實取捨（不只優點）
 
-- WireGuard：server-to-server
-- OpenVPN：員工 remote access
-- IPSec：跟客戶 / 合作方 site-to-site
-- Tailscale：開發環境快速建網
+```
+誠實的取捨（每家的限制，避免盲目崇拜）：
 
-不同 use case 用不同工具，沒有「**單一最佳**」。
+  WireGuard 的限制：
+    - UDP 特徵明顯 → 易被 DPI 識別封鎖（審查環境弱）
+    - 沒有內建的動態 IP 管理（要自己或用工具如 wg-easy）
+    - 認證只有公鑰（沒有帳密/MFA 的原生支援）
+    - 預設記錄 peer 的 last endpoint（隱私上有人介意）
+        │
+  OpenVPN 的限制：
+    - 慢（用戶空間 + TLS 開銷）
+    - 設定複雜（PKI/憑證/一堆參數）
+    - TCP 模式有 TCP over TCP 問題
+        │
+  IPSec 的限制：
+    - 最複雜（協商/NAT-T/隱晦錯誤）
+    - 難 debug（"no proposal chosen"）
+    - 各家實作的互通有時有坑
+        │
+  → 沒有完美的 VPN，理解限制才能選對、用對
+```
 
-## 一個常見誤解：「VPN 速度由 VPN 決定」
+> **誠實面對每家的限制，避免「WireGuard 崇拜」——它也有弱點，特別是在審查環境**。網路上常有「WireGuard 完美無缺」的論調，但理解它的**限制**才能用對：WireGuard 的 **UDP 流量特徵明顯**，DPI（深度封包檢測，Ch 31）容易識別並封鎖——所以在 GFW 等嚴格審查環境，WireGuard 常被封（這也是為什麼翻牆要用專門工具而非裸 WireGuard，Ch 29-31）；它**只有公鑰認證**（沒有原生的帳密/MFA，企業要進階認證得搭配其他工具）；它**預設記錄 peer 的 last endpoint**（有隱私潔癖的人介意）。OpenVPN 的限制是慢和複雜（Ch 25）。IPSec 的限制是最複雜、難 debug（Ch 26）。**沒有完美的 VPN**——每個都是取捨。這種誠實的認識讓你：(1) 選對工具（知道 WireGuard 在審查環境弱，就不會盲目用它翻牆）；(2) 用對工具（知道限制就能規避或補強）；(3) 不被行銷誤導。本課推 WireGuard 是因為它對「個人自架、一般用途」最適合，但不是因為它「完美」——這種基於理解的判斷，比盲目跟風有價值得多。
 
-**部分對**。**瓶頸**通常在：
+## VPN 之外:何時不該用 VPN
 
-1. server 跟 client 之間的物理網路（最大）
-2. server CPU（如果加密重）
-3. VPN protocol overhead（次要）
-4. server 頻寬（VPS 限額）
+```
+VPN 不是萬靈丹，何時「不該」用 VPN：
 
-WireGuard 在「相同 server」下贏 OpenVPN。但「不同 server」WireGuard 可能輸（廉價 VPS vs 高頻寬 server）。
+  1. 繞嚴格審查（GFW）→ VPN 常被封，用專門翻牆工具（Ch 29-31）
+     Shadowsocks/V2Ray 專為「不被識別」設計，比 VPN 隱蔽
+        │
+  2. 只要保護「某個 app」的流量 → 可能 SSH tunnel（Ch 12）就夠
+     不用整套 VPN
+        │
+  3. 零信任架構（現代企業趨勢）：
+     不是「進了 VPN 就信任」，而是「每次存取都驗證」
+     → BeyondCorp / Tailscale（WireGuard-based 但加了身分層）
+        │
+  4. 只要「換 IP」看地區內容 → 有時 proxy（Ch 28）就夠
+        │
+  → VPN 是工具，不是目的
+    看真正的需求，有時有更合適的方案
+```
 
-## 一個常見誤解：「OpenVPN 已過時，沒人用」
-
-**錯**。OpenVPN 仍是企業主流之一。**老設備 / 老用戶**繼續用 OpenVPN，新部署慢慢遷移。
-
-不要「最新就最好」，**穩定性 / 相容性**對企業更重要。
-
-## 一個常見誤解：「IPSec 跟 OpenVPN 互通」
-
-**錯**。3 家**完全不互通**。WireGuard 客戶端不能連 OpenVPN server。
-
-廠商 / OS 通常**多家都支援** — 但每個連線**選定一家用**。
+> **VPN 不是萬靈丹——繞審查用專門工具、單一 app 用 SSH tunnel、現代企業走零信任**。理解「何時不該用 VPN」和「何時該用」一樣重要：(1) **繞嚴格審查**——VPN（尤其 WireGuard）的特徵易被識別封鎖，**專門的翻牆工具**（Shadowsocks/V2Ray，Ch 29-31）專為「不被 DPI 識別」設計，比 VPN 隱蔽得多——這是 Part 7 的主題；(2) **只要保護某個 app**——`ssh -D`（SOCKS proxy，Ch 12）或 proxy（Ch 28）就夠，不用整套 VPN；(3) **現代企業趨勢是零信任**（zero trust）——不是「連進 VPN 就信任你」（VPN 的「城堡護城河」模型），而是「每次存取每個資源都驗證身分」（BeyondCorp 模型），代表工具如 Tailscale（WireGuard-based 但加了身分驗證層）、Cloudflare Access；(4) **只要換 IP 看地區內容**——有時 proxy（Ch 28）就夠。這些提醒你 **VPN 是工具不是目的**——先想清楚真正的需求（隱私？換 IP？繞審查？連內網？），再選最合適的方案（可能是 VPN，也可能是 proxy/SSH tunnel/零信任）。這個視野讓你不會「什麼問題都想用 VPN 解」。Part 7（翻牆生態）和 Ch 28（proxy）會展開「VPN 之外」的方案。Part 6 到此，你掌握了 VPN 的完整圖像——原理、三家實作、決策框架、和它的邊界。
 
 ## 動手練習
 
-**1. 寫一份「我的 VPN 選擇」決策**
+1. 做決策樹：對 5 個場景（個人翻牆、公司連分部、行動裝置、連雲端、維護舊系統）走決策樹，選出 VPN
 
-對你的具體 use case（個人翻牆？跟同事連？跨機房？）：
+2. 辯論取捨：為每家 VPN 各寫一個「它最適合」和「它最不適合」的場景，理解取捨
 
-- 選哪個？為什麼？
-- 第二選擇是什麼？
-- 不選的理由？
+3. 誠實評估：列出 WireGuard 的 3 個限制，思考在什麼場景這些限制會成為問題
 
-**2. 對比 WireGuard 跟 OpenVPN throughput**
+4. VPN 之外：對「繞 GFW」「保護一個 app」「企業零信任」各想一個「比 VPN 更合適」的方案
 
-兩家都架，跑 iperf3：
+5. 整合複習：不看書，畫出三家 VPN 的工作層、協定、執行位置、主要場景
 
-```bash
-iperf3 -s    # server
-iperf3 -c <vpn-IP>    # client
-```
+## 本章重點整理
 
-對比結果。
-
-**3. 試 Tailscale**
-
-```bash
-# https://tailscale.com 註冊免費
-# 在兩台機器裝 client
-sudo apt install tailscale
-sudo tailscale up
-
-# 兩台互 ping
-```
-
-5 分鐘建好 VPN。對比手架 WireGuard 的工程量。
-
-**4. 看大公司用什麼**
-
-研究：Cloudflare、Tailscale、Mullvad（VPN provider）各用什麼 protocol？為什麼？
-
-**5. 寫個 dev journal**
-
-對 4 家 VPN（WireGuard / OpenVPN / IPSec / Tailscale）各用一次，寫下 100 字感受。
+- 三家無「最好」只有「最適合」：WireGuard（簡單快速）、OpenVPN（偽裝靈活）、IPSec（標準互通）
+- 決策三問：企業/互通→IPSec；繞審查→OpenVPN/TCP 或專門工具；特殊認證→OpenVPN；其他→WireGuard
+- 誠實取捨：WireGuard 在審查環境弱（UDP 易識別）、只有公鑰認證；別盲目崇拜
+- VPN 不是萬靈丹：繞審查用專門工具（Ch 29-31）、單 app 用 SSH tunnel、企業趨勢是零信任
+- 個人自架（本課場景）的答案是 WireGuard——練習 C/Final 用它
 
 ## 自我檢核
 
-- [ ] 3 家 VPN 對照表理解
-- [ ] 知道每個場景該選哪家
-- [ ] 知道 Tailscale 的價值
-- [ ] 跑過 2+ 家 VPN
-- [ ] 對「**選哪家**」有自己判斷
-- [ ] 體會「無單一最佳，看場景」
+- [ ] 能用決策框架為任何 VPN 場景選出合適的方案
+- [ ] 知道三家各自的優勢場景和真實限制
+- [ ] 理解為什麼 WireGuard 是個人首選但不是「完美」
+- [ ] 知道何時「不該」用 VPN，有更合適的方案
+- [ ] 能整合三章的知識，清楚說出三家的技術路線差異
 
-Part 6 結束。練習 C 完整自架 WireGuard。
+## 延伸閱讀
 
-→ [練習 C：自架 WireGuard 雙端配置](./practice-c-wireguard-setup.md)
+### 文章
+
+- **[VPN protocols compared](https://www.wireguard.com/performance/) + [Cloudflare VPN 對比](https://www.cloudflare.com/learning/network-layer/what-is-a-vpn/)**
+  - **這篇說什麼**：各 VPN 協定的效能和特性對比
+  - **為什麼值得讀**：本章對比的數據支撐
+
+- **[Zero Trust vs VPN](https://www.cloudflare.com/learning/access-management/vpn-vs-zero-trust/)** — Cloudflare
+  - **這篇說什麼**：為什麼企業從 VPN 轉向零信任
+  - **讀哪裡**：整篇
+  - **為什麼值得讀**：理解「VPN 之外」的現代趨勢
+
+### 工具
+
+- **[Tailscale](https://tailscale.com/)** — WireGuard-based 的零信任 VPN
+  - **為什麼值得讀**：結合 WireGuard 的簡單和零信任的身分驗證，是「VPN 的未來」之一；它的部落格（Ch 8 的 NAT 穿透文）也是好資料
+
+Part 6（VPN）的章節到此完成。接下來是練習 C——完整架一個 WireGuard VPN，把 Ch 24 的知識和前面的 NAT/路由/防火牆綜合應用，做出一個真正能用的 VPN。
+
+→ [練習 C：架一個 WireGuard VPN](./practice-c-wireguard-setup.md)
