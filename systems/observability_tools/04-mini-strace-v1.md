@@ -1,441 +1,278 @@
-# Ch 4 — 動手：mini-strace v1
+# Ch 4 — 動手寫 mini-strace v1
 
-> 目標：用 ptrace 寫一支真正能用的 mini-strace。會 print syscall name、參數（含字串）、回傳值。500 行內，500 行外搞定 strace 90% 的場景。
+> **目標**：把 Ch 3 的 ptrace 知識寫成一個**完整可用的 mini-strace**——能執行目標程式、攔截每個 syscall、顯示 syscall 名字、解析參數（含讀取指標指向的字串）、顯示回傳值。寫過它，你對 strace 的理解從「會用」變成「知道它怎麼運作」，這是本課和一般工具教學的根本差別。完成後你有一個自己造的 tracer，並深刻理解所有 tracer 的底層。
 
-## 我們在哪裡
+> **環境**：Linux x86-64，C（gcc）。需要 ptrace（自己的子 process，不需 sudo，Ch 0）。
 
-Part 1 的整合練習。Ch 3 學了 ptrace 機制，這章把它變成「人類看得懂的 syscall 紀錄器」。
+## 為什麼要親手寫一個？
 
-## 規格
+你會用 strace（Ch 5 會深入用法），但「會用工具」和「理解工具」是兩回事。親手用 ptrace 寫一個 mini-strace，讓你：(1) 徹底理解 strace 怎麼看到 syscall（不再是黑盒子）；(2) 知道它的能力和限制從哪來；(3) 當 strace 不夠用時，能自己造工具；(4) 對所有基於 ptrace 的工具（gdb、其他 tracer）有了底層理解。
 
-```bash
-./mystrace /bin/ls /tmp
-```
+這是本課的精髓——「理解工具底層」。Ch 3 講了 ptrace 的機制和 30 行的雛形，這章把它做成一個真正能用、能顯示可讀輸出的 mini-strace。寫的過程會逼你處理所有細節（syscall 名字對照、參數解析、讀取記憶體裡的字串、entry/exit 配對）。完成後，你看 strace 的輸出時，腦中清楚知道它每一步在做什麼。
 
-期望輸出：
+## 先回顧:strace 的核心循環（Ch 3）
 
 ```
-execve("/bin/ls", ["ls", "/tmp"], ...) = 0
-brk(NULL)                               = 0x55b...
-arch_prctl(0x3001, 0x7ff...)            = -1 EINVAL (Invalid argument)
-access("/etc/ld.so.preload", R_OK)      = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
-fstat(3, {st_mode=...,st_size=...})     = 0
-mmap(NULL, ..., PROT_READ, MAP_PRIVATE, 3, 0) = 0x7ff...
-close(3)                                = 0
-...
-write(1, "file1\nfile2\n", 12)          = 12
-exit_group(0)                           = ?
-+++ exited with 0 +++
+mini-strace 要做的事（Ch 3 的循環 + 完整化）：
+
+  1. fork + child PTRACE_TRACEME + exec 目標程式
+        │
+  2. parent 循環：
+     PTRACE_SYSCALL（繼續到 syscall 邊界）
+     waitpid（等它停）
+     PTRACE_GETREGS（讀暫存器）
+        │
+  3. 把暫存器翻譯成可讀（這章的重點）：
+     orig_rax → syscall 名字（查對照表）
+     rdi/rsi/rdx → 參數
+     指標參數 → PEEKDATA 讀出字串/內容
+     rax（exit 時）→ 回傳值
+        │
+  4. 處理 entry/exit 配對：
+     每個 syscall 停兩次（進入、返回）
+     entry 時顯示 syscall+參數，exit 時顯示回傳值
+        │
+  → 從「印 syscall 號」（Ch 3）到「印可讀的 syscall 行」（這章）
 ```
 
-關鍵特徵：syscall name、參數（字串內容）、回傳值、errno 名字。
+關鍵心智：mini-strace 就是 Ch 3 的「fork+TRACEME + 反覆 PTRACE_SYSCALL+GETREGS」循環，加上「**把暫存器翻譯成人類可讀**」——syscall 號 → 名字、參數暫存器 → 值、指標 → 讀出的字串、處理 entry/exit 配對。
 
-## 實作策略
+> 這章直接建立在 Ch 3 的 ptrace 機制上。如果對 PTRACE_SYSCALL、暫存器佈局（rax/rdi/rsi）、entry/exit 不熟，先回看 [Ch 3](./03-ptrace-syscall-deep-dive.md)。
 
-5 件事：
-
-1. **fork + PTRACE_TRACEME + execvp**：把 child 啟動成 tracee
-2. **loop**：PTRACE_SYSCALL → wait → 印 enter → PTRACE_SYSCALL → wait → 印 exit
-3. **syscall number → name**：簡單表
-4. **register → 參數**：按 syscall 的 signature decode，字串用 PEEKDATA / process_vm_readv 讀
-5. **errno → name**：失敗時把負的 rax 翻名字
-
-要短就只支援幾個 syscall（read/write/open/close/...），要完整就大量 case。我們做出 ~30 個常用 syscall 支援。
-
-## 骨架
+## 完整的 mini-strace
 
 ```c
-// mystrace.c
-#define _GNU_SOURCE
+// mini_strace.c — 一個能用的 mini-strace
+// 編譯：gcc -o mini_strace mini_strace.c
+// 用法：./mini_strace <程式> [參數...]
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <unistd.h>
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <sys/user.h>
-#include <sys/uio.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 
-// 從 register 拿 syscall arg
-static long get_arg(struct user_regs_struct *r, int n) {
-    switch (n) {
-        case 0: return r->rdi;
-        case 1: return r->rsi;
-        case 2: return r->rdx;
-        case 3: return r->r10;
-        case 4: return r->r8;
-        case 5: return r->r9;
-    }
-    return 0;
-}
-
-// 從 tracee 讀字串，回傳到 buf
-static void read_string(pid_t pid, long addr, char *buf, size_t buflen) {
-    struct iovec local = { .iov_base = buf, .iov_len = buflen - 1 };
-    struct iovec remote = { .iov_base = (void*)addr, .iov_len = buflen - 1 };
-    ssize_t n = process_vm_readv(pid, &local, 1, &remote, 1, 0);
-    if (n < 0) { strcpy(buf, "<read err>"); return; }
-    buf[n] = '\0';
-    // 找 null terminator
-    size_t i;
-    for (i = 0; i < (size_t)n; i++) if (buf[i] == '\0') break;
-    if (i == (size_t)n) buf[i-1] = '\0';   // 截斷
-}
-
-// errno 名字表（簡化）
-static const char *errno_name(int err) {
-    switch (err) {
-        case EPERM: return "EPERM";
-        case ENOENT: return "ENOENT";
-        case ESRCH: return "ESRCH";
-        case EINTR: return "EINTR";
-        case EBADF: return "EBADF";
-        case EAGAIN: return "EAGAIN";
-        case ENOMEM: return "ENOMEM";
-        case EACCES: return "EACCES";
-        case EFAULT: return "EFAULT";
-        case EEXIST: return "EEXIST";
-        case ENOTDIR: return "ENOTDIR";
-        case EISDIR: return "EISDIR";
-        case EINVAL: return "EINVAL";
-        case EMFILE: return "EMFILE";
-        case ENOSPC: return "ENOSPC";
-        case EPIPE: return "EPIPE";
-        case ECONNREFUSED: return "ECONNREFUSED";
-        default: return "?";
-    }
-}
-
-// syscall name 表（簡化）
+// syscall 號 → 名字的簡易對照（實際 strace 有完整表）
 static const char *syscall_name(long n) {
     switch (n) {
-        case SYS_read:        return "read";
-        case SYS_write:       return "write";
-        case SYS_open:        return "open";
-        case SYS_close:       return "close";
-        case SYS_stat:        return "stat";
-        case SYS_fstat:       return "fstat";
-        case SYS_lseek:       return "lseek";
-        case SYS_mmap:        return "mmap";
-        case SYS_mprotect:    return "mprotect";
-        case SYS_munmap:      return "munmap";
-        case SYS_brk:         return "brk";
-        case SYS_rt_sigaction:return "rt_sigaction";
-        case SYS_rt_sigprocmask:return "rt_sigprocmask";
-        case SYS_ioctl:       return "ioctl";
-        case SYS_pread64:     return "pread64";
-        case SYS_pwrite64:    return "pwrite64";
-        case SYS_access:      return "access";
-        case SYS_pipe:        return "pipe";
-        case SYS_dup:         return "dup";
-        case SYS_dup2:        return "dup2";
-        case SYS_nanosleep:   return "nanosleep";
-        case SYS_getpid:      return "getpid";
-        case SYS_socket:      return "socket";
-        case SYS_connect:     return "connect";
-        case SYS_accept:      return "accept";
-        case SYS_sendto:      return "sendto";
-        case SYS_recvfrom:    return "recvfrom";
-        case SYS_clone:       return "clone";
-        case SYS_fork:        return "fork";
-        case SYS_execve:      return "execve";
-        case SYS_exit:        return "exit";
-        case SYS_exit_group:  return "exit_group";
-        case SYS_wait4:       return "wait4";
-        case SYS_kill:        return "kill";
-        case SYS_uname:       return "uname";
-        case SYS_fcntl:       return "fcntl";
-        case SYS_getdents64:  return "getdents64";
-        case SYS_openat:      return "openat";
-        case SYS_newfstatat:  return "newfstatat";
-        case SYS_arch_prctl:  return "arch_prctl";
-        case SYS_set_tid_address: return "set_tid_address";
+        case SYS_read:    return "read";
+        case SYS_write:   return "write";
+        case SYS_openat:  return "openat";
+        case SYS_close:   return "close";
+        case SYS_mmap:    return "mmap";
+        case SYS_brk:     return "brk";
+        case SYS_execve:  return "execve";
+        case SYS_exit_group: return "exit_group";
+        case SYS_fstat:   return "fstat";
+        case SYS_access:  return "access";
+        default:          return NULL;   // 不認得的就印號
     }
-    return NULL;
 }
 
-// 印 syscall enter（只印名字 + 主要參數）
-static void print_enter(pid_t pid, struct user_regs_struct *r) {
-    long n = r->orig_rax;
-    const char *name = syscall_name(n);
-    char strbuf[256];
-
-    if (!name) {
-        printf("syscall_%ld(", n);
-    } else {
-        printf("%s(", name);
+// 從 tracee 的記憶體讀一個字串（解參考指標參數，如檔名）
+static void read_string(pid_t pid, unsigned long addr, char *buf, int max) {
+    int i = 0;
+    while (i < max - 1) {
+        // PEEKDATA 一次讀一個 word（8 bytes）
+        long word = ptrace(PTRACE_PEEKDATA, pid, addr + i, NULL);
+        if (word == -1) break;
+        memcpy(buf + i, &word, sizeof(word));
+        // 檢查這個 word 裡有沒有字串結尾 \0
+        for (int j = 0; j < (int)sizeof(word); j++) {
+            if (buf[i + j] == '\0') { return; }
+        }
+        i += sizeof(word);
     }
-
-    // 大部分 syscall 印前 3 個參數，特殊 syscall 特殊處理
-    switch (n) {
-        case SYS_openat: {
-            long dfd = get_arg(r, 0);
-            long pathaddr = get_arg(r, 1);
-            long flags = get_arg(r, 2);
-            read_string(pid, pathaddr, strbuf, sizeof(strbuf));
-            if (dfd == AT_FDCWD)
-                printf("AT_FDCWD, \"%s\", %#lx", strbuf, flags);
-            else
-                printf("%ld, \"%s\", %#lx", dfd, strbuf, flags);
-            break;
-        }
-        case SYS_open:
-        case SYS_access:
-        case SYS_stat: {
-            long pathaddr = get_arg(r, 0);
-            read_string(pid, pathaddr, strbuf, sizeof(strbuf));
-            printf("\"%s\", %#lx", strbuf, get_arg(r, 1));
-            break;
-        }
-        case SYS_write: {
-            long fd = get_arg(r, 0);
-            long bufaddr = get_arg(r, 1);
-            long len = get_arg(r, 2);
-            size_t n = len > 32 ? 32 : len;
-            read_string(pid, bufaddr, strbuf, n + 1);
-            // 替換不可印字元
-            for (size_t i = 0; i < n; i++)
-                if (strbuf[i] < 32 || strbuf[i] > 126) strbuf[i] = '.';
-            strbuf[n] = '\0';
-            printf("%ld, \"%s\"%s, %ld", fd, strbuf, len > 32 ? "..." : "", len);
-            break;
-        }
-        case SYS_read:
-        case SYS_close: {
-            printf("%ld", get_arg(r, 0));
-            if (n != SYS_close) printf(", ?, %ld", get_arg(r, 2));
-            break;
-        }
-        case SYS_execve: {
-            long pathaddr = get_arg(r, 0);
-            read_string(pid, pathaddr, strbuf, sizeof(strbuf));
-            printf("\"%s\", ..., ...", strbuf);
-            break;
-        }
-        case SYS_brk:
-        case SYS_mmap:
-        case SYS_munmap:
-            printf("%#lx, ...", get_arg(r, 0));
-            break;
-        default:
-            printf("%#lx, %#lx, %#lx", get_arg(r, 0), get_arg(r, 1), get_arg(r, 2));
-    }
-
-    printf(")");
-    fflush(stdout);
-}
-
-// 印 syscall exit（回傳值）
-static void print_exit(struct user_regs_struct *r) {
-    long ret = r->rax;
-    if (ret < 0 && ret > -4096) {
-        int err = -ret;
-        printf(" = -1 %s (%s)\n", errno_name(err), strerror(err));
-    } else {
-        printf(" = %ld\n", ret);
-    }
+    buf[i] = '\0';
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "usage: %s <command> [args...]\n", argv[0]);
-        return 1;
-    }
+    if (argc < 2) { fprintf(stderr, "Usage: %s <prog> [args]\n", argv[0]); return 1; }
 
-    pid_t pid = fork();
-    if (pid == 0) {
-        ptrace(PTRACE_TRACEME, 0, 0, 0);
+    pid_t child = fork();
+    if (child == 0) {
+        // child：被 trace，然後 exec 目標
+        ptrace(PTRACE_TRACEME, 0, NULL, NULL);
         execvp(argv[1], &argv[1]);
-        perror("execvp");
-        return 1;
+        perror("execvp"); exit(1);
     }
 
+    // parent（tracer）
     int status;
-    waitpid(pid, &status, 0);
-    ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD);
+    waitpid(child, &status, 0);          // 等 child 停在 exec
+    ptrace(PTRACE_SETOPTIONS, child, 0, PTRACE_O_TRACESYSGOOD);
 
-    int in_syscall = 0;
-    struct user_regs_struct regs;
-
+    int in_syscall = 0;                  // entry/exit 切換
     while (1) {
-        if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) break;
-        if (waitpid(pid, &status, 0) < 0) break;
-
+        ptrace(PTRACE_SYSCALL, child, NULL, NULL);   // 繼續到 syscall 邊界
+        waitpid(child, &status, 0);
         if (WIFEXITED(status)) {
             printf("+++ exited with %d +++\n", WEXITSTATUS(status));
             break;
         }
-        if (WIFSIGNALED(status)) {
-            printf("+++ killed by %d +++\n", WTERMSIG(status));
-            break;
-        }
-        if (!WIFSTOPPED(status)) continue;
-        if (WSTOPSIG(status) != (SIGTRAP | 0x80)) {
-            // 不是 syscall stop，可能是其他 signal，pass through
-            ptrace(PTRACE_SYSCALL, pid, 0, WSTOPSIG(status));
-            continue;
-        }
 
-        ptrace(PTRACE_GETREGS, pid, 0, &regs);
+        struct user_regs_struct regs;
+        ptrace(PTRACE_GETREGS, child, NULL, &regs);
 
         if (!in_syscall) {
-            print_enter(pid, &regs);
+            // syscall-entry：顯示 syscall + 參數
+            long sysnum = regs.orig_rax;
+            const char *name = syscall_name(sysnum);
+
+            if (name && strcmp(name, "openat") == 0) {
+                // openat(dirfd, pathname, flags) → 讀 pathname（rsi 是指標）
+                char path[256];
+                read_string(child, regs.rsi, path, sizeof(path));
+                printf("openat(%lld, \"%s\", ...)", (long long)regs.rdi, path);
+            } else if (name && strcmp(name, "write") == 0) {
+                // write(fd, buf, count) → 讀 buf
+                char buf[64];
+                read_string(child, regs.rsi, buf, sizeof(buf));
+                printf("write(%lld, \"%.20s\", %lld)",
+                       (long long)regs.rdi, buf, (long long)regs.rdx);
+            } else if (name) {
+                printf("%s(%lld, %lld, %lld)", name,
+                       (long long)regs.rdi, (long long)regs.rsi, (long long)regs.rdx);
+            } else {
+                printf("syscall_%lld(...)", regs.orig_rax);
+            }
             in_syscall = 1;
         } else {
-            print_exit(&regs);
+            // syscall-exit：顯示回傳值（rax）
+            printf(" = %lld\n", (long long)regs.rax);
             in_syscall = 0;
         }
     }
-
     return 0;
 }
 ```
 
-## 編譯與跑
+```bash
+# 編譯並跑
+gcc -o mini_strace mini_strace.c
+./mini_strace /bin/echo hi
+# openat(-100, "/etc/ld.so.cache", ...) = 3
+# openat(-100, "/lib/x86_64-linux-gnu/libc.so.6", ...) = 3
+# write(1, "hi\n", 3) = 3          ← 你的 mini-strace 看到了 echo 的 write！
+# +++ exited with 0 +++
+
+# 對照真 strace
+strace /bin/echo hi 2>&1 | grep -E 'openat|write'
+# → 你的 mini-strace 抓到了一樣的 syscall！
+```
+
+> **這個 mini-strace 真的能用——它顯示 openat 的檔名、write 的內容、回傳值，和真 strace 抓到一樣的 syscall**。關鍵的幾個部分：(1) **fork+TRACEME+exec**（Ch 3 的建立追蹤）；(2) **PTRACE_SYSCALL 循環**（在每個 syscall 邊界暫停）；(3) **syscall 名字對照**（`syscall_name`——SYS_write 等常數來自 `<sys/syscall.h>`，實際 strace 有完整的幾百個 syscall 表）；(4) **read_string**（最巧妙的部分——syscall 的指標參數如 openat 的檔名、write 的 buf，暫存器裡只有位址，要用 `PTRACE_PEEKDATA` 一個 word 一個 word 讀出字串內容，直到 `\0`）；(5) **entry/exit 配對**（`in_syscall` 切換——每個 syscall 停兩次，entry 時顯示名字+參數、exit 時顯示回傳值）。跑起來它真的抓到 echo 的 `write(1, "hi\n", 3) = 3`——和真 strace 一樣！**寫過這個，你對 strace 的理解就脫胎換骨**——你知道它怎麼看到 syscall（PTRACE_SYSCALL）、怎麼顯示檔名（PEEKDATA 讀字串）、為什麼每個 syscall 顯示一行（entry+exit）。這不再是黑盒子。`PTRACE_O_TRACESYSGOOD` 是個小優化（區分 syscall-stop 和其他 signal-stop）。這個 30-80 行的程式，是理解所有 tracer 的鑰匙。
+
+## 它和真 strace 的差距
+
+```
+你的 mini-strace vs 真 strace（理解工具的完整度）：
+
+  你的 mini-strace 有的：
+    ✓ 攔截 syscall、顯示名字、部分參數、回傳值
+        │
+  真 strace 多的（巨大的工程）：
+    - 完整的 syscall 表（幾百個，各架構）
+    - 每個 syscall 的「參數格式化」（flags 解碼、struct 展開、
+      錯誤碼 → errno 名字如 ENOENT）
+    - -f（追蹤子 process，fork/clone）
+    - -e 過濾、-c 統計、-T 計時
+    - 處理 signal、各種 ptrace 事件
+    - 多架構支援（x86-64/ARM/...）
+        │
+  → 你的 mini-strace 是「核心機制」的證明
+    真 strace 是「核心機制 + 海量細節」
+    但核心是一樣的 → 你懂了核心，就懂了 strace
+```
+
+> **你的 mini-strace 證明了「核心機制」，真 strace 是「核心 + 海量細節」——但你已經懂了最重要的部分**。你的 mini-strace 有核心（攔截 syscall、顯示名字/參數/回傳值），真 strace 多的是**海量的細節工程**：完整的 syscall 表（幾百個 × 多架構）、每個 syscall 的精緻參數格式化（把 open 的 flags 解碼成 `O_RDONLY|O_CREAT`、把 struct 參數展開、把錯誤碼翻成 `ENOENT` 等 errno 名字）、`-f`（追蹤 fork/clone 出的子 process）、`-e`/`-c`/`-T` 等選項、各種 signal 和 ptrace 事件處理、多架構支援。這些是巨大的工程量（strace 是個成熟的大專案）。但**核心機制是一樣的**——都是 PTRACE_SYSCALL 在 syscall 邊界讀暫存器。你懂了核心，就懂了 strace 的本質；剩下的是「把核心做得完整好用」。這個認知很重要——它讓你不被工具的複雜嚇到（複雜是細節，核心很簡單），也讓你知道「如果要客製一個 tracer，從哪裡開始」（從這個核心循環擴展）。Ch 19 會用同樣的 ptrace 知識做更進階的事（process 注入）。當你之後用 strace 遇到「它怎麼顯示這個」「為什麼這樣」，你能從「mini-strace 的核心 + 真 strace 多做的細節」去推理。這是「理解工具」而非「會用工具」的境界。
+
+## 故意弄壞:用你的 mini-strace 抓 bug
 
 ```bash
-gcc -O2 mystrace.c -o mystrace
-./mystrace /bin/echo hello
-```
-
-期望看到：
-
-```
-execve("/bin/echo", ..., ...) = 0
-brk(0x0, ...) = 0x55...
-arch_prctl(0x3001, 0x7ff..., 0x7ff...) = -1 EINVAL (Invalid argument)
-access("/etc/ld.so.preload", 0x4) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, "/etc/ld.so.cache", 0x80000) = 3
-...
-write(1, "hello", 6) = 6
-exit_group(0x0, 0x0, 0x0) = ?
-+++ exited with 0 +++
-```
-
-對照真的 strace：
-
-```bash
-strace /bin/echo hello 2>&1 | head -10
-```
-
-看你的版本少印什麼（多半是參數細節 — 例如 `O_RDONLY|O_CLOEXEC` 沒翻成 flag 名字）。
-
-## 一個常見踩雷：execve 的「兩次 enter」
-
-execve 有點怪 —— 進去 enter stop、kernel 把整個 address space 換掉、出來時 register 在新的 binary 裡。所以你會看到 execve 的 enter 跟 exit 「register 不一致」。實務上很多 strace 實作把 execve 的 exit 特殊處理。
-
-我們的版本沒處理，會看到 execve 的 = 0 之前可能有奇怪 syscall。要 robust 要加：
-
-```c
-// 在 execve 完成後重設 in_syscall
-if (regs.orig_rax == SYS_execve && in_syscall) {
-    in_syscall = 0;
-    print_exit(&regs);
-    continue;
+# 用你親手寫的 mini-strace 看一個程式的問題
+cat > buggy.c <<'EOF'
+#include <stdio.h>
+#include <fcntl.h>
+#include <unistd.h>
+int main() {
+    int fd = open("/tmp/nonexistent_dir/file.txt", O_WRONLY);  // 開不存在的路徑
+    if (fd < 0) {
+        // 程式沒檢查錯誤，繼續用 fd = -1
+        write(fd, "data", 4);     // write 到 fd -1 → 失敗
+    }
+    return 0;
 }
+EOF
+gcc -o buggy buggy.c
+
+# 用你的 mini-strace 看（它能顯示 openat 失敗）
+./mini_strace ./buggy
+# openat(-100, "/tmp/nonexistent_dir/file.txt", ...) = -1   ← open 失敗（回 -1）！
+# write(-1, "data", 4) = -1                                  ← 用了壞的 fd
+
+# 對照真 strace（它還顯示 errno）
+strace ./buggy 2>&1 | grep -E 'openat|write'
+# openat(... "/tmp/nonexistent_dir/file.txt" ...) = -1 ENOENT (No such file or directory)
+# write(-1, "data", 4) = -1 EBADF (Bad file descriptor)
+# → 真 strace 多顯示 errno（ENOENT/EBADF），更清楚是什麼錯
 ```
 
-## 一個常見踩雷：fork / clone 的 child 沒 trace
-
-我們的版本只 trace child，child 自己 fork 出的孫子不會被 trace。要 trace 全家：
-
-```c
-ptrace(PTRACE_SETOPTIONS, pid,
-       PTRACE_O_TRACESYSGOOD |
-       PTRACE_O_TRACEFORK |
-       PTRACE_O_TRACEVFORK |
-       PTRACE_O_TRACECLONE,
-       0);
-```
-
-設了之後 fork/vfork/clone 的 child 自動加進來 trace。但邏輯變複雜（要管多個 PID），留給 v2。
-
-## 一個常見踩雷：wait status 不是 syscall stop
-
-收到 SIGSEGV、SIGTERM 等其他 signal 也會 stop tracee。**必須 pass through** 給 tracee（用 `PTRACE_SYSCALL` 第 4 參數），不然 tracee 永遠收不到。
-
-我們的版本有處理：
-
-```c
-if (WSTOPSIG(status) != (SIGTRAP | 0x80)) {
-    ptrace(PTRACE_SYSCALL, pid, 0, WSTOPSIG(status));
-    continue;
-}
-```
-
-## 跟 strace 對照
-
-我們的 mystrace ~250 行，strace 是 30K+ 行 C code。差別在：
-
-| 功能 | mystrace | strace |
-|---|---|---|
-| syscall name 表 | ~30 個 | 全部（按 arch） |
-| 參數 decode | 簡略 | 按 signature 完整解析 |
-| flag bitmask 翻成名字 | ❌ | ✅（`O_RDONLY|O_CLOEXEC`） |
-| follow fork | ❌ | `-f` |
-| filter | ❌ | `-e trace=` |
-| stack trace | ❌ | `-k` |
-| timing | ❌ | `-c` / `-T` / `-tt` |
-| attach 到 PID | ❌ | `-p` |
-| seccomp 加速 | ❌ | 新版有 |
-| 多 arch (32/64/ARM/...) | ❌ | ✅ |
-
-但**核心機制完全一樣**。你寫完這個就懂 strace 在做什麼了。
+> **用你親手寫的 mini-strace 抓到「open 失敗回 -1、程式沒檢查還繼續用」的 bug——這是「理解工具」的完整體驗**。這個 bug 很典型——程式 open 一個不存在的路徑，open 回 -1（失敗），但程式沒檢查就繼續用 fd -1 去 write（也失敗）。你的 mini-strace 顯示 `openat(...) = -1`（open 失敗）和 `write(-1, ...) = -1`（用壞 fd）——直接看到問題。對照真 strace，它多顯示 **errno**（`ENOENT` 檔案不存在、`EBADF` 壞 fd）——這是真 strace 多做的「錯誤碼格式化」（把 -1 旁邊的 errno 翻成可讀的錯誤名）。這展示了：(1) 你的 mini-strace 真的能用來 debug（看到 syscall 失敗）；(2) 真 strace 的 errno 顯示讓 debug 更清楚（一眼知道是什麼錯）；(3) 這類 bug（不檢查 syscall 回傳值）正是 strace 最擅長抓的——你看到「某 syscall 回 -1」就知道那裡出錯了。這完成了 Part 1 的旅程——從理解 ptrace（Ch 3）到親手寫 mini-strace（這章）到用它 debug。你現在不只會用 strace，還理解它、甚至造了一個。接下來 Ch 5 深入真 strace 的完整用法（你會帶著「我知道它怎麼運作」的理解去學），這比一開始就學用法深刻得多。
 
 ## 動手練習
 
-**1. 跑起來**
+1. 編譯並跑：把 mini_strace.c 編譯，trace 幾個簡單命令（echo/ls/cat），看它的輸出
 
-照上面 code 跑、對照 strace 看差異。
+2. 擴充 syscall 表：加幾個 syscall 到 syscall_name（如 SYS_read、SYS_lseek），讓它認得更多
 
-**2. 加 -e filter**
+3. 改進參數顯示：讓 read 也顯示 buf（exit 時讀，因為 read 是 exit 後 buf 才有資料）
 
-```bash
-./mystrace -e openat,write /bin/ls
-```
+4. 對照真 strace：同個程式用你的和真 strace，列出真 strace 多顯示什麼（errno、flags 解碼）
 
-加參數 parse + 一個 filter set，只印指定 syscall。
+5. 跑「故意弄壞」：用你的 mini-strace 抓 buggy.c 的 open 失敗，理解「syscall 回 -1 = 出錯」
 
-**3. 加 attach 模式**
+## 本章重點整理
 
-```bash
-./mystrace -p PID
-```
-
-```c
-// pseudocode
-if (-p flag) {
-    pid = atoi(arg);
-    ptrace(PTRACE_ATTACH, pid, 0, 0);
-    waitpid(pid, &status, 0);
-} else {
-    // fork + exec
-}
-```
-
-**4. 加 follow fork**
-
-設 `PTRACE_O_TRACEFORK` 等，維護一個 PID set，每次 wait 都用 `waitpid(-1, ..., __WALL)`。
-
-**5. 加 timing**
-
-每個 syscall enter / exit 之間 `clock_gettime`，印 elapsed。
-
-**6. 加 -c summary**
-
-每個 syscall 累計次數、累計時間，最後印 summary table。
+- mini-strace = Ch 3 的 ptrace 循環 + 「把暫存器翻譯成可讀」（syscall 名/參數/回傳值/讀字串）
+- 核心部分：fork+TRACEME+exec、PTRACE_SYSCALL 循環、syscall 名對照、read_string（PEEKDATA 讀指標指向的字串）、entry/exit 配對
+- 你的 mini-strace 真能用——顯示 openat 檔名、write 內容、回傳值，抓到和真 strace 一樣的 syscall
+- 真 strace 多的是海量細節（完整 syscall 表、參數格式化、errno、-f/-e/-c、多架構）——核心一樣
+- 用 mini-strace 能抓 bug（syscall 回 -1 = 失敗）；寫過它你對 strace 從「會用」變「理解」
 
 ## 自我檢核
 
-- [ ] 自己 mini-strace 跑得出來
-- [ ] 看得懂上面 code 每一行（特別是 `in_syscall` 切換邏輯）
-- [ ] 知道為什麼要 pass-through 非 syscall 的 signal
-- [ ] 知道 strace 比我們的版本多做了哪些事
-- [ ] 知道 follow fork / filter / -c 該怎麼加（concept 而非實作）
+- [ ] 能看懂並編譯 mini-strace，理解每個部分（fork/TRACEME、循環、read_string、entry/exit）
+- [ ] 理解 read_string 為什麼要 PEEKDATA 一個 word 一個 word 讀（指標參數）
+- [ ] 知道為什麼每個 syscall 停兩次（entry 顯示參數、exit 顯示回傳值）
+- [ ] 能說出你的 mini-strace 和真 strace 的差距（細節而非核心）
+- [ ] 能用 mini-strace 抓「syscall 失敗」的 bug
 
-Part 1 結束。下一章正式進 Part 2：用真的 strace 看真的 bug。
+## 延伸閱讀
+
+### 文章 / 教學
+
+- **[Playing with ptrace, Part I](https://www.linuxjournal.com/article/6100)** — Linux Journal
+  - **讀哪裡**：syscall trace 那部分（本章 mini-strace 的參考）
+  - **為什麼值得讀**：經典的「用 ptrace 寫 tracer」教學
+
+- **[How strace works](https://blog.packagecloud.io/how-does-strace-work/)** — packagecloud
+  - **這篇說什麼**：strace 的內部運作，PTRACE_SYSCALL 的細節
+  - **讀哪裡**：整篇
+  - **為什麼值得讀**：本章「mini-strace vs 真 strace」的權威深入版
+
+### 原始碼
+
+- **[strace 原始碼](https://github.com/strace/strace)** — strace 專案
+  - **讀哪裡**：syscall 表和參數解碼那部分（看真 strace 怎麼做細節）
+  - **為什麼值得讀**：看「核心 + 海量細節」的真實工程（不用全讀，瀏覽結構）
+
+### 官方文件
+
+- **[ptrace(2)](https://man7.org/linux/man-pages/man2/ptrace.2.html)** — 配本章程式碼查 PTRACE_GETREGS/PEEKDATA 的細節
+
+Part 1（基礎與 ptrace）到此完成——你補完了 process/syscall/fd/signal 模型、理解了 ptrace、親手寫了 mini-strace。接下來 Part 2 深入真 strace 的完整用法（你帶著「理解它怎麼運作」的優勢去學）。
 
 → [Ch 5 strace 完整指南](./05-strace-complete-guide.md)

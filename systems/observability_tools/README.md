@@ -1,70 +1,100 @@
-# 程式行為觀察與 debugging 工具學習筆記：從 strace 到偵探破案
+# 程式行為觀察與 debugging 工具：從 strace 到偵探破案
 
-> 給會 C 語言、想徹底理解程式在跑什麼、debug bug 不再瞎猜的工程師。
+> 給懂一點 C、想徹底搞懂「程式現在到底在幹嘛」、debug 不再瞎猜的工程師。
 
-這系列把 Linux 上「能看到程式行為」的工具一次教完：strace / ltrace / lsof / perf / valgrind / sanitizers / ftrace / bpftrace，配上自己用 ptrace 寫 mini-strace、用 LD_PRELOAD 攔截 library。讀完你會知道「這隻程式現在在幹嘛」這個問題從哪裡找答案。
+這門課把 Linux 上「能看見程式行為」的工具一次教透：strace / ltrace / lsof / perf / valgrind / sanitizers / ftrace / bpftrace。但它不只教「怎麼用工具」——它教你**這些工具底層怎麼運作**：你會親手用 ptrace 寫一個 mini-strace、用 LD_PRELOAD 攔截 library 呼叫、用 ptrace 做 process 注入。讀完你不只會用工具 debug，還理解「為什麼工具看得到這些」，並能在工具不夠時自己造一個。最後用一個藏了 5 個 bug 的壞掉 daemon，逼你綜合整套工具偵探破案。
 
 ## 為什麼學這個？
 
-- **printf debug 的盡頭**：當 printf 印不到、stack 看不出來、bug 偶爾出現，這些工具是唯一出路
-- **理解 library / kernel 邊界**：strace 看 syscall、ltrace 看 libc，你會看清自己的程式跟 OS 的對話
-- **抓「不該發生卻發生」的 bug**：race condition、UAF、leak、被偷的 fd —— 全部有對應工具
-- **看大型開源軟體**：要 patch nginx / postgres / kubelet，沒這套你連啟動流程都追不出來
+- **debug 能力是工程師的硬實力**：「程式卡住了」「記憶體一直漲」「為什麼這麼慢」「為什麼 segfault」——這些只有「看得見程式行為」的人能解，瞎猜的人只能加 printf
+- **理解底層 = 不被工具限制**：知道 strace 怎麼用 ptrace、ltrace 怎麼攔截 PLT、valgrind 怎麼插樁——你就能在工具失效時自己想辦法，甚至自己造工具
+- **這是所有系統工作的放大鏡**：後端 debug、效能優化、資安分析、逆向工程——全都靠「觀察程式實際做什麼」。這套工具是你的眼睛
+- **職涯角度**：能熟練用 strace/perf/valgrind debug，是區分資深和初級工程師的硬指標，也是面試系統職位的常見考點
+
+## 先修知識
+
+- **C 語言**（程度：會指標、struct、知道 malloc/free、寫過幾個 C 程式；不需要寫過系統程式）
+- **一點 OS 概念**（程度：知道 process、知道 syscall 大概是什麼；課程 Ch 2 會把 process/syscall/fd/signal 補完整）
+- **Linux 命令列**（程度：會基本操作；建議先有 linux_commands 課的基礎）
+- 不需要：debugger 經驗、系統程式設計經驗、組合語言（少數章節有，會解釋）
 
 ## 課程地圖
 
-### Part 1 — 基礎與 ptrace 核心
+### Part 1 — 基礎與 ptrace（Ch 0–4）
 - [Ch 0 環境搭建](./00-environment-setup.md)
 - [Ch 1 觀察工具全景](./01-observation-tools-overview.md)
-- [Ch 2 process / syscall / signal / fd 模型](./02-process-syscall-fd-model.md)
-- [Ch 3 ptrace(2) 完整剖析](./03-ptrace-syscall-deep-dive.md)
-- [Ch 4 動手：mini-strace v1](./04-mini-strace-v1.md)
+- [Ch 2 process / syscall / fd / signal 模型](./02-process-syscall-fd-model.md)
+- [Ch 3 ptrace 深入：debugger 的基礎](./03-ptrace-syscall-deep-dive.md)
+- [Ch 4 動手寫 mini-strace v1](./04-mini-strace-v1.md)
 
-### Part 2 — strace / ltrace
+### Part 2 — strace 與 ltrace（Ch 5–6）
 - [Ch 5 strace 完整指南](./05-strace-complete-guide.md)
 - [Ch 6 ltrace 與動態連結](./06-ltrace-and-dynamic-linking.md)
-- [練習 A：用 strace 抓真實 bug](./practice-a-strace-bug-hunt.md)
+- [練習 A：用 strace 抓 bug](./practice-a-strace-bug-hunt.md)
 
-### Part 3 — Process / File / Network 觀察
-- [Ch 7 /proc 完整漫遊](./07-proc-filesystem-tour.md)
+### Part 3 — 系統狀態觀察（Ch 7–10）
+- [Ch 7 /proc 檔案系統導覽](./07-proc-filesystem-tour.md)
 - [Ch 8 lsof 與 fd 視角](./08-lsof-and-fd-view.md)
-- [Ch 9 ss / tcpdump — 網路觀察](./09-ss-and-tcpdump.md)
-- [Ch 10 sysstat 家族](./10-sysstat-family.md)
-- [練習 B：fd 劫持事件調查](./practice-b-fd-hijack-investigation.md)
+- [Ch 9 ss 與 tcpdump](./09-ss-and-tcpdump.md)
+- [Ch 10 sysstat 家族（vmstat/iostat/pidstat/sar）](./10-sysstat-family.md)
+- [練習 B：fd 劫持調查](./practice-b-fd-hijack-investigation.md)
 
-### Part 4 — 靜態檢視
-- [Ch 11 ELF 靜態檢視 (nm / readelf / objdump / addr2line / ldd)](./11-elf-static-inspection.md)
+### Part 4 — ELF 靜態分析（Ch 11）
+- [Ch 11 ELF 靜態檢視（nm/objdump/readelf）](./11-elf-static-inspection.md)
 
-### Part 5 — Performance 與 modern tracing
+### Part 5 — 現代 tracing（Ch 12–14）
 - [Ch 12 perf 基礎](./12-perf-fundamentals.md)
-- [Ch 13 ftrace / tracefs](./13-ftrace-and-tracefs.md)
-- [Ch 14 bpftrace 從 debug 角度](./14-bpftrace-debug-view.md)
+- [Ch 13 ftrace 與 tracefs](./13-ftrace-and-tracefs.md)
+- [Ch 14 bpftrace（debug 視角）](./14-bpftrace-debug-view.md)
 
-### Part 6 — Memory 與 correctness
+### Part 6 — 記憶體與正確性（Ch 15–18）
 - [Ch 15 valgrind memcheck](./15-valgrind-memcheck.md)
-- [Ch 16 valgrind helgrind / drd](./16-valgrind-helgrind-drd.md)
-- [Ch 17 valgrind callgrind / massif / cachegrind](./17-valgrind-profiling.md)
-- [Ch 18 Sanitizers (ASan / UBSan / TSan / MSan)](./18-sanitizers.md)
-- [練習 C：multithreaded race + leak hunt](./practice-c-multithreaded-hunt.md)
+- [Ch 16 valgrind helgrind/drd（並發）](./16-valgrind-helgrind-drd.md)
+- [Ch 17 valgrind profiling（callgrind/cachegrind）](./17-valgrind-profiling.md)
+- [Ch 18 sanitizers（ASan/TSan/UBSan/MSan）](./18-sanitizers.md)
+- [練習 C：多執行緒 bug 獵殺](./practice-c-multithreaded-hunt.md)
 
-### Part 7 — 進階：自製工具
-- [Ch 19 ptrace 進階：注入與 register 操作](./19-ptrace-advanced-injection.md)
-- [Ch 20 動手:LD_PRELOAD interceptor](./20-ld-preload-interceptor.md)
-- [Ch 21 core dump 與 signal trap](./21-coredump-and-signals.md)
+### Part 7 — 進階自製工具（Ch 19–21）
+- [Ch 19 ptrace 進階：process 注入](./19-ptrace-advanced-injection.md)
+- [Ch 20 LD_PRELOAD 攔截器](./20-ld-preload-interceptor.md)
+- [Ch 21 core dump 與 signal](./21-coredump-and-signals.md)
 
-### Part 8 — 整合
-- [Final Project：偵探破案](./final-project-broken-daemon.md)
+### Final Project
+- [Final Project：偵探破案 — 修好壞掉的 daemon](./final-project-broken-daemon.md)
 
 ## 學習方式建議
 
-1. **每個工具寫一支故意有 bug 的 C 小程式**：bug 自己藏的，你才會記住工具怎麼挖出來
-2. **同一個 bug 用不同工具看一次**：例如 leak 既能用 valgrind 也能用 ASan，對照速度跟訊息差異
-3. **遇到任何詭異 bug 第一個動作：`strace -f -e trace=...`**：90% 的線索在這
-4. **不要只跑工具看輸出**：訓練自己**先預測**會看到什麼，再跑，對不上的地方就是知識缺口
+1. **每個工具都對著「壞掉的程式」用**：每章配一個故意弄壞的 C 程式，用工具找出問題。看工具的輸出比讀說明書有效一百倍
+2. **理解「工具怎麼看到的」**：不只學「strace 顯示 syscall」，而是學「strace 用 ptrace 攔截 syscall」。Part 1 和 Part 7 讓你親手造工具，這是本課和一般工具教學的根本差別
+3. **建立「分層觀察」的習慣**：syscall 層（strace）→ library 層（ltrace）→ 系統狀態（/proc/lsof）→ 效能（perf）→ 記憶體（valgrind）。不同問題在不同層觀察
+4. **故意製造 bug 再觀察**：寫一個會 leak 的程式用 valgrind 看、寫一個 race 用 helgrind 看、製造 zombie 用 /proc 看——主動製造問題比被動等問題有效
 
-## 參考資料
+## 精選資料庫
 
-- 《Brendan Gregg, Systems Performance》— perf / ftrace / observability 的聖經
-- Julia Evans 的 zine "How to Debug" / "strace zine" — 短小精悍
-- `strace(1)`、`ptrace(2)`、`valgrind(1)` 的 manual page — 不要跳過 SEE ALSO
-- Brendan Gregg 的 Linux observability tools 海報：http://www.brendangregg.com/linuxperf.html
+### 必讀基礎
+
+- **《The Linux Programming Interface》** — Michael Kerrisk（No Starch, 2010）
+  - 本課的底層聖經；process/syscall/fd/signal/ptrace 的權威。理解工具底層必備
+- **[man7.org](https://man7.org/linux/man-pages/)** — Michael Kerrisk 維護的 man pages
+  - 每個 syscall（ptrace/openat/...）的權威文件；本課反覆指向特定 man page
+
+### 推薦部落格 / 文章
+
+- **[Julia Evans (jvns.ca)](https://jvns.ca/)** — Julia Evans
+  - 把 strace、/proc、debug 工具講得最清楚易懂；她的 debugging zine 是本課很多概念的最佳補充
+- **[Brendan Gregg's blog](https://www.brendangregg.com/)** — Brendan Gregg
+  - 系統效能觀測的權威；perf/ftrace/bpftrace 和「觀測方法論」的延伸，Part 5 必讀
+
+### 推薦書
+
+- **《BPF Performance Tools》** — Brendan Gregg（perf/ftrace/bpftrace 的進階，接 bpf 課）
+- **《Systems Performance》** — Brendan Gregg（觀測方法論的權威，把工具放進效能分析的框架）
+
+### 讀完本課之後
+
+- **bpf 課**（把 bpftrace/eBPF 推到極致，kernel 層觀測）
+- **gdb / debugger 課**（互動式 debug，本課的 ptrace 知識是 debugger 的底層）
+
+---
+
+> 本課所有指令以 Linux（Ubuntu 22.04+ / Debian 12+）為準，gcc/clang。ptrace/perf 部分需要對應權限（會標注）。每章配可編譯執行的 C 範例。

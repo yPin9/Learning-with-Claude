@@ -1,260 +1,227 @@
 # Ch 1 — 觀察工具全景
 
-> 目標：建立整門課的 mental map。每個工具看哪一層、什麼時機選哪一個，先看一輪再深入。
+> **目標**：建立整門課的地圖——把所有觀察工具放在一張「觀察什麼、在哪一層、用哪個工具」的全景圖上，理解 dynamic（動態，跑時觀察）vs static（靜態，不跑也能看）的分野、以及「遇到問題該從哪個工具下手」的決策框架。讀完你有一張心智地圖，知道後面每章的工具在整體中的位置，以及實際 debug 時怎麼選工具。
 
-## 三層觀察
+> **環境**：概念章，搭配各工具的一行示範。
 
-把要觀察的東西按「**離 process 多遠**」分三層：
+## 為什麼先看全景？
 
-```
-              你的程式
-                 │
-       ┌─────────┼─────────┐
-       ▼         ▼         ▼
-   靜態 binary  動態執行   系統環境
-   (ELF)        (runtime)  (周邊)
+觀察工具很多（strace/ltrace/lsof/perf/valgrind/ftrace/bpftrace…），一開始就一個個學容易迷失——學了 strace 卻不知道它和 perf 的分工、遇到問題不知道該用哪個。所以先看全景：把所有工具放在一張地圖上，理解每個觀察「什麼」、在「哪一層」、什麼問題該用它。
 
-   ─────────    ─────────  ──────────
-   nm           strace     /proc
-   readelf      ltrace     lsof
-   objdump      ptrace     ss
-   addr2line    perf       tcpdump
-   ldd          ftrace     iotop
-                bpftrace   sysstat
-                valgrind   htop
-                sanitizer
-                gdb
-```
+這張地圖是後面所有章節的座標系。之後每學一個工具，你都知道「它在地圖的哪裡、解決哪類問題」。更重要的是建立**選工具的直覺**——真實 debug 時，「程式卡住了」「記憶體漲」「為什麼慢」各該從哪個工具下手。這章給你這個框架。
 
-三層各看什麼：
-
-- **靜態 binary**：程式還沒跑時能看的 — 它有什麼 symbol、call 哪些 lib、什麼 section、debug info 在不在
-- **動態執行**：程式跑著時內部行為 — 呼叫了什麼 syscall、開了什麼檔、配置了多少記憶體
-- **系統環境**：跨 process 視角 — 整台機器在做什麼，這個 process 在裡面是什麼角色
-
-debug 時三層都用，順序通常是「**動態 → 系統 → 靜態**」 —— 先看跑起來怎樣，再看跟外界互動，最後翻 binary 找原因。
-
-## 觀察點：使用者程式跟系統的對話
-
-把 Ch 0 那張圖細化：
+## 先建立直覺:醫生的診斷工具
 
 ```
-   ┌─────────────────────────────────────┐
-   │       你的 C 程式                   │
-   │   main() { fp = fopen(...); ... }   │
-   └─────────────────┬───────────────────┘
-                     │ 呼叫 lib function (fopen, malloc, printf)
-                     ▼
-   ┌─────────────────────────────────────┐
-   │       libc / 其他 .so               │  ← ltrace 看這層
-   │  fopen → 內部用 open syscall        │
-   └─────────────────┬───────────────────┘
-                     │ syscall instruction
-═════════════════════╪═══════════════════ user / kernel 邊界
-                     ▼
-   ┌─────────────────────────────────────┐
-   │       Linux kernel                  │  ← strace 在這條線上
-   │   sys_openat → vfs_open → ext4_...  │  ← ftrace / bpftrace 看 kernel 內部
-   │                                     │  ← perf 看硬體 event (cycles, miss)
-   └─────────────────────────────────────┘
+觀察工具 = 醫生診斷病人的各種儀器
+
+  病人（你的程式）有各種「症狀」，用不同儀器診斷：
+        │
+  「它在做什麼」（行為）：
+    → 聽診器（strace）：聽它對 kernel 說什麼
+    → X 光（ltrace）：看它呼叫哪些 library
+        │
+  「它現在的狀態」（快照）：
+    → 體溫/血壓（/proc, lsof, ss）：當前的 process/fd/連線狀態
+        │
+  「為什麼慢」（效能）：
+    → 心電圖（perf）：時間花在哪、CPU 在幹嘛
+        │
+  「哪裡壞了」（正確性）：
+    → 血液檢查（valgrind/sanitizers）：記憶體/並發的隱疾
+        │
+  → 不同症狀用不同儀器
+    好醫生知道「這個症狀該用哪個儀器」
+    這章教你建立這個診斷直覺
 ```
 
-每一層都有對應工具：
+關鍵心智：觀察工具像醫生的診斷儀器——不同「症狀」（卡住/漏記憶體/慢/崩潰）用不同儀器（strace/valgrind/perf）。本課教你每個儀器怎麼用、怎麼運作，以及最重要的——「這個症狀該用哪個儀器」的診斷直覺。
 
-| 想看什麼 | 用什麼 |
-|---|---|
-| C source 哪一行被執行 | `gdb` step、看 source |
-| 呼叫了哪些 lib function | `ltrace` |
-| 跨 user/kernel 邊界的 syscall | `strace` |
-| kernel 內部走了什麼 path | `ftrace` / `bpftrace` |
-| CPU 在做什麼（hot function、cache miss） | `perf` |
-| 記憶體 leak / UAF / race | `valgrind` / sanitizer |
-| process 開了什麼 fd | `lsof` / `/proc/PID/fd` |
-| 網路連線、封包 | `ss` / `tcpdump` |
-| 整台機器負載 | `htop` / `vmstat` / `iostat` |
-
-## 同一個 bug 的不同視角
-
-舉例：你的程式 `./server` 「卡住不動」。各工具會告訴你不同的事：
+## 全景圖:工具的座標系
 
 ```
-$ strace -p $(pgrep server)
-read(4, ...)                            ← 卡在 read，4 是某 fd
+觀察工具全景（按「觀察什麼」分類）：
 
-$ ls -l /proc/$(pgrep server)/fd/4
-4 -> socket:[1234]                      ← 那個 fd 是 socket
-
-$ ss -tnp | grep 1234
-ESTAB 0 0  10.0.0.5:443  10.0.0.9:5432  ← 連到哪
-
-$ sudo tcpdump -i any host 10.0.0.9
-（沒任何 packet）                        ← 對方根本沒回
-
-$ perf top -p $(pgrep server)
-（CPU 用量 0%）                          ← 不是 busy loop
+  ┌─────────────────────────────────────────────────────┐
+  │ 動態行為（dynamic，程式跑時觀察）                      │
+  ├─────────────────────────────────────────────────────┤
+  │  strace    syscall 層（程式對 kernel 的請求）  Ch 5   │
+  │  ltrace    library 層（library 函式呼叫）       Ch 6   │
+  │  perf      效能（CPU/時間花哪、profiling）       Ch 12  │
+  │  ftrace    kernel 內部函式 trace                Ch 13  │
+  │  bpftrace  可程式化的動態 trace                  Ch 14  │
+  │  valgrind  記憶體/並發/profiling（插樁模擬）     Ch 15-17│
+  │  sanitizers編譯期插樁的執行期檢查                Ch 18  │
+  ├─────────────────────────────────────────────────────┤
+  │ 系統狀態（snapshot，當前狀態快照）                    │
+  ├─────────────────────────────────────────────────────┤
+  │  /proc     process/系統狀態（一切的來源）       Ch 7   │
+  │  lsof      開啟的檔案/fd                         Ch 8   │
+  │  ss        網路連線/socket                       Ch 9   │
+  │  ps/top    process 列表/資源                     Ch 10  │
+  │  vmstat等  系統資源統計（CPU/記憶體/IO）         Ch 10  │
+  ├─────────────────────────────────────────────────────┤
+  │ 靜態分析（static，不跑程式也能看）                    │
+  ├─────────────────────────────────────────────────────┤
+  │  nm/objdump/readelf  ELF 二進位的結構/符號/反組譯 Ch 11│
+  └─────────────────────────────────────────────────────┘
+        │
+  + 自製工具（理解工具底層）：
+    ptrace（Ch 3-4 寫 mini-strace, Ch 19 注入）
+    LD_PRELOAD（Ch 20 攔截 library）
 ```
 
-四個工具拼出來的故事：「卡在等 10.0.0.9:5432 的 reply，但對方沒回」。每個工具看一塊，**沒有單一工具能告訴你全部**。學會挑工具就是這套課的精華。
+> **觀察工具分三大類：動態（跑時觀察行為/效能）、系統狀態（當前快照）、靜態（不跑也能看二進位）——這個分類是選工具的第一層判斷**。**動態工具**在程式**跑的時候**觀察它的行為——strace（syscall 層）、ltrace（library 層）、perf（效能）、valgrind（記憶體/並發）。**系統狀態工具**看**當前的快照**——/proc（一切狀態的來源）、lsof（開啟的 fd）、ss（網路連線）、ps（process）。**靜態工具**不用跑程式就能看**二進位的結構**——nm/objdump/readelf 看 ELF 的符號、反組譯、結構。選工具的第一層判斷：你要看「行為」（動態）、「現在的狀態」（快照）、還是「二進位本身」（靜態）？「程式卡在某個操作」→ 動態（strace 看它卡在哪個 syscall）；「它開了哪些檔案」→ 狀態（lsof）；「這個 binary 用了哪些 library」→ 靜態（readelf）。本課的特色是還教你**自製工具**（用 ptrace 寫 mini-strace、用 LD_PRELOAD 攔截）——理解工具底層，你就不被現成工具限制。這張全景圖是後面每章的座標——記住它，學每個工具時對照「它在地圖的哪裡」。
 
-## 該用哪個？決策樹
-
-簡化版：
+## 選工具的決策框架
 
 ```
-  程式有問題
-       │
-       ▼
-  能跑嗎？──── 不能 ────► gdb / coredump / sanitizer (Ch 21)
-       │
-      能
-       │
-       ▼
-  輸出對嗎？─── 對 ────► 是性能問題嗎？─── 是 ──► perf / ftrace (Ch 12-13)
-       │                              │
-      不對                           不是
-       │                              │
-       ▼                              ▼
-  跟外界互動？─ 否 ──► gdb / printf      在外面看（健康嗎？）
-       │                              │
-      是                              ▼
-       │                          /proc / lsof / ss (Ch 7-9)
-       ▼
-  syscall / lib call ─ syscall ──► strace (Ch 5)
-                       │
-                      lib
-                       │
-                       ▼
-                   ltrace (Ch 6)
+遇到問題該用哪個工具（決策框架）：
+
+  「程式卡住/沒反應」：
+    → strace：看它卡在哪個 syscall（read? futex? connect?）
+      卡在 read = 在等輸入；卡在 futex = 在等鎖；卡在 connect = 連不上
+        │
+  「程式崩潰（segfault）」：
+    → 先看 core dump（Ch 21）或 sanitizer（ASan，Ch 18）找崩潰點
+    → valgrind 看是不是記憶體錯誤
+        │
+  「記憶體一直漲（leak）」：
+    → valgrind memcheck（Ch 15）或 ASan 的 leak 偵測
+        │
+  「為什麼這麼慢」：
+    → perf（Ch 12）：profiling 看時間花在哪個函式
+    → strace -T：看哪個 syscall 慢
+        │
+  「並發 bug（race/deadlock）」：
+    → helgrind/TSan（Ch 16/18）：偵測 data race
+    → strace 看 futex（鎖的 syscall）
+        │
+  「檔案/網路問題」：
+    → lsof（開了什麼）、ss（連線狀態）、strace（看 open/connect）
+        │
+  → 從「症狀」對應到工具，是 debug 的第一步
+    本課讓你對每個工具夠熟，能快速選對
 ```
 
-這張圖你會在後面每個練習都翻出來。
+> **「症狀 → 工具」的對應是 debug 的第一步——這個決策框架比死記工具用法有價值**。真實 debug 時，先從症狀判斷該用哪個工具：**卡住** → strace 看卡在哪個 syscall（這是 strace 最強的用途之一——`strace -p <卡住的PID>` 立刻看到它在等什麼：卡在 `read` 是等輸入、卡在 `futex` 是等鎖、卡在 `connect` 是連不上）；**崩潰** → core dump（Ch 21）或 ASan（Ch 18）找崩潰點；**記憶體漲** → valgrind/ASan 找 leak；**慢** → perf 做 profiling（看時間花在哪）或 `strace -T`（看慢的 syscall）；**並發 bug** → helgrind/TSan 偵測 race；**檔案/網路問題** → lsof/ss/strace。這個框架讓你不會「拿到問題不知從何下手」——先判斷症狀類型，就知道該用哪層的工具。本課的目標是讓你對每個工具夠熟，能快速選對並有效使用。練習和 Final Project 會反覆訓練這個「症狀 → 工具 → 定位」的流程。記住：**好的 debugger 不是會用所有工具，而是知道「這個問題該用哪個工具」**——這個直覺是本課要培養的核心能力。
 
-## 觀察的成本：別免費用
+## dynamic vs static:兩種根本的觀察
 
-每個工具都有 overhead，差距巨大：
+```
+動態（dynamic）vs 靜態（static）觀察的根本差別：
 
-| 工具 | 大致 overhead | 何時不該用 |
-|---|---|---|
-| `strace` | 程式慢 5-100x | 高 throughput production |
-| `ltrace` | 類似 strace | 同上 |
-| `perf record` (sampling) | 1-5% | 一般 OK |
-| `ftrace` (function tracer 全開) | 高（每 fn entry/exit） | 只開短時間 |
-| `bpftrace` | 1-5%（多數 case） | 一般 OK |
-| `valgrind` | 程式慢 10-50x | 永遠別在 prod 跑 |
-| `tcpdump` | 視 traffic 量 | 高頻 traffic 要 filter |
-| `lsof` | 一次性 snapshot | 高頻 poll 不好 |
-| `ASan` 編譯 | 程式慢 2x | 跑 test 跟 staging，prod 視 cost |
+  靜態（static）：不跑程式，看「二進位本身」
+    nm/objdump/readelf（Ch 11）
+    看：符號、函式、依賴的 library、組合語言
+    優點：不用跑、安全（不執行可疑程式）、看「全貌」
+    限制：看不到「實際執行時發生什麼」（哪條路徑、什麼值）
+        │
+  動態（dynamic）：跑程式，看「實際行為」
+    strace/ltrace/perf/valgrind
+    看：實際的 syscall、實際的值、實際走的路徑
+    優點：看到「真實發生什麼」
+    限制：要跑（可能有副作用）、只看到「這次執行」的路徑
+        │
+  → 互補：靜態看「可能做什麼」（全貌）
+    動態看「實際做了什麼」（這次執行）
+    複雜問題常兩者結合（如逆向工程：靜態看結構 + 動態看行為）
+```
 
-「在 production 抓 bug」跟「在開發環境抓 bug」工具選擇不同。**production 用 perf / bpftrace / 短的 strace -p**，valgrind 跟 long-running strace 留給 staging。
+> **靜態（看二進位）和動態（看執行）是互補的兩種觀察——靜態看「可能做什麼」，動態看「實際做了什麼」**。**靜態分析**（Ch 11 的 nm/objdump/readelf）不執行程式，直接看二進位的結構——符號表、依賴的 library、反組譯的程式碼。優點：不用跑（安全，分析可疑程式不會執行它）、看「全貌」（所有函式、所有路徑）。限制：看不到「實際執行時走哪條路徑、變數是什麼值」。**動態分析**（strace/ltrace/perf/valgrind）執行程式，看實際行為——真實的 syscall、真實的值、真實走的路徑。優點：看到「真的發生什麼」。限制：要執行（可能有副作用）、只看到「這次執行」走的路徑（其他分支沒走到就看不到）。兩者**互補**——靜態看「程式可能做什麼」（結構全貌），動態看「程式這次實際做了什麼」（執行軌跡）。複雜問題常結合：逆向工程一個可疑程式，先靜態看結構（不執行，安全），再在隔離環境動態看行為。理解這個二分，你選工具時多一層判斷——「我要看二進位結構（靜態）還是執行行為（動態）」。本課大部分是動態工具（debug 的主力），Ch 11 補上靜態分析。
 
-## 一個常見誤解：「strace 萬能」
+## 故意弄壞:用不同工具看同一個程式
 
-新手很容易愛上 strace，它確實強，但有限制：
+```bash
+# 一個程式，用不同工具從不同層觀察（建立分層直覺）
+cd ~/obslab
+cat > demo.c <<'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+int main() {
+    char *buf = malloc(100);          // library 層：malloc
+    strcpy(buf, "hello");             // library 層：strcpy
+    FILE *f = fopen("/tmp/demo.txt", "w");  // syscall 層：openat
+    fprintf(f, "%s\n", buf);          // syscall 層：write
+    fclose(f);
+    free(buf);
+    return 0;
+}
+EOF
+gcc -g -O0 demo.c -o demo
 
-- **看不到 lib 內部邏輯**：`fopen` 印出來只看到對應的 `openat`，不知道 fopen 在 libc 內部跑了什麼 stream buffer 邏輯 — 那是 ltrace 的事
-- **看不到 kernel 內部路徑**：syscall 進去後它做了什麼，strace 不知道 — 那是 ftrace / bpftrace
-- **看不到 cache miss / branch miss**：performance counter 是 perf 的領域
-- **看不到 race condition**：兩個 thread 同時跑都進 syscall，strace 看到順序但看不出 race — 那是 helgrind / TSan
+# syscall 層（strace）：看它對 kernel 做什麼
+strace -e trace=openat,write,close ./demo
+# openat(... "/tmp/demo.txt" ...) = 3    ← fopen 底層
+# write(3, "hello\n", 6) = 6             ← fprintf 底層
 
-**沒有單一神器**。這門課的目的就是讓你知道每個工具的位置與限制。
+# library 層（ltrace）：看它呼叫哪些 library 函式
+ltrace ./demo
+# malloc(100) = 0x...                    ← 看到 malloc！
+# strcpy(0x..., "hello") = 0x...         ← 看到 strcpy！
+# fopen("/tmp/demo.txt", "w") = 0x...
+# → strace 看不到 malloc/strcpy（它們不是 syscall），ltrace 看得到
 
-## 一個常見誤解：「printf debug 比工具快」
+# 記憶體層（valgrind）：看記憶體用得對不對
+valgrind ./demo 2>&1 | grep -E 'ERROR|leak'
+# 這個程式沒 leak（free 了）→ valgrind 不報錯
 
-短期對。長期不對。printf debug 的問題：
+# → 同一個程式，strace/ltrace/valgrind 看到不同層次
+#   選對工具才看得到你要找的東西
+```
 
-- 改 source、重編、重跑：循環時間長
-- 印太多看不出重點，印太少漏線索
-- 改變了 timing：race condition 被 printf 改掉
-- production binary 你沒 source / 不能加 printf
-
-`strace -e trace=openat ./prog` 不用改 source 就能看到所有 open。一旦工具會用，「不改 source 就能觀察」會變預設思維。
-
-## 一個常見誤解：「debugger 一定要 step-by-step」
-
-step debug 是 gdb 一種模式，不是唯一。多數 production debugging 是：
-
-- bug 已經發生 → core dump 事後分析
-- bug 還在發生 → strace / gdb 直接 attach
-- bug 偶爾發生 → bpftrace + 觸發條件
-
-step debug 適合「我寫的 algorithm 邏輯不對」。這套課重點是「跑起來才出現的問題」 —— 不太用 step。
+> **同一個程式，strace 看 syscall、ltrace 看 library 呼叫、valgrind 看記憶體——選對層才看得到你要找的東西**。這個實驗展示分層觀察的核心：`malloc`/`strcpy` 是 **library 函式**（不是 syscall），所以 **strace 看不到它們**（strace 只看 syscall），但 **ltrace 看得到**。而 `fopen`/`fprintf` 底層的 `openat`/`write` 是 syscall，strace 看得到。`malloc` 的記憶體用得對不對（leak/越界）要 **valgrind** 才看得到。所以**選錯工具就找不到問題**——如果你想找 malloc 的 leak 卻用 strace，永遠找不到（strace 看不到 malloc）。這就是為什麼要建立「分層觀察」的直覺——先判斷問題在哪一層（syscall? library? 記憶體?），再選對應的工具。這個實驗也預告了後面的章節：strace（Ch 5，syscall 層）、ltrace（Ch 6，library 層）、valgrind（Ch 15，記憶體層）。建議自己跑一遍，親眼看「同一個程式在不同工具下顯示不同的東西」——這建立了本課最重要的直覺：**觀察是分層的，選對層才看得到**。
 
 ## 動手練習
 
-**1. 試這張表的每個工具**
+1. 畫全景圖：不看書，憑記憶畫出「觀察什麼 → 哪一層 → 哪個工具」的全景
 
-寫一個會跑 30 秒的程式 `test.c`：
+2. 跑分層觀察：對 demo.c 用 strace/ltrace/valgrind，看每個顯示什麼不同（為什麼 strace 看不到 malloc）
 
-```c
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <string.h>
+3. 練決策框架：對幾個症狀（卡住/leak/慢/segfault）說出該用哪個工具
 
-int main(void) {
-    int fd = open("/tmp/test.log", O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    for (int i = 0; i < 30; i++) {
-        char buf[64];
-        int n = snprintf(buf, sizeof(buf), "iter %d\n", i);
-        write(fd, buf, n);
-        sleep(1);
-    }
-    close(fd);
-    return 0;
-}
-```
+4. 動態 vs 靜態：對一個程式用 strace（動態）和 readelf（靜態，Ch 11 預習），理解差別
 
-```bash
-gcc test.c -o test
-./test &
-PID=$!
-echo "PID = $PID"
+5. 選工具實戰：想一個你遇過的程式問題，判斷該用本課哪個工具
 
-# 各種觀察，每個跑幾秒按 Ctrl-C 停
-strace -p $PID -e trace=write,nanosleep
-ltrace -p $PID
-ls -l /proc/$PID/fd/
-lsof -p $PID
-cat /proc/$PID/status | head
-sudo perf top -p $PID
+## 本章重點整理
 
-wait $PID
-```
-
-對照看每個輸出的差異，**心裡記下每個工具看到了什麼、看不到什麼**。
-
-**2. 五個情境，先猜再翻答案**
-
-下面 5 個 bug 情境，先想要先用什麼，再翻答案對：
-
-1. 程式吃 100% CPU、看不出在幹嘛
-2. 程式不時 crash，stack trace 不一致
-3. 程式變慢但 CPU 用量正常
-4. 程式 fopen 一個檔案，回傳成功但 read 拿到空
-5. 兩個 process 互卡 (deadlock)
-
-<details>
-<summary>建議的工具優先順序</summary>
-
-1. `perf top -p PID` 看 CPU sample；`strace -c` 看 syscall 分布占比
-2. `ulimit -c unlimited` 開 core，crash 後 `gdb -c core ./prog`；rebuild 加 `-fsanitize=address` 重跑
-3. `strace -c` 看是不是太多 syscall；`perf stat` 看 IPC（cycles per instruction）；`iotop` 看是不是磁碟卡
-4. `strace -e trace=openat,read,readv -y` —— `-y` 顯示 fd 對應路徑，看是不是 fopen 開了不同的檔
-5. `gdb -p PID1` 跟 `gdb -p PID2` 各看 backtrace；`/proc/PID/stack` 看 kernel 堆疊；`bt full` 看 lock 結構
-
-每題對應的工具後面章節都會展開，現在只是建立直覺。
-
-</details>
+- 觀察工具分三大類：動態（跑時看行為/效能：strace/ltrace/perf/valgrind）、系統狀態（快照：/proc/lsof/ss）、靜態（看二進位：nm/objdump/readelf）
+- 選工具第一層判斷：看「行為」（動態）、「現在狀態」（快照）、還是「二進位本身」（靜態）
+- 「症狀 → 工具」決策框架：卡住→strace、leak→valgrind、慢→perf、race→helgrind/TSan、檔案/網路→lsof/ss
+- 動態 vs 靜態互補：靜態看「可能做什麼」（全貌、不執行），動態看「實際做了什麼」（執行軌跡）
+- 觀察是分層的：同一程式 strace 看 syscall、ltrace 看 library、valgrind 看記憶體——選對層才看得到
 
 ## 自我檢核
 
-- [ ] 講得出三層（static / dynamic / system）各包含哪些工具
-- [ ] 知道 strace 看 syscall、ltrace 看 lib function、ftrace 看 kernel function
-- [ ] 知道每個工具大致 overhead、哪些不能在 production 跑
-- [ ] 五個情境能說出第一個試什麼工具
-- [ ] 知道為什麼「沒有單一神器」
+- [ ] 能畫出觀察工具的全景圖（觀察什麼/哪一層/哪個工具）
+- [ ] 能用「症狀 → 工具」框架，對常見問題選出合適工具
+- [ ] 理解動態 vs 靜態觀察的差別和互補
+- [ ] 知道為什麼 strace 看不到 malloc（分層），該用什麼看
+- [ ] 對本課每個工具在地圖的位置有初步認識
 
-下一章補基礎：process、syscall、signal、fd 模型。後面所有工具都建在這上面。
+## 延伸閱讀
 
-→ [Ch 2 process / syscall / signal / fd 模型](./02-process-syscall-fd-model.md)
+### 文章
+
+- **[Linux debugging tools 概覽](https://jvns.ca/blog/2016/07/03/debugging-tools/)** — Julia Evans
+  - **這篇說什麼**：各種 Linux debug 工具的全景和怎麼選
+  - **讀哪裡**：整篇
+  - **為什麼值得讀**：本章「工具全景」的最佳補充，把工具放進實用框架
+
+- **[Brendan Gregg 的 Linux Performance 工具圖](https://www.brendangregg.com/linuxperf.html)** — Brendan Gregg
+  - **這篇說什麼**：一張著名的圖，標出每個工具觀察 Linux 的哪個部分
+  - **讀哪裡**：那張工具圖
+  - **為什麼值得讀**：本課全景圖的「效能版」權威，把工具對應到系統的各部分
+
+### 書籍
+
+- **《Systems Performance》— Ch 4 (Observability Tools)** — Brendan Gregg
+  - **讀哪幾章**：Ch 4（觀測工具的分類和方法論）
+  - **這本書的定位**：觀測方法論的權威，把工具放進系統分析的框架
+  - **前提**：本章
+
+下一章我們補完基礎——process/syscall/fd/signal 模型。理解這些「被觀察的對象」是什麼，後面的工具才有意義（你要先懂 process 是什麼，才能理解 strace 在觀察什麼）。
+
+→ [Ch 2 process / syscall / fd / signal 模型](./02-process-syscall-fd-model.md)

@@ -1,372 +1,304 @@
-# Ch 2 — process / syscall / signal / fd 模型
+# Ch 2 — process / syscall / fd / signal 模型
 
-> 目標：把 Linux 上「process 是什麼、syscall 怎麼進出 kernel、signal 怎麼遞送、fd 怎麼運作」打底完。後面所有工具都建立在這四件事上。
+> **目標**：補完「被觀察的對象」的模型——process（程式的執行實例）、syscall（程式向 kernel 請求服務的方式）、fd（檔案描述符，process 操作 I/O 的把手）、signal（kernel/process 之間的非同步通知）。這些是後面所有工具觀察的對象。理解它們，strace（看 syscall）、lsof（看 fd）、/proc（看 process 狀態）才有意義。本課指定「當作只會 C + 一點 OS」，這章把基礎補齊。
 
-## 為什麼這章重要
+> **環境**：Linux，C 範例（gcc -g -O0）。搭配 strace/proc 觀察。
 
-strace 看 syscall、lsof 看 fd、gdb 透過 ptrace + signal 控制 process —— 不懂這四個基本模型，看到工具輸出會像看天書。本章不深入到 kernel implementation，但要把「使用者程式怎麼跟 kernel 互動」的整個故事講清楚。
+## 為什麼要先懂這些模型？
 
-## Process：一個跑著的程式
+後面的工具都在觀察 process 的某個面向——strace 看它的 syscall、lsof 看它的 fd、/proc 看它的狀態、signal 工具看它收到的信號。如果你不知道「process 是什麼、syscall 是什麼、fd 是什麼」，看工具的輸出就像看天書。
 
-Linux 對 process 的核心抽象很簡單：
+這章補完這些基礎模型。本課假設你會 C、知道 process 大概是什麼，但可能對「syscall 怎麼運作」「fd 到底是什麼」「signal 怎麼打斷程式」不夠清楚。把這些搞懂，你看 strace 的輸出（一堆 syscall）、lsof 的輸出（一堆 fd）、/proc 的內容（process 狀態）才能理解。這是 Part 1 的基礎，後面所有觀察都建立在這裡。
 
-- 一個 PID（整數）
-- 一個 address space（virtual memory map）
-- 一組 file descriptor table
-- 一個 credential（uid / gid）
-- 一個 signal handler table
-- 一組 register（每 thread 一份）
+> 如果你學過 linux_commands 課，這章的 process/fd/signal 概念有重疊（那課的 Ch 14-19）。這裡從「觀察」的角度重講，並補上 syscall 的機制。如果完全熟悉，可以快速瀏覽。
 
-每個 process 在 kernel 裡是一個 `task_struct`。你能透過 `/proc/PID/` 讀到大部分欄位。
+## 先建立直覺:程式 vs process
+
+```
+程式（program）vs process：
+
+  程式：磁碟上的「檔案」（一堆指令，靜態的）
+    /usr/bin/ls 是個程式（ELF 檔案，Ch 11）
+        │
+  process：程式的「執行實例」（跑起來的，動態的）
+    執行 ls → 建立一個 process（有 PID、記憶體、fd、狀態...）
+    同一個程式能跑出多個 process（開兩個 ls = 兩個 process）
+        │
+  process 有什麼（觀察的對象）：
+    PID：身分證號
+    記憶體空間：程式碼 + 資料 + heap + stack
+    fd 表：開啟的檔案/socket（Ch 8 lsof 看這個）
+    狀態：R/S/D/Z（Ch 7 /proc 看這個）
+    signal 處理：怎麼回應各種 signal
+        │
+  → process 是「被觀察的對象」
+    工具觀察的是 process 的各個面向
+```
+
+關鍵心智：**程式**是磁碟上的靜態檔案，**process** 是它的執行實例（動態的，有 PID、記憶體、fd、狀態）。後面的工具觀察的就是 process 的各個面向——strace 看它的 syscall、lsof 看它的 fd、/proc 看它的狀態。理解 process「有什麼」，你就知道工具在觀察什麼。
+
+## syscall:程式向 kernel 請求服務
+
+```
+syscall（系統呼叫）：程式請 kernel 做事的唯一方式
+
+  程式不能直接做特權操作（讀檔案、開網路、配記憶體...）
+  那些是 kernel 的職責 → 程式要「請 kernel 做」
+        │
+  syscall 是「請求的介面」：
+    程式：「kernel，幫我讀這個檔案」→ read() syscall
+    kernel：執行讀取，回結果
+        │
+  使用者空間 vs kernel 空間：
+    程式跑在「使用者空間」（受限，不能直接碰硬體）
+    syscall 是「進入 kernel 空間」的門
+    （透過特殊指令 syscall/int 0x80 切換）
+        │
+  → 程式做的「有意義的事」最終都是 syscall：
+    讀寫檔案 = read/write
+    開網路 = socket/connect
+    配記憶體 = brk/mmap
+    建 process = fork/clone
+    → strace 攔截這些 syscall = 看見程式的「真實行為」
+```
 
 ```bash
-ls /proc/$$/   # $$ 是 shell 自己的 PID
+# 看一個程式做了哪些 syscall（strace 的本質）
+cd ~/obslab
+strace -c ls    # -c 統計各 syscall 被呼叫幾次
+# % time   calls  syscall
+#   ...     12    openat       ← 開檔案
+#   ...     8     read
+#   ...     5     write        ← 輸出
+#   ...     3     mmap         ← 記憶體
+# → ls 的「真實工作」就是這些 syscall
+
+# 程式碼層的 read vs syscall 層的 read
+# C: read(fd, buf, n) → 直接對應 read syscall
+# C: fread(...) → 底層是 read syscall（library 包裝）
+# C: printf(...) → 底層是 write syscall
 ```
 
-幾個重點檔案後面 Ch 7 詳細看：
+> **程式做的「有意義的事」最終都是 syscall——這是 strace 能看見「真實行為」的原因**。程式跑在「使用者空間」（受限，不能直接碰硬體/檔案/網路），那些特權操作是 **kernel** 的職責。程式要做這些事，必須透過 **syscall**（系統呼叫）「請 kernel 做」——讀檔案是 `read`、開網路是 `socket`/`connect`、配記憶體是 `brk`/`mmap`、建 process 是 `fork`/`clone`。syscall 是「使用者空間進入 kernel 空間的門」（透過特殊 CPU 指令切換）。**這就是為什麼 strace 這麼強大**——它攔截程式的所有 syscall，等於看到程式做的所有「有意義的事」（任何 I/O、記憶體、process 操作都是 syscall）。你的 `printf` 底層是 `write`、`fopen` 底層是 `openat`、`malloc` 底層可能是 `brk`/`mmap`——strace 揭開這些。`strace -c`（統計各 syscall 次數）給你程式行為的「總覽」。理解「程式行為 = 一串 syscall」，你就懂了 strace 的本質，也理解了為什麼它是 debug 的主力——當你想知道「程式實際在做什麼」，看它的 syscall 就對了。
 
-| 檔案 | 內容 |
-|---|---|
-| `cmdline` | argv |
-| `status` | 各種統計（state, uid, mem, ...） |
-| `fd/` | 開的 file descriptor |
-| `maps` | virtual memory layout |
-| `stack` | kernel stack（process 在 kernel 哪段 code） |
-| `syscall` | 目前停在哪個 syscall |
-
-## fork / exec：process 怎麼生出來
-
-**`fork()`**：現有 process 複製一份，新的叫 child，PID 不一樣，其他幾乎都一樣（記憶體 COW、fd table 拷貝）。
-
-**`exec*()`**：把當前 process 的 address space 換成另一個 binary，**PID 不變**。
-
-組合：`fork()` + `exec()` = 「啟動新程式」的 idiom。shell 跑 `ls`：
-
-```c
-pid_t pid = fork();
-if (pid == 0) {
-    // child
-    execvp("ls", (char *[]){"ls", NULL});
-} else {
-    // parent
-    waitpid(pid, NULL, 0);
-}
-```
-
-為什麼分兩步？分開讓 fork 後 exec 前可以做事 — 比如 redirect stdout、setuid、close fd。Ch 8 / 19 / 20 都會用到這個 pattern。
-
-## Syscall：跨過 user/kernel 邊界
-
-C 程式跑在 user mode，沒辦法直接做 IO、不能直接讀別 process 的記憶體、不能直接 access 硬體。要 kernel 幫忙就用 **syscall**。
-
-x86_64 上 syscall 的 ABI（簡化版）：
+## fd:process 操作 I/O 的把手
 
 ```
-register   傳什麼
-────────   ───────
-rax        syscall number
-rdi        arg1
-rsi        arg2
-rdx        arg3
-r10        arg4
-r8         arg5
-r9         arg6
+fd（file descriptor，檔案描述符）：process 操作 I/O 的「把手」
+
+  process 不直接操作檔案/socket，而是透過「fd」（一個小整數）
+    open("file") → 回傳 fd 3
+    read(3, ...) → 從 fd 3 讀（kernel 知道 3 對應哪個檔案）
+        │
+  fd 是 process「開啟檔案表」的索引：
+    fd 0：stdin（標準輸入）
+    fd 1：stdout（標準輸出）
+    fd 2：stderr（標準錯誤）
+    fd 3+：你開的檔案/socket/pipe...
+        │
+  fd 不只是檔案——「一切皆檔案」：
+    一般檔案、socket（網路）、pipe、裝置、甚至 epoll
+    都用 fd 操作（統一的介面）
+        │
+  → lsof（Ch 8）看的就是「process 開了哪些 fd」
+    /proc/<pid>/fd 也能看（Ch 7）
+    很多 bug 是 fd 相關（fd 洩漏、操作錯 fd）
 ```
-
-實際指令：
-
-```asm
-mov rax, 1        ; SYS_write = 1
-mov rdi, 1        ; fd = stdout
-mov rsi, msg      ; buffer
-mov rdx, 13       ; length
-syscall           ; 進 kernel
-; 回來時 rax = 回傳值（負數表示 errno）
-```
-
-`syscall` 指令做的事：
-
-1. 切到 kernel mode（CPU privilege ring 3 → 0）
-2. 跳到 kernel 設好的 entry point (`entry_SYSCALL_64`)
-3. 從 `rax` 查 syscall table、call 對應 handler
-4. handler 跑完，`rax` 設回傳值
-5. 切回 user mode、回到 caller 下一條指令
-
-**strace 攔的就是這條線**。它在 syscall 進去前後各停一次、印參數跟回傳值。Ch 3 講 ptrace 機制。
-
-## syscall vs libc function
-
-新手常混。**libc function 不等於 syscall**。例：
-
-| C code | libc 做了什麼 | 真的 syscall |
-|---|---|---|
-| `printf("hi\n")` | format、寫到 stdio buffer，buffer 滿才 flush | `write` (有時) |
-| `fopen("f", "r")` | malloc FILE struct、call open | `openat` |
-| `malloc(8)` | 自己管 heap，不夠才向 kernel 要 | `brk` 或 `mmap`（少） |
-| `time(NULL)` | 多數 case 走 vDSO | 0 個 syscall（!） |
-| `getpid()` | glibc cache 過 | 0 個 syscall |
-
-**vDSO**（virtual dynamic shared object）很重要：kernel 把幾個常用 function（gettimeofday、clock_gettime、getcpu、time）直接 map 到 user space，呼叫不用切 ring，超快。
 
 ```bash
-ldd /bin/ls | grep vdso
-# linux-vdso.so.1 (0x00007ffd...)
-```
-
-**這就是為什麼有些 function 用 strace 看不到** — 它根本沒進 kernel。要看用 ltrace（看 lib call）或 gdb step。
-
-## errno 怎麼運作
-
-syscall 失敗時 kernel 把錯誤放在 register（負的 error code）。glibc wrapper 把它取負號塞進 `errno`，wrapper 回傳 -1。
-
-```c
-int fd = open("/nope", O_RDONLY);
-if (fd < 0) {
-    perror("open");        // 印 "open: No such file or directory"
-    fprintf(stderr, "errno = %d\n", errno);
+# 看一個 process 的 fd（/proc 或 lsof）
+cat > sleeper.c <<'EOF'
+#include <unistd.h>
+#include <fcntl.h>
+int main() {
+    int fd = open("/tmp/test.txt", O_CREAT|O_WRONLY, 0644);  // fd 3
+    sleep(60);    // 開著 fd 睡 60 秒（方便觀察）
+    return 0;
 }
+EOF
+gcc -o sleeper sleeper.c
+./sleeper &
+SLEEPER_PID=$!
+
+# 看它的 fd（/proc，Ch 7）
+ls -l /proc/$SLEEPER_PID/fd
+# 0 -> /dev/pts/0    (stdin)
+# 1 -> /dev/pts/0    (stdout)
+# 2 -> /dev/pts/0    (stderr)
+# 3 -> /tmp/test.txt (你開的檔案！)
+
+# 用 lsof 看（Ch 8）
+lsof -p $SLEEPER_PID
+kill $SLEEPER_PID
 ```
 
-strace 直接顯示 errno 名稱：
+> **fd 是 process「開啟檔案表」的索引，是 I/O 操作的統一把手——lsof 和 /proc/fd 觀察的就是它**。process 不直接操作檔案/socket，而是透過 **fd**（一個小整數）——`open("file")` 回傳 fd 3，之後 `read(3, ...)` 從 fd 3 讀（kernel 知道 3 對應哪個檔案）。fd 0/1/2 是約定的 stdin/stdout/stderr，fd 3+ 是你開的。關鍵是「**一切皆檔案**」——一般檔案、socket（網路連線）、pipe、裝置，甚至 epoll，**全用 fd 操作**（統一介面）。所以「process 開了哪些 fd」這個資訊極有價值——它告訴你 process 在操作哪些檔案、開了哪些網路連線、有沒有 fd 洩漏。**lsof**（Ch 8）和 **/proc/<pid>/fd**（Ch 7）就是觀察 fd 的工具。很多 bug 是 fd 相關——fd 洩漏（一直開不關，最後 "too many open files"）、操作錯 fd、檔案被刪但 fd 還開著（佔空間）。練習 B 就是 fd 劫持調查。理解 fd 是 I/O 的把手，你看 lsof 的輸出（一堆 fd → 檔案/socket）就懂了它在告訴你什麼。這也呼應 linux_commands 課的 fd 概念，從「觀察」角度它是 debug I/O 問題的核心視角。
+
+## signal:非同步的通知
 
 ```
-openat(AT_FDCWD, "/nope", O_RDONLY) = -1 ENOENT (No such file or directory)
+signal（信號）：kernel/process 之間的「非同步通知」
+
+  signal 是「打斷程式的通知」：
+    程式正在跑 → 收到 signal → 暫停去處理 signal → 回來繼續
+    （非同步：隨時可能發生，不是程式主動要的）
+        │
+  常見 signal：
+    SIGSEGV（11）：segfault（記憶體存取錯誤）← 崩潰的常見原因
+    SIGINT（2）：Ctrl-C（中斷）
+    SIGTERM（15）：請求終止（kill 預設）
+    SIGKILL（9）：強制終止（不可攔截）
+    SIGCHLD：子 process 結束（parent 收到）
+    SIGPIPE：寫一個沒人讀的 pipe
+        │
+  process 能「處理」signal（signal handler）：
+    收到 SIGINT → 執行你註冊的 handler（如清理後退出）
+    或用預設行為（SIGSEGV 預設 = 崩潰 + core dump）
+        │
+  → strace 能看到 process 收到的 signal（--- SIGSEGV ---）
+    debug 崩潰時，看它收到什麼 signal 是關鍵
 ```
-
-**`-1 ENOENT` 是線索**。看 strace 找錯誤就是找這種行 —— 程式會 retry 或 fallback 的時候你只看 source 看不出來，strace 看一目了然。
-
-## File Descriptor：Linux 的 IO 抽象
-
-fd 是個整數，process 用它指 kernel 內部的「open file」對象。kernel 維護一張表：
-
-```
-process X 的 fd table:
-
-  0 → stdin   (terminal / pipe)
-  1 → stdout  (terminal / pipe)
-  2 → stderr  (terminal / pipe)
-  3 → /etc/passwd        (regular file)
-  4 → socket:[12345]     (TCP socket)
-  5 → /dev/random        (char device)
-  6 → pipe:[67890]       (pipe)
-  ...
-```
-
-**任何「open」的東西都是 fd**：file、socket、pipe、event fd、timer fd、signal fd、inotify、epoll handle、memfd、even /proc/PID/mem。
-
-這個統一 abstraction 是 Unix 哲學的核心。`read(fd, ...)` 不管你那個 fd 是檔案還是 socket，**都用同一個 syscall**。
 
 ```bash
-ls -l /proc/$$/fd/    # 看你 shell 開了什麼
-```
-
-每個 process 預設 fd table 大小（`ulimit -n`）通常 1024 或更高。
-
-## fd 的繼承：fork 跟 exec 的差別
-
-- **fork()**：child 拷貝整張 fd table，**parent 跟 child 看同一個 open file**（同 offset、同 flag）
-- **exec()**：fd 預設**保留**（除非 fd 設了 `O_CLOEXEC`）
-
-`O_CLOEXEC` 是個重要 flag：「我不想讓我 fork 出去 exec 的 child 看到這個 fd」。沒設可能 leak，新 code 應該預設加上。
-
-```c
-int fd = open("secret", O_RDONLY | O_CLOEXEC);  // ✅ exec 後消失
-```
-
-Ch 8 / 練習 B 會反覆碰這個。
-
-## Signal：非同步打斷
-
-signal 是 kernel 給 user process 發的「事件通知」。30+ 種，常見：
-
-| Signal | 預設行為 | 何時發 |
-|---|---|---|
-| `SIGINT` (2) | 終止 | Ctrl-C |
-| `SIGQUIT` (3) | 終止 + core | Ctrl-\ |
-| `SIGKILL` (9) | 終止（**不可 catch**） | `kill -9` |
-| `SIGSEGV` (11) | 終止 + core | invalid memory access |
-| `SIGPIPE` (13) | 終止 | write 到沒人讀的 pipe |
-| `SIGTERM` (15) | 終止（可 catch） | `kill` 預設 |
-| `SIGCHLD` | 忽略 | child 死了 |
-| `SIGSTOP` | stop（**不可 catch**） | `kill -STOP` |
-| `SIGCONT` | resume | `kill -CONT` |
-| `SIGTRAP` (5) | 終止 + core | breakpoint / debugger |
-| `SIGUSR1` / `SIGUSR2` | 終止 | 給 app 自定義 |
-
-process 可以註冊 handler：
-
-```c
-#include <signal.h>
-
-void handler(int sig) {
-    printf("caught %d\n", sig);
+# 看一個程式收到的 signal（strace 顯示）
+cat > crasher.c <<'EOF'
+#include <stdio.h>
+int main() {
+    int *p = NULL;
+    *p = 42;       // 寫 NULL → SIGSEGV！
+    return 0;
 }
+EOF
+gcc -g -O0 crasher.c -o crasher
 
-int main(void) {
-    signal(SIGINT, handler);
-    while (1) pause();
-}
+strace ./crasher 2>&1 | tail -5
+# ...
+# --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=NULL} ---
+# +++ killed by SIGSEGV (core dumped) +++
+# → strace 看到它收到 SIGSEGV（寫 NULL 觸發），且崩潰位址是 NULL
+#   這直接指出「解參考 NULL 指標」的 bug
 ```
 
-`SIGKILL` 跟 `SIGSTOP` **不能 catch、不能 ignore、不能 block**。kernel 強制執行。
+> **signal 是「非同步打斷程式的通知」——strace 能看到 process 收到的 signal，這對 debug 崩潰很關鍵**。signal 是 kernel/process 之間的非同步通知——程式正跑著，隨時可能收到 signal（不是程式主動要的），暫停去處理再回來。常見的：**SIGSEGV**（segfault，記憶體存取錯誤，崩潰的頭號原因）、**SIGINT**（Ctrl-C）、**SIGTERM**（kill 預設，請求終止）、**SIGKILL**（強制終止，不可攔截）、**SIGCHLD**（子 process 結束）、**SIGPIPE**（寫沒人讀的 pipe）。process 能註冊 **signal handler** 處理特定 signal，或用預設行為（SIGSEGV 預設 = 崩潰+core dump）。**strace 能看到 process 收到的 signal**（顯示 `--- SIGSEGV ---`）——這對 debug 崩潰極有用：上面的例子，strace 直接顯示程式收到 SIGSEGV、崩潰位址是 NULL，立刻指出「解參考 NULL 指標」的 bug。這比「程式 segfault 了」這個模糊訊息有用得多——strace 告訴你**收到什麼 signal、什麼位址、在做什麼之後**。signal 也是 Ch 21（core dump）的核心——崩潰時的 signal 決定了 core dump 的產生。理解 signal 是「非同步通知」，你 debug「程式莫名其妙死了」時就知道去看「它收到什麼 signal」（strace 或 core dump）。
 
-## ptrace 跟 signal 的關係
+## fork/exec:process 怎麼誕生
 
-這是後面 Ch 3 的核心鋪墊：**ptrace 用 SIGSTOP 跟 SIGTRAP 控制 tracee**。
+```
+process 怎麼誕生（fork + exec，理解後面 trace 子 process）：
 
-- tracer call `PTRACE_ATTACH` → kernel 對 tracee 發 SIGSTOP，tracee 凍住
-- tracer call `PTRACE_SYSCALL` → tracee 跑到下一個 syscall 進 / 出，kernel 發 SIGTRAP 通知 tracer
-- tracer call `PTRACE_CONT` → tracee 繼續跑
+  fork()：複製當前 process（一變二）
+    parent 和 child 幾乎一樣（複製記憶體/fd...）
+    fork 回傳：parent 收到 child 的 PID，child 收到 0
+        │
+  exec()：把當前 process「換成」另一個程式
+    exec("ls") → 當前 process 的記憶體被 ls 的程式碼取代
+    （PID 不變，但跑的是 ls 了）
+        │
+  典型模式（shell 執行命令）：
+    fork() → child
+    child: exec("命令") → 變成那個命令
+    parent: wait() → 等 child 結束
+        │
+  → 這影響 trace：
+    strace -f 才會 trace fork 出的子 process（重要！）
+    不加 -f 只 trace 主 process，漏掉子 process 的行為
+```
 
-整個 strace、gdb 都建在這個 signal-based 控制機制上。**signal 不只是「中斷程式」，更是 tracer 跟 tracee 之間的通訊管道**。
+> **fork（複製 process）+ exec（替換程式）是 process 誕生的方式——這影響 strace 的 `-f`（trace 子 process）**。process 不是憑空出現的——它由 **fork**（複製當前 process，一變二）+ **exec**（把 process 換成另一個程式）產生。典型模式：shell 執行命令時 `fork` 出 child、child `exec` 成那個命令、parent `wait` 等它結束。這個機制對 trace 有重要影響：**strace 預設只 trace 主 process，不 trace 它 fork 出的子 process**——要加 **`-f`**（follow forks）才會跟著 trace 子 process。這是 strace 最常見的坑——你 trace 一個會 fork 子 process 的程式（如 shell script、會開子 process 的服務），不加 `-f` 就漏掉了子 process 的所有行為（而問題往往在子 process）。所以 trace 會 fork 的程式時記得 `strace -f`。理解 fork/exec，你也理解了 Ch 4 寫 mini-strace 時為什麼要處理子 process、Ch 19 注入時 process 的關係。這呼應 linux_commands 課的 fork/exec（那課的 Ch 15），這裡從「trace」角度——你要 trace 完整的程式行為，就要懂它怎麼生子 process 並用 `-f` 跟著 trace。
 
-## 一個常見誤解：「fork 跟 thread 一樣」
-
-不一樣。fork 整個拷貝記憶體（COW 但邏輯獨立），thread 共享記憶體。Linux 上兩者底層都是 `clone()` syscall，差別在傳的 flag：
-
-- `fork()` = `clone(SIGCHLD, ...)` 不共享
-- `pthread_create` = `clone(CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | ...)` 共享一堆
-
-strace 兩者都看得到（用 `-f`），但 thread 的 PID 在 ps 裡看叫 LWP（Light Weight Process）或 TID。Ch 5 詳細展開。
-
-## 一個常見誤解：「syscall 阻塞 = process hang」
-
-阻塞中的 process 不吃 CPU，這跟 hang 不一樣。`top` 看：
-
-- `R` (running) — 真的在 CPU 跑
-- `S` (sleeping) — 被 kernel 阻塞中（等 IO、等 lock、等 signal）
-- `D` (uninterruptible) — 阻塞中且**signal 也叫不醒**（通常是 disk IO）
-- `T` (stopped) — 被 SIGSTOP 凍住
-- `Z` (zombie) — 死了但 parent 還沒 wait
-
-`S` 的 process 不是壞，正在等東西。`D` 太久才是問題（多半 disk 卡）。Ch 7 看 `/proc/PID/status` 的 State 欄位。
-
-## 動手練習
-
-**1. 看一個 process 的 fd**
+## 故意弄壞:綜合觀察一個 process
 
 ```bash
-sleep 100 &
+# 一個程式，從 process/syscall/fd/signal 各角度觀察
+cd ~/obslab
+cat > multi.c <<'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+int main() {
+    printf("PID: %d\n", getpid());     // 我的 PID
+    int fd = open("/tmp/multi.txt", O_CREAT|O_WRONLY, 0644);  // fd（syscall: openat）
+    write(fd, "data\n", 5);            // syscall: write
+    pid_t child = fork();              // 生子 process
+    if (child == 0) {                  // child
+        execlp("echo", "echo", "from child", NULL);  // exec
+    }
+    sleep(30);                         // 睡著（方便觀察）
+    return 0;
+}
+EOF
+gcc -o multi multi.c
+
+# syscall 視角（記得 -f trace 子 process！）
+strace -f ./multi 2>&1 | grep -E 'openat|write|clone|execve' | head
+# openat(...) = 3            ← 開檔案
+# write(3, "data\n", 5)      ← 寫
+# clone(...) / fork          ← 生子 process
+# execve("echo"...)          ← 子 process exec（-f 才看得到！）
+
+# 跑起來，從其他角度看
+./multi &
 PID=$!
-ls -l /proc/$PID/fd/
-# 0, 1, 2 都指向你的 terminal (/dev/pts/N)
+sleep 1
+# fd 視角（Ch 7/8）
+ls -l /proc/$PID/fd          # 看它開的 fd
+# process 狀態視角（Ch 7）
+cat /proc/$PID/status | grep State   # State: S (sleeping，因為 sleep)
 kill $PID
 ```
 
-**2. 看 syscall 跟 lib call 的差別**
+> 這個實驗綜合了本章的所有模型——**process**（getpid 的 PID）、**syscall**（openat/write/clone/execve）、**fd**（/proc/fd 看開的檔案）、**signal**（kill 送 SIGTERM）、**fork/exec**（生子 process 並 exec echo）。關鍵觀察：`strace -f`（加 -f）才看得到子 process exec echo 的行為——這驗證了「trace 會 fork 的程式要用 -f」。從不同角度看同一個 process（syscall 用 strace、fd 用 /proc/fd、狀態用 /proc/status）展示了「process 有很多面向，不同工具看不同面向」。這建立了後面所有觀察的基礎——你現在知道 process「有什麼」（PID/記憶體/fd/狀態/signal 處理），所以後面 strace（看 syscall）、lsof（看 fd）、/proc（看狀態）、Ch 21（看 signal/core dump）觀察的都是這些面向。把這個模型建立好，後面的工具就都有了意義。
 
-```c
-// hello2.c
-#include <stdio.h>
-int main(void) {
-    printf("hello %d\n", 42);
-    fflush(stdout);
-    return 0;
-}
-```
+## 動手練習
 
-```bash
-gcc hello2.c -o hello2
+1. 看 syscall：`strace -c ls`，看 ls 做了哪些 syscall，理解「程式行為 = syscall」
 
-# 看 lib call
-ltrace ./hello2
-# printf("hello %d\n", 42)        = 9
-# fflush(0x...)                    = 0
-# +++ exited (status 0) +++
+2. 看 fd：寫一個開檔案後 sleep 的程式，用 `ls -l /proc/<pid>/fd` 看它的 fd（0/1/2 + 你開的）
 
-# 看 syscall
-strace ./hello2 2>&1 | grep -v "^(execve\|brk\|mmap\|mprotect\|munmap\|access\|openat\|read\|fstat\|close\|arch_prctl\|set_tid_address\|set_robust_list\|rseq\|prlimit64\|getrandom\|statx)"
-# write(1, "hello 42\n", 9)        = 9
-# exit_group(0)                    = ?
-```
+3. 看 signal：寫一個會 segfault 的程式，`strace` 它，看 `--- SIGSEGV ---`，理解崩潰的 signal
 
-**這就是 syscall 跟 lib call 的差別**：printf 是 lib call，最終變成 1 個 write syscall。
+4. fork 與 -f：寫一個 fork 子 process 的程式，對比 `strace` 和 `strace -f`，看 -f 才看到子 process
 
-**3. 拿掉 fflush**
+5. 綜合觀察：跑「故意弄壞」的 multi.c，從 syscall/fd/狀態各角度觀察同一個 process
 
-```c
-printf("hello %d\n", 42);
-// 沒 fflush
-return 0;
-```
+## 本章重點整理
 
-跑 strace 還是看到 write — 因為 exit 時會 flush。但如果 printf 沒換行、又沒 fflush、又沒 exit（例如 loop 中印），buffer 不滿就不會 write。
-
-這就是「printf debug 但什麼都看不到」的常見原因。
-
-**4. 觀察 fd 繼承**
-
-```c
-// fd_inherit.c
-#include <stdio.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/wait.h>
-
-int main(void) {
-    int fd = open("/tmp/inherit.log", O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    dprintf(fd, "from parent\n");
-
-    pid_t pid = fork();
-    if (pid == 0) {
-        // child 不顯式提到 fd，但它還在
-        dprintf(fd, "from child\n");
-        return 0;
-    }
-    waitpid(pid, NULL, 0);
-    dprintf(fd, "parent again\n");
-    close(fd);
-    return 0;
-}
-```
-
-```bash
-gcc fd_inherit.c -o fd_inherit
-./fd_inherit
-cat /tmp/inherit.log
-# from parent
-# from child
-# parent again
-```
-
-child 沒重新 open，靠繼承。
-
-**5. 觀察 zombie**
-
-```c
-// zombie.c
-#include <stdio.h>
-#include <unistd.h>
-
-int main(void) {
-    if (fork() == 0) {
-        return 0;   // child 立刻死
-    }
-    sleep(60);      // parent 不 wait
-    return 0;
-}
-```
-
-```bash
-gcc zombie.c -o zombie
-./zombie &
-sleep 1
-ps -ef | grep -E "zombie|defunct"
-# 你會看到一個 <defunct> 的 entry
-```
-
-zombie 的 entry 還佔 PID slot 但不吃資源。kill parent 後 init 收養並 reap 掉。
+- 程式（靜態檔案）vs process（執行實例，有 PID/記憶體/fd/狀態/signal）——工具觀察的是 process 的各面向
+- syscall 是程式請 kernel 做事的唯一方式；程式的「有意義行為」都是 syscall（read/write/openat/mmap/fork）——strace 看見它們
+- fd 是 process 操作 I/O 的把手（開啟檔案表的索引）；一切皆檔案（檔案/socket/pipe 都用 fd）——lsof/proc/fd 觀察它
+- signal 是非同步通知（SIGSEGV 崩潰/SIGINT Ctrl-C/SIGTERM 終止）；strace 看得到收到的 signal（debug 崩潰）
+- fork（複製）+ exec（替換）產生 process；strace -f 才 trace 子 process（trace 會 fork 的程式必加）
 
 ## 自我檢核
 
-- [ ] 講得出 process 五個核心抽象（PID / addr space / fd table / credential / signal）
-- [ ] 知道 fork + exec 為什麼分兩步
-- [ ] 懂 syscall 怎麼從 user mode 進 kernel mode（rax + syscall instruction）
-- [ ] 知道 vDSO 是什麼、為什麼有些 function strace 看不到
-- [ ] 知道 fd 是統一 abstraction（file / socket / pipe / ... 通用）
-- [ ] 知道 SIGKILL / SIGSTOP 不能 catch
-- [ ] 講得出 fork 跟 thread 在 clone() flag 上的差別
+- [ ] 能說出 process「有什麼」（PID/記憶體/fd/狀態/signal），這些是工具觀察的對象
+- [ ] 理解 syscall 是什麼，為什麼「程式行為 = syscall」讓 strace 強大
+- [ ] 知道 fd 是 I/O 的把手，lsof/proc/fd 觀察它
+- [ ] 知道 signal 是非同步通知，strace 怎麼幫 debug 崩潰
+- [ ] 知道 fork/exec 怎麼生 process，為什麼 strace 要 -f
 
-下一章正式進 ptrace。所有 tracer 工具的底層機制。
+## 延伸閱讀
 
-→ [Ch 3 ptrace(2) 完整剖析](./03-ptrace-syscall-deep-dive.md)
+### 書籍
+
+- **《The Linux Programming Interface》— Ch 6, 24-26, 20-22** — Kerrisk
+  - **讀哪幾章**：Ch 6（process）、Ch 24-26（fork/exec/wait）、Ch 20-22（signal）、Ch 5（fd/file I/O）
+  - **這本書的定位**：這些模型的權威；本課的底層全部來自這裡
+  - **前提**：會 C
+
+### 文章
+
+- **[What is a syscall](https://jvns.ca/blog/2014/03/02/what-happens-if-you-write-a-tcp-stack-in-python/) / Julia Evans 的 syscall 文章**
+  - **這篇說什麼**：syscall 怎麼運作、使用者空間 vs kernel
+  - **為什麼值得讀**：把 syscall 機制講得易懂
+
+### 官方文件
+
+- **[syscalls(2)](https://man7.org/linux/man-pages/man2/syscalls.2.html)** — Linux man-pages
+  - **讀哪裡**：syscall 列表（看有哪些 syscall）
+  - **為什麼值得讀**：所有 syscall 的索引，trace 時查某個 syscall 是什麼用
+
+下一章深入 ptrace——debugger 和 strace 的底層機制。理解 ptrace 怎麼讓一個 process 控制和觀察另一個，你就理解了「工具怎麼看到 syscall」的祕密。
+
+→ [Ch 3 ptrace 深入：debugger 的基礎](./03-ptrace-syscall-deep-dive.md)

@@ -1,348 +1,257 @@
-# Ch 21 — core dump 與 signal trap
+# Ch 21 — core dump 與 signal
 
-> 目標：搞懂 core dump 怎麼產生、systemd-coredump / coredumpctl / 老 path 配置、用 gdb 開 core 還原 backtrace + register + 變數，以及怎麼自己寫 signal handler dump 上下文。
+> **目標**：掌握「崩潰後分析」——core dump（崩潰瞬間的記憶體快照）怎麼產生、怎麼用 gdb 分析 core 找出崩潰點、signal 怎麼觸發 core dump、以及在生產環境怎麼設定和收集 core。前面的工具大多在程式「執行時」觀察，這章補上「崩潰後」的分析——當程式已經死了，core dump 是你唯一的線索。這是 debug「程式崩潰但沒有現場」的關鍵。
 
-## core dump 是什麼
+> **環境**：Linux，gdb，core dump（要設定 ulimit/sysctl）。`gcc -g`。
 
-程式被 fatal signal 殺時（SIGSEGV / SIGABRT / SIGFPE / SIGBUS / SIGILL），kernel 把 process 的 **memory + register + thread state** dump 成檔案。事後可以 gdb 開「在 crash 那瞬間程式長什麼樣」。
+## 為什麼需要崩潰後分析？
 
-**比加 log 強的地方**：crash 前不需要做任何事，事後拿到完整現場。
+很多時候程式崩潰時你**不在現場**——生產服務半夜崩潰、客戶端崩潰你看不到、間歇性崩潰難重現。等你發現時，程式已經死了。怎麼 debug「已經死掉的程式」？答案是 **core dump**——它是程式崩潰瞬間的**記憶體快照**（暫存器、堆疊、變數的當時狀態）。
 
-## 開啟 core dump
+core dump 讓你能「事後重建崩潰現場」——用 gdb 開 core，看「崩潰時在哪個函式、哪一行、變數是什麼、呼叫堆疊怎樣」。這是 debug「程式崩潰但沒有現場」的關鍵，也是生產環境 debug 崩潰的標準方法（崩潰時自動產生 core，事後分析）。這章補上前面工具的「執行時觀察」之外的「崩潰後分析」——你的觀察能力就涵蓋了程式的整個生命週期（執行時、崩潰時、崩潰後）。
 
-預設多數 distro 限制 core 大小為 0（不產生）。要開：
+## 先建立直覺:崩潰現場的照片
 
-```bash
-ulimit -c            # 看當前限制
-ulimit -c unlimited  # 開無限大
-ulimit -c 1000000    # 1GB
+```
+core dump = 程式崩潰瞬間的「現場照片」
 
-# 永久（per user）
-echo "* soft core unlimited" | sudo tee -a /etc/security/limits.conf
-echo "* hard core unlimited" | sudo tee -a /etc/security/limits.conf
+  程式正常跑 → 崩潰（如 SIGSEGV）→ kernel 把當時的記憶體狀態
+              「dump」成一個檔案（core）
+        │
+  core 裡有什麼（崩潰瞬間的快照）：
+    - 暫存器的值（PC = 崩潰在哪條指令）
+    - 呼叫堆疊（崩潰時的函式呼叫鏈）
+    - 變數的值（當時的記憶體內容）
+    - 哪個 signal 造成崩潰
+        │
+  用 gdb 開 core（重建現場）：
+    gdb ./prog core
+    → 看崩潰在哪個函式、哪一行、變數是什麼
+    → 像「崩潰當下用 gdb 看」，但是事後
+        │
+  → core dump 是「崩潰現場的照片」
+    程式死了，但 core 保留了死亡瞬間的一切
+    gdb 開 core = 重建現場做事後鑑定
 ```
 
-## core 寫到哪
+關鍵心智：core dump 是程式崩潰瞬間的「現場照片」——kernel 把崩潰時的記憶體狀態（暫存器、堆疊、變數、哪個 signal）dump 成檔案。用 gdb 開 core 重建現場——看崩潰在哪個函式、哪一行、變數是什麼。像「崩潰當下用 gdb 看」，但是事後（程式已經死了，core 保留了死亡瞬間）。
 
-兩條路：**老 path（kernel 直接寫）** 跟 **systemd-coredump（pipe 給 daemon）**。
+> core dump 由 signal（Ch 2）觸發——SIGSEGV/SIGABRT 等的預設行為是「終止 + 產生 core」。如果對 signal 不熟，回看 [Ch 2](./02-process-syscall-fd-model.md)。gdb 分析 core 用到 ELF/符號（Ch 11）。
 
-### 老 path
+## 啟用並產生 core dump
 
 ```bash
+# === 啟用 core dump（預設常常關閉）===
+ulimit -c                        # 看當前 core 大小限制（0 = 關閉）
+ulimit -c unlimited              # 啟用（不限大小，當前 shell）
+
+# core 檔案放哪、叫什麼（由 sysctl 控制）
 cat /proc/sys/kernel/core_pattern
-# core
-```
+# core 或 |/usr/lib/systemd/systemd-coredump ...（systemd 系統用 coredumpctl）
 
-`core` 表示寫到 cwd 的 `core` 檔案。可以 customize：
+# 簡單設定：core 放當前目錄，含 PID
+# sudo sysctl kernel.core_pattern=core.%e.%p   （%e 程式名 %p PID）
 
-```bash
-sudo sysctl -w kernel.core_pattern='/tmp/core.%e.%p.%t'
-```
-
-格式 specifier：
-
-| % | 意義 |
-|---|---|
-| `%e` | executable name |
-| `%E` | executable path（/ 變 !） |
-| `%p` | PID |
-| `%u` | UID |
-| `%g` | GID |
-| `%s` | signal |
-| `%t` | time |
-| `%h` | hostname |
-| `%c` | coredump RLIMIT |
-
-### systemd-coredump
-
-modern distro 預設用：
-
-```bash
-cat /proc/sys/kernel/core_pattern
-# |/lib/systemd/systemd-coredump %P %u %g %s %t %c %h
-```
-
-`|prog` 是 「kernel pipe core 給這 program」。systemd-coredump 接住、壓縮、寫到 `/var/lib/systemd/coredump/`。
-
-優點：
-- 自動分類（含 metadata）
-- 自動壓縮
-- `coredumpctl` 一個工具管理
-
-## coredumpctl 用法
-
-```bash
-coredumpctl                         # 列所有
-coredumpctl -1                      # 最近一個
-coredumpctl info PID                # 某 PID 的 detail
-coredumpctl info /path/to/binary
-coredumpctl gdb                     # 最近一個 + gdb
-coredumpctl debug                   # 同上
-coredumpctl dump PID > core         # extract
-coredumpctl info -1                 # 最後一個
-```
-
-```
-$ coredumpctl
-TIME                            PID UID GID SIG     COREFILE EXE
-Sun 2025-01-01 12:34:56 UTC    1234 1000 1000 SIGSEGV present  /home/me/myprog
-Sun 2025-01-01 12:35:01 UTC    5678 1000 1000 SIGSEGV present  /usr/bin/firefox
-```
-
-```
-$ coredumpctl info -1
-           PID: 1234 (myprog)
-           UID: 1000
-           GID: 1000
-        Signal: 11 (SEGV)
-     Timestamp: Sun ... (5min ago)
-  Command Line: ./myprog arg1
-    Executable: /home/me/myprog
- ...
-       Storage: /var/lib/systemd/coredump/core.myprog.1000.xxx.zst (present)
-       Message: Process 1234 (myprog) of user 1000 dumped core.
-                
-                Stack trace of thread 1234:
-                #0  0x000... in main () at myprog.c:42
-                #1  0x000... in __libc_start_main () from /lib/...
-```
-
-直接看到 backtrace，**不用開 gdb**！
-
-## gdb 開 core
-
-```bash
-gdb /path/to/binary /path/to/core
-# 或 coredumpctl 自動：
-coredumpctl gdb -1
-```
-
-進去後：
-
-```gdb
-(gdb) bt                  # backtrace
-(gdb) bt full             # 含 local variable
-(gdb) frame 2             # 切到第 2 個 frame
-(gdb) info locals         # 看 local
-(gdb) info args           # 看 function args
-(gdb) info registers      # 全部 register
-(gdb) p var_name          # 印變數
-(gdb) p *struct_ptr       # deref struct
-(gdb) x/16x address       # 印 memory hex
-(gdb) thread apply all bt # 所有 thread 的 backtrace
-```
-
-`bt full` 是查 crash 第一招：
-
-```
-#0  0x000055555555515a in process (x=0x7fff...) at myprog.c:8
-        ptr = 0x0
-        result = 0
-#1  0x000055555555518c in main (argc=1, argv=...) at myprog.c:15
-        x = {value = 42, ptr = 0x0}
-```
-
-`ptr = 0x0` —— 一目了然，null deref。
-
-## 一個常見踩雷：core 不見
-
-設了 `ulimit -c unlimited` 還是沒 core？檢查：
-
-1. **cwd 寫得進嗎**：有些 daemon cwd 是 `/`，沒寫權限 → core 寫不出
-2. **systemd 路徑**：core 在 `/var/lib/systemd/coredump/`，不在 cwd
-3. **container**：limit 在 host 設的不算，要 docker run `--ulimit core=-1`
-4. **suid binary**：kernel 預設不 dump suid binary core（怕泄露）。`/proc/sys/fs/suid_dumpable=2` 可開
-5. **process 自己 RLIMIT_CORE 設 0**：用 `prctl` / `setrlimit`
-
-debug：
-
-```bash
-ulimit -c
-cat /proc/sys/kernel/core_pattern
-ls -la /proc/PID/limits | grep -i core
-```
-
-## signal handler 自己寫 dump
-
-不依賴 kernel core，自己寫 signal handler 印 stack：
-
-```c
-#define _GNU_SOURCE
+# === 產生一個 core dump ===
+cd ~/obslab
+cat > crash.c <<'EOF'
 #include <stdio.h>
-#include <signal.h>
-#include <execinfo.h>
-#include <stdlib.h>
-#include <unistd.h>
-
-void handler(int sig) {
-    void *buf[64];
-    int n = backtrace(buf, 64);
-
-    fprintf(stderr, "=== signal %d ===\n", sig);
-    backtrace_symbols_fd(buf, n, STDERR_FILENO);
-
-    // 重啟 default handler 讓 core dump 還是會產
-    signal(sig, SIG_DFL);
-    raise(sig);
+#include <string.h>
+void process(char *data) {
+    char *p = NULL;
+    strcpy(p, data);   // 寫 NULL → SIGSEGV！
 }
-
-int main(void) {
-    struct sigaction sa = {0};
-    sa.sa_handler = handler;
-    sa.sa_flags = SA_RESTART;
-    sigaction(SIGSEGV, &sa, NULL);
-    sigaction(SIGABRT, &sa, NULL);
-    sigaction(SIGFPE, &sa, NULL);
-
-    int *p = NULL;
-    *p = 42;        // 觸發 SIGSEGV
+int main() {
+    char buf[100] = "hello";
+    process(buf);
     return 0;
 }
+EOF
+gcc -g -O0 crash.c -o crash
+
+ulimit -c unlimited
+./crash
+# Segmentation fault (core dumped)   ← 崩潰 + 產生 core
+
+ls core*                            # core 檔案產生了
+# 或 systemd 系統：
+coredumpctl list                   # 列出收集的 core
 ```
 
+> **core dump 預設常常關閉（ulimit -c 0），生產環境要主動啟用——這是「崩潰時能事後分析」的前提**。core dump 不是預設就有——`ulimit -c` 常是 0（關閉），要 `ulimit -c unlimited` 啟用（否則崩潰時不產生 core，你就沒有現場可分析）。core 檔案的位置和命名由 **`kernel.core_pattern`**（sysctl）控制——可以是簡單的檔名（`core.%e.%p`，%e 程式名 %p PID）或交給 **systemd-coredump**（現代系統，用 `coredumpctl` 管理）。**生產環境的關鍵設定**：(1) 啟用 core（在服務的 systemd unit 設 `LimitCORE=infinity`，或全域 ulimit）；(2) 設定 core_pattern（放哪、命名，含 PID/時間避免覆蓋）；(3) 確保有空間（core 可能很大——整個 process 的記憶體）。很多「生產服務崩潰但不知為什麼」就是因為**沒啟用 core dump**——崩潰時沒留下現場，只能瞎猜。啟用 core 後，崩潰時自動產生快照，你能事後分析。這是生產環境 debug 崩潰的標準做法——不是「等它再崩潰時盯著」（可能很久才再發生），而是「啟用 core，崩潰時自動留現場，事後分析」。`coredumpctl`（systemd）讓 core 管理更方便（自動收集、`coredumpctl gdb` 直接用 gdb 開最近的 core）。記住：**要能事後分析崩潰，先啟用 core dump**。
+
+## 用 gdb 分析 core
+
 ```bash
-gcc -g -rdynamic sig.c -o sig
-./sig
-# === signal 11 ===
-# ./sig(handler+0x18) [0x401234]
-# /lib/x86_64-linux-gnu/libc.so.6(...) [0x...]
-# ./sig(main+0x12) [0x401189]
+# === 用 gdb 開 core，重建崩潰現場 ===
+gdb ./crash core                   # 或 coredumpctl gdb
+# 或 gdb ./crash core.crash.12345
+
+# gdb 裡的分析命令：
+# (gdb) bt                         # backtrace：崩潰時的呼叫堆疊
+# #0  process (data=...) at crash.c:5     ← 崩潰在 process() 的第 5 行！
+# #1  main () at crash.c:10               ← 是 main 呼叫 process 的
+# → 直接看到「崩潰在哪個函式、哪一行、怎麼被呼叫的」
+
+# (gdb) frame 0                    # 切到崩潰的那一幀
+# (gdb) print p                    # 看變數 p 的值
+# $1 = 0x0                         ← p 是 NULL！（崩潰原因：strcpy 到 NULL）
+# (gdb) print data                 # 看其他變數
+# (gdb) info registers             # 看暫存器（PC 等）
+# (gdb) list                       # 看崩潰點附近的程式碼
+# → 完整重建崩潰現場：在哪、為什麼（p=NULL）、變數狀態
+
+# 一行命令快速看 backtrace（不進互動 gdb）：
+gdb -batch -ex bt ./crash core 2>/dev/null
+# #0 process ... crash.c:5
+# #1 main ... crash.c:10
+```
+
+```
+gdb 分析 core 的關鍵命令：
+  bt / backtrace    崩潰時的呼叫堆疊（最重要！看崩潰在哪、怎麼來的）
+  frame N           切到第 N 幀
+  print var         看變數的值（崩潰時的狀態）
+  info registers    看暫存器（PC = 崩潰指令）
+  list              看崩潰點的程式碼
+  info locals       看局部變數
+        │
+  → bt 先看「崩潰在哪、呼叫鏈」
+    然後 print 變數找「為什麼崩潰」（如 p=NULL）
+    要 -g 編譯才有行號和變數名
+```
+
+> **`bt`（backtrace）是分析 core 的第一命令——它顯示「崩潰在哪個函式、哪一行、怎麼被呼叫的」**。用 `gdb ./prog core` 開 core 後，最重要的命令是 **`bt`（backtrace）**——它顯示崩潰時的**呼叫堆疊**：崩潰在哪個函式（`#0 process ... crash.c:5`）、是誰呼叫的（`#1 main ... crash.c:10`）。這直接告訴你「崩潰在 process() 的第 5 行，是 main 呼叫的」。然後 **`print 變數`** 看崩潰時的變數狀態——`print p` 顯示 `p = 0x0`（NULL），找到崩潰原因（strcpy 到 NULL 指標）。`frame N`（切到某一幀看那層的變數）、`info locals`（局部變數）、`info registers`（暫存器，PC 是崩潰指令）、`list`（崩潰點程式碼）。這完整重建了崩潰現場——**在哪崩潰（bt）、為什麼崩潰（print 變數找出 NULL/越界/壞值）**。需要 **`-g` 編譯**（debug symbols）才有行號和變數名（否則只有位址，難分析——這是為什麼生產 build 也常保留 debug symbols 或分離存放）。快速看：`gdb -batch -ex bt ./prog core`（不進互動 gdb，直接印 backtrace）。這個「core + gdb bt」是 debug 崩潰的標準流程——比「加 printf 重現」強太多（不用重現，core 就是現場）。對「程式崩潰但不知為什麼」（生產崩潰、間歇崩潰、客戶現場崩潰），啟用 core + gdb 分析是黃金方法。理解它，你能 debug「已經死掉的程式」——觀察能力涵蓋崩潰後。
+
+## signal 與崩潰
+
+```bash
+# core dump 由 signal 觸發（Ch 2 的 signal）
+# 哪些 signal 會產生 core（預設行為）：
+#   SIGSEGV（11）：記憶體存取錯誤（最常見）
+#   SIGABRT（6）：abort()，assert 失敗，C++ 異常未捕捉，glibc 偵測到記憶體損壞
+#   SIGFPE（8）：算術錯誤（除以 0）
+#   SIGILL（4）：非法指令
+#   SIGBUS（7）：匯流排錯誤（對齊錯誤等）
+
+# 看一個程式被什麼 signal 殺（崩潰原因的第一線索）
+./crash; echo "exit: $?"
+# exit: 139   = 128 + 11（SIGSEGV）→ 被 SIGSEGV 殺
+# 退出碼 128+N = 被 signal N 殺（Ch 2）
+
+# 用 strace 看崩潰瞬間（崩潰前在做什麼 + 收到什麼 signal）
+strace ./crash 2>&1 | tail -3
+# strcpy 對應的記憶體操作... 
+# --- SIGSEGV {si_addr=NULL} ---     ← 收到 SIGSEGV，位址 NULL
+# +++ killed by SIGSEGV (core dumped) +++
+
+# === 自己處理 signal 產生診斷（進階）===
+# 程式可以註冊 SIGSEGV handler，在崩潰時印出 backtrace
+# （用 backtrace() 函式，或寫 core 前記錄資訊）
+```
+
+> **退出碼 128+N 告訴你「被哪個 signal 殺」——這是崩潰原因的第一線索，SIGSEGV（記憶體）和 SIGABRT（abort/記憶體損壞）最常見**。core dump 由 **signal** 觸發（Ch 2）——會產生 core 的 signal 各代表不同的崩潰原因：**SIGSEGV**（記憶體存取錯誤，最常見——NULL 解參考、越界、UAF）、**SIGABRT**（abort()——assert 失敗、C++ 未捕捉異常、**glibc 偵測到記憶體損壞**如 double-free/heap 損壞，這是重要線索：SIGABRT + glibc 訊息 = 記憶體損壞）、**SIGFPE**（除以 0 等算術錯誤）、**SIGBUS**（對齊/匯流排錯誤）。**退出碼 128+N = 被 signal N 殺**（Ch 2）——`./crash; echo $?` 顯示 139 = 128+11 = SIGSEGV。這是崩潰原因的第一線索（看退出碼就知道是哪類崩潰）。`strace ... | tail` 看崩潰瞬間——崩潰前在做什麼 + 收到什麼 signal（`--- SIGSEGV {si_addr=NULL} ---` 還告訴你崩潰位址，NULL = 解參考 NULL）。進階：程式可以**自己註冊 SIGSEGV handler**，在崩潰時印出 backtrace（用 `backtrace()` 函式）或記錄診斷資訊——很多生產服務這樣做（崩潰時自己記錄 backtrace 到 log，配合 core dump）。理解 signal 和崩潰的關係，你 debug 崩潰時：(1) 看退出碼（128+N → 哪個 signal → 哪類崩潰）；(2) SIGSEGV → 記憶體存取錯誤（看 core 的 bt + 變數）；(3) SIGABRT → 可能記憶體損壞（看 glibc 訊息）；(4) 用 core + gdb 找精確崩潰點。這把 Ch 2 的 signal 知識和崩潰分析連起來——崩潰是 signal 觸發的，signal 類型是崩潰原因的線索。
+
+## 故意弄壞:從 core 找崩潰根因
+
+```bash
+cd ~/obslab
+# 一個崩潰但「現場不明顯」的程式
+cat > tricky_crash.c <<'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+typedef struct { char name[20]; int *data; } Record;
+Record* create_record(const char *name) {
+    Record *r = malloc(sizeof(Record));
+    strncpy(r->name, name, 19);
+    r->data = NULL;   // bug: data 沒分配，但後面會用
+    return r;
+}
+int sum_data(Record *r) {
+    int total = 0;
+    for (int i = 0; i < 5; i++) {
+        total += r->data[i];   // 崩潰：r->data 是 NULL！
+    }
+    return total;
+}
+int main() {
+    Record *r = create_record("test");
+    printf("sum = %d\n", sum_data(r));   // 這裡會崩潰
+    free(r);
+    return 0;
+}
+EOF
+gcc -g -O0 tricky_crash.c -o tricky_crash
+
+ulimit -c unlimited
+./tricky_crash
 # Segmentation fault (core dumped)
+
+# 用 core 找根因（不用重現、不用加 printf）
+gdb -batch -ex 'bt' -ex 'frame 0' -ex 'print r' -ex 'print r->data' ./tricky_crash core* 2>/dev/null
+# #0  sum_data (r=0x...) at tricky_crash.c:14    ← 崩潰在 sum_data 第 14 行
+# #1  main () at tricky_crash.c:20               ← main 呼叫的
+# $1 = (Record *) 0x...                          ← r 不是 NULL（r 有效）
+# $2 = (int *) 0x0                               ← 但 r->data 是 NULL！
+# → 找到根因：r->data 是 NULL（create_record 沒分配 data），
+#   sum_data 解參考 NULL → 崩潰
+#   修法：create_record 要 malloc data，或 sum_data 檢查 data != NULL
 ```
 
-`-rdynamic` 讓 backtrace_symbols 看得到 function name。
-
-## signal handler 的安全規則
-
-signal handler 是 **async signal context**，能 call 的 function 受限（`man signal-safety`）。不能：
-
-- printf / fprintf（**會 deadlock if 在 stdio buffer 內被打斷**）
-- malloc / free
-- 多數 lib function
-
-可以：
-
-- write
-- _exit
-- raise / kill
-- 簡單算術
-
-實務上 handler 應該：
-
-1. 收到 signal
-2. 用 `write(2, ...)` 印基本 info
-3. backtrace + backtrace_symbols_fd（這個是 async-signal-safe）
-4. 重設 handler、raise
-
-## 一個常見場景：Java / Python 跟 native crash
-
-Java 程式 SEGV 時 JVM 自己處理 signal（hs_err_pidXXX.log）。Python C extension 也類似。
-
-對 Java：`hs_err_pid*.log` 含 native stack。
-對 Python：用 `faulthandler` module，`python3 -X faulthandler myprog.py` 自動 dump traceback on signal。
-
-## 一個常見場景：「我的 server 偶爾 segfault 但找不出原因」
-
-1. 開 ulimit + systemd-coredump
-2. 等 crash
-3. `coredumpctl gdb -1`
-4. `bt full`
-5. 對應 source 看哪個 pointer 是 NULL / wild
-
-加上 ASan build 一份 staging 環境跑，更早抓。
-
-## 一個常見場景：「core 太大」
-
-production binary 幾 GB heap 的，core 也幾 GB。
-
-對策：
-
-```bash
-echo 0x33 > /proc/PID/coredump_filter
-```
-
-`coredump_filter` bitmask 控制哪些 mapping dump：
-
-| bit | 內容 |
-|---|---|
-| 0 | anonymous private |
-| 1 | anonymous shared |
-| 2 | file-backed private |
-| 3 | file-backed shared |
-| 4 | ELF header pages |
-| 5 | huge page private |
-| 6 | huge page shared |
-
-預設只 dump anonymous（heap / stack），不 dump 大型 mmap'd file。
-
-或限制大小：
-
-```bash
-ulimit -c 100000      # 100MB
-```
-
-但被截斷的 core 可能不能 gdb 開。
+> **core + gdb 找出「r->data 是 NULL」這種讀碼難看出的崩潰根因——不用重現、不用加 printf，core 就是現場**。這個例子展示 core dump 的威力——`tricky_crash` 崩潰在 `sum_data` 的 `r->data[i]`，但**為什麼**？讀碼可能看不出（要追蹤 r->data 怎麼來的）。用 **core + gdb** 直接看崩潰現場：`bt` 顯示「崩潰在 sum_data:14，main 呼叫的」；`print r` 顯示 r 有效（不是 r 的問題）；`print r->data` 顯示 **`0x0`（NULL）**——找到根因！r->data 是 NULL（`create_record` 把它設成 NULL 沒分配），`sum_data` 解參考 NULL 陣列 → 崩潰。整個過程**不用重現崩潰、不用加 printf**——core 保留了崩潰瞬間的一切，gdb 直接看出「哪個變數是壞值」。這比傳統 debug（「加 printf 重現看哪裡崩潰」）強太多——尤其對**難重現的崩潰**（間歇性、生產環境、特定輸入才觸發），core 是唯一的線索。這完成了本課的觀察能力光譜——**執行時觀察**（strace/perf/valgrind 等，前面的章節）+ **崩潰後分析**（core + gdb，這章）。你現在能 debug 程式的整個生命週期：正常執行時看行為（strace）、找效能問題（perf）、抓記憶體/並發 bug（valgrind/sanitizers）、崩潰後找根因（core）。這是完整的 debug 能力——無論問題是「卡住、慢、漏記憶體、race、還是崩潰」，你都有對應的工具和方法。Final Project 會綜合這一切，用一個藏了多種 bug 的壞掉 daemon 考驗你的整套 debug 能力。
 
 ## 動手練習
 
-**1. 故意 crash + 開 core**
+1. 啟用 core：`ulimit -c unlimited`，跑 crash.c，確認產生 core
 
-```c
-int main() {
-    int *p = NULL;
-    *p = 42;
-}
-```
+2. gdb 分析：用 gdb 開 core，`bt` 看崩潰點、`print` 看變數，找崩潰原因
 
-```bash
-ulimit -c unlimited
-gcc -g crash.c -o crash
-./crash
-# Segmentation fault (core dumped)
-coredumpctl gdb -1
-(gdb) bt
-```
+3. 退出碼：看崩潰程式的退出碼（128+N），對應到 signal，理解崩潰類型
 
-**2. 看 core 大小**
+4. strace 崩潰：用 strace 看崩潰瞬間，找 `--- SIGSEGV ---` 和崩潰位址
 
-```bash
-ls -lh /var/lib/systemd/coredump/
-```
+5. 跑「故意弄壞」：用 core + gdb 找 tricky_crash.c 的 NULL 指標根因（不重現、不加 printf）
 
-對應 `coredumpctl info` 看 process 多大。
+## 本章重點整理
 
-**3. 自寫 signal handler**
-
-照上面 sig.c 跑。改成在 handler 裡只用 write，看是否還能 dump backtrace。
-
-**4. dump 一個 running process 的 core**
-
-```bash
-gcore PID
-ls -lh core.PID
-gdb /path/to/binary core.PID
-(gdb) bt
-```
-
-**不用 crash 也能 dump**。對「卡住」的 process 看現場有用。
-
-**5. 用 gdb attach + 自己 trigger core**
-
-```bash
-gdb -p PID
-(gdb) generate-core-file /tmp/manual.core
-(gdb) detach
-```
+- core dump 是崩潰瞬間的記憶體快照（暫存器/堆疊/變數/signal）——「崩潰現場的照片」
+- 啟用：ulimit -c unlimited + 設定 core_pattern；生產環境要主動啟用（否則崩潰沒現場）
+- gdb 分析 core：`bt`（崩潰在哪、呼叫鏈，最重要）+ `print 變數`（為什麼崩潰）；要 -g
+- signal 觸發 core：SIGSEGV（記憶體）/SIGABRT（abort/記憶體損壞）/SIGFPE（算術）；退出碼 128+N
+- core 讓你 debug「已死掉的程式」——不用重現、不加 printf，對難重現的崩潰是唯一線索
 
 ## 自我檢核
 
-- [ ] 設 `ulimit -c unlimited` 開 core
-- [ ] 知道 systemd-coredump 跟老 path 兩種 mode
-- [ ] 用 coredumpctl gdb 跑過、`bt full` 看現場
-- [ ] 寫過 signal handler dump backtrace
-- [ ] 知道 signal handler 內 async-signal-safe 限制
-- [ ] 用過 gcore dump running process
+- [ ] 知道 core dump 是什麼，怎麼啟用和產生
+- [ ] 會用 gdb 開 core，用 bt/print 找崩潰點和原因
+- [ ] 知道哪些 signal 產生 core，退出碼怎麼對應 signal
+- [ ] 理解 core 對 debug 難重現崩潰的價值
+- [ ] 能用 core + gdb 找崩潰根因（不重現、不加 printf）
 
-Part 7 完。下一個是整合 final project：偵探破案。
+## 延伸閱讀
 
-→ [Final Project：偵探破案](./final-project-broken-daemon.md)
+### 文章
+
+- **[Core dump 完整指南](https://www.gnu.org/software/libc/manual/html_node/Program-Error-Signals.html) + [How to analyze core dumps](https://opensource.com/article/20/8/linux-systemd-coredumpctl)** — 各種
+  - **這篇說什麼**：core dump 的啟用、產生、用 gdb/coredumpctl 分析
+  - **為什麼值得讀**：本章的實戰擴充
+
+### 官方文件
+
+- **[core(5) man page](https://man7.org/linux/man-pages/man5/core.5.html)** — Linux man-pages
+  - **讀哪裡**：core_pattern、ulimit 的設定
+  - **為什麼值得讀**：core dump 設定的權威
+
+- **[gdb 文件](https://sourceware.org/gdb/current/onlinedocs/gdb/)** — GNU
+  - **讀哪裡**：core 分析、backtrace 那節
+  - **為什麼值得讀**：gdb 分析 core 的權威；gdb 課會深入
+
+### 書籍
+
+- **《The Art of Debugging with GDB》— core dump 章**
+  - **為什麼值得讀**：用 gdb debug（含 core）的權威
+
+Part 7（進階自製工具）和所有章節到此完成。最後是 Final Project——一個藏了 5 個 bug 的壞掉 daemon，用整套工具偵探破案，整合全課的 debug 能力。
+
+→ [Final Project：偵探破案 — 修好壞掉的 daemon](./final-project-broken-daemon.md)

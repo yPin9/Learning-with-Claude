@@ -1,394 +1,229 @@
-# Ch 18 — Sanitizers (ASan / UBSan / TSan / MSan)
+# Ch 18 — sanitizers（ASan/TSan/UBSan/MSan）
 
-> 目標：搞懂 4 個 sanitizer 各抓什麼、互相不能搭、怎麼跟 valgrind 取捨。CI 跟 fuzzing 怎麼用。
+> **目標**：掌握 sanitizers——編譯時插樁的執行期檢查工具：ASan（AddressSanitizer，記憶體錯誤）、TSan（ThreadSanitizer，data race）、UBSan（UndefinedBehaviorSanitizer，未定義行為）、MSan（MemorySanitizer，未初始化）。理解它們和 valgrind 的根本差別（編譯時插樁 vs 動態插樁）——sanitizers 快很多（2-3 倍 vs valgrind 的 10-50 倍）但要重新編譯。這是現代 C/C++ 開發的標準工具，CI 必備。
 
-## sanitizer 是什麼
+> **環境**：Linux，gcc/clang（內建 sanitizers）。`gcc -fsanitize=...`。
 
-**編譯時插入檢查 code** 的工具，跟 valgrind「runtime simulator」相反。gcc / clang 都支援。
+## 為什麼有了 valgrind 還要 sanitizers？
 
-優點：快（2-3x slowdown vs valgrind 10-50x）、抓更多種 bug。
-缺點：要重編、需要 source、有時不能跟 valgrind 一起用。
+valgrind（Ch 15-17）很強大，但**慢**（10-50 倍）——慢到不適合「每次跑測試都用」。sanitizers 解決這個——它們在**編譯時插樁**（編譯器在程式碼裡插入檢查），所以執行期開銷小很多（2-3 倍），快到能「每次測試都開著」。
 
-四大家族：
+這個速度差別改變了使用方式——valgrind 是「偶爾跑一次抓 bug」，sanitizers 是「開發時一直開著，CI 每次都跑」。sanitizers 是現代 C/C++ 開發的標準——很多專案的 CI 用 ASan/TSan/UBSan 跑測試，在 bug 進入主分支前抓出。理解 sanitizers 和它們的取捨（快但要重編譯 vs valgrind 慢但不用重編譯），你能在開發流程中正確使用它們。它們和 valgrind 各有定位。
 
-| Sanitizer | 抓什麼 | flag |
-|---|---|---|
-| **ASan** (AddressSanitizer) | heap/stack/global OOB、UAF、double-free、leak | `-fsanitize=address` |
-| **UBSan** (UndefinedBehaviorSanitizer) | UB（signed overflow、null deref、misalign...） | `-fsanitize=undefined` |
-| **TSan** (ThreadSanitizer) | data race、deadlock | `-fsanitize=thread` |
-| **MSan** (MemorySanitizer) | uninitialized read | `-fsanitize=memory`（**只 clang**） |
+## 先建立直覺:編譯時插樁 vs 動態插樁
 
-**ASan 跟 TSan 跟 MSan 不能同時用**（會打架）。UBSan 可以跟其他配。
+```
+valgrind（動態插樁）vs sanitizers（編譯時插樁）：
 
-## ASan — 最常用
+  valgrind（Ch 15）：執行時插樁
+    對「已編譯的 binary」模擬執行，每條指令插檢查
+    優點：不用重編譯（對任何 binary 都能用）
+    缺點：慢（10-50倍，模擬執行整個程式）
+        │
+  sanitizers：編譯時插樁
+    編譯時，編譯器在程式碼「插入檢查碼」
+    gcc -fsanitize=address → 編譯出「帶檢查」的程式
+    優點：快（2-3倍，只在需要處插檢查，且編譯器優化）
+    缺點：要重新編譯（要有原始碼）
+        │
+  → sanitizers 快但要重編譯（開發時用，CI 用）
+    valgrind 慢但不用重編譯（沒原始碼/不能重編譯時用）
+        │
+  類比：
+    valgrind = 事後請人逐一檢查（慢，但不用改原件）
+    sanitizers = 製造時就裝感測器（快，但要改製造流程）
+```
+
+關鍵心智：valgrind（動態插樁）對已編譯的 binary 模擬執行（不用重編譯但慢 10-50 倍）；sanitizers（編譯時插樁）讓編譯器在程式碼裡插檢查（要重編譯但快 2-3 倍）。sanitizers 快到能「開發時一直開著、CI 每次跑」，valgrind 適合「沒原始碼/不能重編譯」時。
+
+> sanitizers 抓的 bug 和 valgrind 重疊（記憶體錯誤、race）但更快。如果對 valgrind 的動態插樁不熟，回看 [Ch 15](./15-valgrind-memcheck.md)。它們的取捨是「編譯時 vs 執行時插樁」。
+
+## ASan:記憶體錯誤
 
 ```bash
-gcc -fsanitize=address -g -O1 myprog.c -o myprog
-./myprog
+cd ~/obslab
+# 用之前的 membugs.c（各種記憶體錯誤）
+gcc -g -fsanitize=address -O1 membugs.c -o membugs_asan
+# -fsanitize=address：開啟 ASan
+# -O1：sanitizers 建議帶點優化（行為更接近 release）
+
+./membugs_asan
+# ==12345==ERROR: AddressSanitizer: heap-buffer-overflow ...   ← 越界
+#     #0 ... in main membugs.c:17                              ← 精確到行
+#     ...
+# 0x... is located 0 bytes to the right of 10-byte region      ← 越界多少
+# allocated by thread T0 here:
+#     #0 ... in malloc
+#     #1 ... in main membugs.c:16                              ← 在哪分配的
+#
+# ==12345==ERROR: AddressSanitizer: heap-use-after-free ...    ← UAF
+#
+# 程式結束時（leak 偵測）：
+# ==12345==ERROR: LeakSanitizer: detected memory leaks
+# Direct leak of 100 byte(s) ... in main membugs.c:5           ← leak
+
+# → ASan 抓和 valgrind memcheck 一樣的記憶體錯誤，但快很多
+#   報告也精確（什麼錯、哪行、哪塊記憶體）
 ```
 
-對 UAF：
+> **ASan（AddressSanitizer）抓記憶體錯誤（和 valgrind memcheck 一樣），但快 10 倍——這讓它能「開發時一直開著」**。ASan 抓的記憶體錯誤和 valgrind memcheck（Ch 15）一樣——**heap/stack buffer overflow**（越界）、**use-after-free**、**use-after-return**、**double-free**、**leak**（LeakSanitizer）。報告一樣精確（什麼錯、哪行、哪塊記憶體在哪分配的）。但 ASan **快很多**——valgrind memcheck 慢 10-50 倍，ASan 只慢約 2 倍。這個速度差別讓使用方式不同：valgrind 是「偶爾跑」，ASan 快到能**「開發時一直開著」**（你編譯 debug 版時就開 ASan，每次跑都檢查）。用法：`gcc -fsanitize=address`（編譯時開啟）。建議配 `-g`（行號）和 `-O1`（帶點優化，行為接近 release，也讓 stack trace 更準）。ASan 還能抓 valgrind 抓不到的——**stack buffer overflow**（棧上的越界，valgrind 主要看 heap）、**use-after-return**（用了已返回函式的棧記憶體）。所以 ASan 在某些方面比 valgrind 更全面（棧的錯誤）。代價是要**重新編譯**（要原始碼）和記憶體開銷（ASan 用額外記憶體做 shadow memory 追蹤）。現代 C/C++ 開發的標準做法：**開發和測試時用 ASan**（快、抓 heap+stack 錯誤），沒原始碼或要最徹底時用 valgrind。ASan 是 Google 開發的，現在是 gcc/clang 內建的標準工具。
 
-```c
-int *p = malloc(sizeof(int));
-free(p);
-*p = 42;
-```
+## TSan / UBSan / MSan
 
-跑：
+```bash
+# === TSan：data race（並發，對應 helgrind Ch 16）===
+gcc -g -fsanitize=thread -O1 race.c -o race_tsan
+./race_tsan
+# ==12345== WARNING: ThreadSanitizer: data race ...
+#   Write of size 4 at 0x... by thread T2:
+#     #0 worker race.c:7                          ← race 在 counter++
+#   Previous read ... by thread T1:
+#     #0 worker race.c:7
+# → TSan 抓 data race，比 helgrind 快很多
 
-```
-==1234==ERROR: AddressSanitizer: heap-use-after-free on address 0x602000000010
-WRITE of size 4 at 0x602000000010 thread T0
-    #0 0x401234 in main uaf.c:8
-    #1 0x... in __libc_start_main
-    
-0x602000000010 is located 0 bytes inside of 4-byte region [0x602000000010,0x602000000014)
-freed by thread T0 here:
-    #0 0x... in free
-    #1 0x401123 in main uaf.c:7
-previously allocated by thread T0 here:
-    #0 0x... in malloc
-    #1 0x401111 in main uaf.c:5
-```
-
-訊息結構同 valgrind：「現在做什麼」、「之前 free 在哪」、「alloc 在哪」。**clearer + 更快**。
-
-## ASan 抓 stack OOB
-
-```c
+# === UBSan：未定義行為（C/C++ 的 UB，很隱蔽）===
+cat > ubdemo.c <<'EOF'
+#include <stdio.h>
 int main() {
-    int a[10];
-    a[10] = 0;        // ❌
-}
-```
-
-```
-==1234==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x...
-WRITE of size 4 at 0x... thread T0
-    #0 0x... in main stack.c:3
-
-Address 0x... is located in stack of thread T0 at offset 72 in frame
-    #0 0x... in main stack.c:1
-```
-
-**valgrind 抓不到的 stack OOB，ASan 抓得到**。這是 ASan 最大優勢。
-
-## ASan 抓 global OOB
-
-```c
-int global[10];
-int main() {
-    global[10] = 0;
-}
-```
-
-```
-==1234==ERROR: AddressSanitizer: global-buffer-overflow ...
-```
-
-global 也抓。
-
-## ASan 的 leak detection
-
-預設啟用 LSan (LeakSanitizer)：
-
-```c
-int main() {
-    malloc(100);
+    int x = 2147483647;   // INT_MAX
+    int y = x + 1;        // signed overflow → UB！
+    int arr[5];
+    int z = arr[10];      // 越界（也是 UB）
+    int s = 1 << 35;      // 移位超過寬度 → UB
+    printf("%d %d %d\n", y, z, s);
     return 0;
 }
+EOF
+gcc -g -fsanitize=undefined ubdemo.c -o ubdemo
+./ubdemo
+# ubdemo.c:4: runtime error: signed integer overflow: 2147483647 + 1 ...
+# ubdemo.c:7: runtime error: shift exponent 35 is too large ...
+# → UBSan 抓「未定義行為」—— 這些是 C/C++ 最隱蔽的 bug（編譯器可能假設不發生）
+
+# === MSan：未初始化的記憶體（只有 clang）===
+# clang -fsanitize=memory -g uninit.c -o uninit_msan
+# → 抓「用了未初始化的值」（比 valgrind 的精確）
 ```
 
+> **TSan（data race）、UBSan（未定義行為）、MSan（未初始化）各專精一類 bug——UBSan 特別有價值，抓 C/C++ 最隱蔽的「未定義行為」**。sanitizers 家族各專精一類：**TSan**（ThreadSanitizer）抓 **data race**（對應 helgrind，Ch 16，但快很多）——並發 bug 的偵測；**UBSan**（UndefinedBehaviorSanitizer）抓 **未定義行為（UB）**——這是 C/C++ 最隱蔽危險的 bug：signed integer overflow（INT_MAX + 1）、移位超過寬度（`1 << 35`）、越界、null 指標解參考、對齊錯誤等。UB 危險在於**編譯器假設它不發生**——所以編譯器可能基於「這不會 UB」做優化，導致 UB 的程式在優化後行為詭異（甚至「刪掉」你以為會執行的程式碼）。UBSan 在執行時抓到 UB 並報告（精確到行），這對寫正確的 C/C++ 極有價值（UB 是無數詭異 bug 的根源）；**MSan**（MemorySanitizer，只有 clang）抓**未初始化的記憶體使用**（比 valgrind 更精確）。**注意 TSan 和 ASan 不能同時用**（它們的記憶體佈局衝突，要分開編譯跑）。**現代 C/C++ 開發的標準**：CI 裡用多個 sanitizer 跑測試——ASan（記憶體）、UBSan（UB，常和 ASan 一起 `-fsanitize=address,undefined`）、TSan（並發，分開跑）——在 bug 進主分支前抓出。這是「shift left」的測試理念（越早抓 bug 越好）。sanitizers 讓 C/C++ 的「記憶體不安全、有 UB」這些根本問題，能在開發時被系統地偵測——大幅提升程式的正確性和安全性。
+
+## sanitizers vs valgrind:何時用哪個
+
+| 面向 | sanitizers | valgrind |
+|---|---|---|
+| 插樁時機 | 編譯時 | 執行時（動態）|
+| 速度 | 快（2-3 倍）| 慢（10-50 倍）|
+| 要重編譯 | 是（要原始碼）| 否（任何 binary）|
+| 記憶體錯誤 | ASan | memcheck |
+| data race | TSan | helgrind/drd |
+| 未定義行為 | UBSan | （不專門）|
+| stack 越界 | ASan ✓ | memcheck △ |
+| 用於 | 開發/CI（一直開）| 沒原始碼/最徹底 |
+
 ```
-==1234==ERROR: LeakSanitizer: detected memory leaks
-
-Direct leak of 100 byte(s) in 1 object(s) allocated from:
-    #0 0x... in malloc
-    #1 0x401111 in main leak.c:3
+選擇框架：
+  有原始碼 + 開發/測試 → sanitizers（快，CI 一直跑）
+  沒原始碼（只有 binary）→ valgrind（不用重編譯）
+  要最徹底的記憶體檢查 → valgrind memcheck（模擬每條指令）
+  CI 自動測試 → sanitizers（快到能每次跑）
+        │
+  → 現代開發：sanitizers 為主（CI 標配）
+    valgrind 補充（沒原始碼、最徹底、特定場景）
 ```
 
-跟 valgrind --leak-check=full 對等。
+> **現代開發以 sanitizers 為主（CI 標配，快到能每次跑），valgrind 補充（沒原始碼或要最徹底時）**。選擇框架：**有原始碼 + 開發/測試** → **sanitizers**（快，能在 CI 每次測試都跑，bug 早抓出）；**沒原始碼（只有 binary）** → **valgrind**（不用重編譯，對任何 binary 都能用）；**要最徹底的記憶體檢查** → valgrind memcheck（模擬每條指令，連未初始化的每個位元組都追蹤，比 ASan 在某些細節更徹底）。現代 C/C++ 專案的標準做法：**CI 裡用 sanitizers**——編譯一個 ASan 版、一個 TSan 版、一個 UBSan 版，跑測試套件，任何 sanitizer 報錯就 fail（bug 在進主分支前被抓）。這是「持續正確性檢查」——不是「偶爾跑一次 valgrind」，而是「每次 commit 都自動檢查記憶體/並發/UB」。sanitizers 的速度（快到能 CI 每次跑）讓這成為可能。valgrind 仍有價值——分析第三方 binary（沒原始碼）、要最徹底的檢查、或開發環境沒設好 sanitizers 時。但日常開發，sanitizers 是更好的選擇（快、整合進編譯流程、CI 友善）。理解這個取捨，你在專案裡設定正確的工具——開發/CI 用 sanitizers，特殊場景用 valgrind。這完成了 Part 6 的「記憶體與正確性」——valgrind 家族（memcheck/helgrind/profiling）+ sanitizers（ASan/TSan/UBSan/MSan）。你有了完整的「正確性檢查」工具，能抓記憶體錯誤、並發 bug、未定義行為——C/C++ 最危險的問題。
 
-關掉 leak check：
+## 故意弄壞:CI 風格的 sanitizer 測試
 
 ```bash
-ASAN_OPTIONS=detect_leaks=0 ./myprog
+cd ~/obslab
+# 模擬 CI：用多個 sanitizer 跑測試，任何錯誤就 fail
+cat > buggy_lib.c <<'EOF'
+#include <stdlib.h>
+#include <string.h>
+char* process(const char *input) {
+    char *result = malloc(strlen(input));   // bug: 少了 +1 給 \0！
+    strcpy(result, input);                   // 越界寫（\0 沒空間）
+    return result;
+}
+int main() {
+    char *r = process("hello");
+    free(r);
+    return 0;
+}
+EOF
+
+# CI 風格：用 ASan + UBSan 編譯測試
+echo "=== ASan + UBSan ==="
+gcc -g -fsanitize=address,undefined -O1 buggy_lib.c -o test_asan
+./test_asan
+# AddressSanitizer: heap-buffer-overflow ...   ← 抓到 malloc 少 +1 的越界！
+echo "exit: $?"    # 非 0（測試 fail）
+
+# 在 CI 裡，這個非 0 退出會讓 build fail → bug 不會進主分支
+# CI 設定範例（概念）：
+#   - gcc -fsanitize=address,undefined ... && ./test || exit 1
+#   - gcc -fsanitize=thread ... && ./test_threaded || exit 1
+#   任何 sanitizer 報錯 → CI fail → 開發者必須修
+
+# → sanitizers 整合進 CI = 自動的持續正確性檢查
+#   每次 commit 都檢查記憶體/並發/UB，bug 早抓出
 ```
 
-## ASan 環境變數
-
-```bash
-ASAN_OPTIONS=halt_on_error=0 ./myprog          # 不要第一錯就停
-ASAN_OPTIONS=abort_on_error=1 ./myprog          # 錯時 SIGABRT，方便產 core
-ASAN_OPTIONS=detect_stack_use_after_return=1 ./myprog
-ASAN_OPTIONS=symbolize=1:print_stacktrace=1 ./myprog
-ASAN_OPTIONS=log_path=/tmp/asan ./myprog        # 寫檔
-```
-
-CI 常用：
-
-```bash
-ASAN_OPTIONS="halt_on_error=1:abort_on_error=1:detect_leaks=1" ./test
-```
-
-## UBSan
-
-抓 C / C++ 標準定義為「未定義行為」(UB) 的東西。**很多 UB 平常看似沒事但隨優化升級爆炸**。
-
-```bash
-gcc -fsanitize=undefined -g myprog.c -o myprog
-./myprog
-```
-
-範例：signed overflow
-
-```c
-int x = INT_MAX;
-x++;
-```
-
-```
-runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type 'int'
-```
-
-範例：null deref
-
-```c
-int *p = NULL;
-*p = 5;
-```
-
-```
-runtime error: load of null pointer of type 'int'
-```
-
-範例：shift overflow
-
-```c
-int x = 1 << 35;
-```
-
-```
-runtime error: shift exponent 35 is too large for 32-bit type 'int'
-```
-
-範例：misaligned access
-
-```c
-char buf[8];
-int *p = (int*)(buf + 1);
-*p = 0;
-```
-
-```
-runtime error: store to misaligned address 0x... for type 'int', which requires 4 byte alignment
-```
-
-UBSan 開銷小（通常 < 20% slowdown），**production 都能跑**。Chrome / Firefox 的 release build 帶 UBSan subset。
-
-UBSan 細項可選：
-
-```bash
-gcc -fsanitize=undefined,bounds,nullability myprog.c
-```
-
-`man gcc` 看完整列表。
-
-## TSan
-
-抓 race、lock 順序、condition variable misuse。對應 helgrind 但**快很多**且少 false positive。
-
-```bash
-gcc -fsanitize=thread -g myprog.c -lpthread -o myprog
-./myprog
-```
-
-對 counter race：
-
-```
-WARNING: ThreadSanitizer: data race (pid=1234)
-  Write of size 4 at 0x... by thread T2:
-    #0 worker race.c:6 (myprog+0x...)
-
-  Previous write of size 4 at 0x... by thread T1:
-    #0 worker race.c:6 (myprog+0x...)
-
-  Location is global 'counter' of size 4 at 0x...
-```
-
-清楚標出兩個 thread 的位置 + 變數名（如果 -g）。
-
-```bash
-TSAN_OPTIONS="halt_on_error=1:abort_on_error=1" ./test
-```
-
-## MSan
-
-抓未初始化記憶體 read。**只 clang**。
-
-```bash
-clang -fsanitize=memory -g myprog.c -o myprog
-./myprog
-```
-
-```c
-int x;
-if (x > 0) printf("yes\n");
-```
-
-```
-==1234==WARNING: MemorySanitizer: use-of-uninitialized-value
-    #0 0x... in main uninit.c:4
-```
-
-MSan 要求**所有依賴 lib 也用 MSan 編**，否則 lib 內 init 的記憶體會被 MSan 當未 init。所以實務 MSan 只在能完整重編整個 stack 的場合（如 Chrome）用。
-
-## 為什麼不能同時用
-
-ASan / TSan / MSan 都改 memory layout、插 hook，互相打架。
-
-```bash
-gcc -fsanitize=address,thread myprog.c
-# 編不過或跑時 conflict
-```
-
-CI 通常**多份 build**：normal / asan-build / tsan-build / ubsan-build，分別跑 test。
-
-## 配合 fuzz
-
-ASan + fuzzer 是 modern security 標配：
-
-```bash
-clang -fsanitize=address,fuzzer myprog.c -o fuzzer
-./fuzzer       # libfuzzer 自動跑
-```
-
-每次 input 跑一次，ASan 抓到 bug 就停 + dump input。
-
-## 一個常見踩雷：optimize 太高漏報
-
-```bash
-gcc -O3 -fsanitize=address myprog.c
-```
-
-`-O3` 可能優化掉某些 ASan 能抓到的 path。**官方建議 `-O1`**：
-
-```bash
-gcc -O1 -g -fsanitize=address ...
-```
-
-CI 可以同時 build `-O0` `-O1` `-O2` 各一份。
-
-## 一個常見踩雷：static linking 失敗
-
-```bash
-gcc -static -fsanitize=address myprog.c
-# undefined reference to __asan_init...
-```
-
-ASan runtime 必須 dynamic link。static binary 不能加 ASan。
-
-## 一個常見踩雷：在 docker / sandbox 跑 ASan
-
-ASan 用 mmap shadow memory（很大的 virtual address），有時 container limit 擋住：
-
-```
-==1234==ERROR: AddressSanitizer failed to allocate ...
-```
-
-放寬 `--ulimit` 或關 ASLR。
-
-## 一個常見踩雷：SUID binary + ASan
-
-```bash
-chmod +s ./myprog
-./myprog
-# ASan 不工作
-```
-
-SUID 程式為了安全 ASan 自動 disable（防 ASAN_OPTIONS 提權）。
-
-## valgrind vs sanitizer 怎麼選
-
-| 場景 | 選 |
-|---|---|
-| **CI / 開發**（能重編） | sanitizer（快） |
-| **第三方 binary 沒 source** | valgrind |
-| **stack OOB** | ASan only |
-| **uninit read** | MSan / valgrind memcheck |
-| **race** | TSan（比 helgrind 強） |
-| **production 偵錯** | 都別跑（用 perf / bpftrace） |
-| **fuzz** | sanitizer |
-
-實務上**寫新 code 一定上 ASan + UBSan**，CI 跑。能用就用。
+> **把 sanitizers 整合進 CI = 自動的持續正確性檢查，每次 commit 都抓記憶體/並發/UB bug**。這個例子展示 sanitizers 的現代用法——**CI 整合**。`process` 函式有經典 bug：`malloc(strlen(input))` 少了 `+1`（沒給 `\0` 的空間），`strcpy` 越界寫。這個 bug **直接跑可能看不出**（越界一個 byte，可能沒立刻崩潰）——但 **ASan 一跑就抓到**（heap-buffer-overflow），且讓程式**非 0 退出**。在 CI 裡，這個非 0 退出讓 **build fail**——bug **不會進主分支**（開發者必須先修）。這是 sanitizers 的核心價值——**自動的持續正確性檢查**：CI 設定「用 ASan/UBSan/TSan 編譯跑測試，任何報錯就 fail」，每次 commit 都自動檢查記憶體錯誤、未定義行為、data race。這讓 C/C++ 的「容易有記憶體/並發/UB bug」這個根本弱點，被系統化地防守——bug 在開發階段（不是生產）被抓出。對比傳統「偶爾手動跑一次 valgrind」，sanitizers 的速度讓「每次自動檢查」成為可能。這是現代 C/C++ 專案品質的關鍵實踐（很多大型 C/C++ 專案如 Chromium、LLVM 都重度使用 sanitizers）。`-fsanitize=address,undefined`（ASan+UBSan 一起，常見組合）、`-fsanitize=thread`（TSan，分開）。設定好 CI 的 sanitizer 測試，你的 C/C++ 程式品質會大幅提升——那些隱藏的記憶體/並發/UB bug 會在進主分支前被抓出。這呼應本課的核心——觀察「實際的錯誤行為」（sanitizer 看到實際的越界），在它造成災難前。
 
 ## 動手練習
 
-**1. 對比 ASan 跟 valgrind 速度**
+1. ASan：用 `-fsanitize=address` 編譯 membugs.c，看它抓記憶體錯誤（對比 valgrind 的速度）
 
-寫個 1 秒就跑完的 程式：
+2. TSan：用 `-fsanitize=thread` 編譯 race.c，看它抓 data race（對比 helgrind）
 
-```bash
-gcc -O0 prog.c -o normal
-gcc -O1 -fsanitize=address -g prog.c -o asan
+3. UBSan：用 `-fsanitize=undefined` 編譯有 UB 的程式（overflow/越界），看它抓未定義行為
 
-time ./normal
-time valgrind ./normal
-time ./asan
-```
+4. 速度對比：同個程式用 ASan 和 valgrind memcheck，比較執行時間（ASan 快很多）
 
-通常 ASan 比 valgrind 快 5-10x。
+5. 跑「故意弄壞」：用 ASan+UBSan 抓 buggy_lib.c 的 malloc 少 +1，理解 CI 整合
 
-**2. 故意 stack OOB**
+## 本章重點整理
 
-```c
-int main() {
-    int a[10];
-    a[20] = 0;
-    return 0;
-}
-```
-
-```bash
-valgrind ./prog       # 看不到
-gcc -fsanitize=address prog.c -o prog && ./prog       # ASan 抓到
-```
-
-**3. UBSan signed overflow**
-
-```c
-#include <stdio.h>
-#include <limits.h>
-int main() {
-    int x = INT_MAX;
-    printf("%d\n", x + 1);
-}
-```
-
-```bash
-gcc -fsanitize=undefined uover.c -o uover
-./uover
-```
-
-**4. TSan race**
-
-寫 counter race，跑 TSan vs helgrind 比速度跟訊息。
-
-**5. CI integration 思考**
-
-設想一個 GitHub Action，每次 PR build 三份 binary（asan / tsan / ubsan）跑各自的 test。寫 pseudo Yaml。
+- sanitizers 編譯時插樁（要重編譯但快 2-3 倍），vs valgrind 動態插樁（不用重編譯但慢 10-50 倍）
+- ASan（記憶體錯誤，含 stack 越界）、TSan（data race）、UBSan（未定義行為）、MSan（未初始化，clang）
+- UBSan 特別有價值——抓 C/C++ 最隱蔽的 UB（signed overflow/越界/移位），編譯器假設不發生的危險 bug
+- TSan 和 ASan 不能同時用（記憶體佈局衝突）；UBSan 常和 ASan 一起（-fsanitize=address,undefined）
+- 現代開發以 sanitizers 為主（CI 標配，每次 commit 自動檢查），valgrind 補充（沒原始碼/最徹底）
 
 ## 自我檢核
 
-- [ ] 知道 ASan / UBSan / TSan / MSan 各抓什麼
-- [ ] 知道 ASan / TSan / MSan 不能同時用
-- [ ] 用過 ASan 抓 stack OOB（valgrind 抓不到）
-- [ ] 用過 UBSan 抓 signed overflow / null deref
-- [ ] 用過 TSan 抓 race
-- [ ] 知道何時 sanitizer 比 valgrind 適合，反之
-- [ ] 知道 ASan 跟 SUID / static binary 不相容
+- [ ] 理解 sanitizers（編譯時插樁）和 valgrind（動態插樁）的取捨
+- [ ] 知道四個 sanitizer 各抓什麼（ASan/TSan/UBSan/MSan）
+- [ ] 知道 UBSan 的價值（抓未定義行為），UB 為什麼危險
+- [ ] 知道 ASan 和 TSan 不能同時用
+- [ ] 理解怎麼把 sanitizers 整合進 CI（持續正確性檢查）
 
-下個是 Part 6 的整合練習：multithreaded race + leak + UAF 的綜合 hunt。
+## 延伸閱讀
 
-→ [練習 C：multithreaded race + leak hunt](./practice-c-multithreaded-hunt.md)
+### 官方文件
+
+- **[AddressSanitizer](https://github.com/google/sanitizers/wiki/AddressSanitizer)** + **[ThreadSanitizer](https://github.com/google/sanitizers/wiki/ThreadSanitizerCppManual)** — Google sanitizers
+  - **讀哪裡**：ASan/TSan 的用法和原理
+  - **為什麼值得讀**：sanitizers 的權威（Google 開發的）
+
+- **[Clang sanitizers 文件](https://clang.llvm.org/docs/index.html)** — LLVM
+  - **讀哪裡**：各 sanitizer 的 -fsanitize 選項
+  - **為什麼值得讀**：所有 sanitizer 選項的權威
+
+### 文章
+
+- **[Undefined behavior 系列](https://blog.regehr.org/archives/213)** — John Regehr
+  - **這篇說什麼**：C/C++ 的未定義行為為什麼危險（編譯器怎麼利用 UB）
+  - **為什麼值得讀**：理解 UBSan 抓的 UB 為什麼重要
+
+### 論文
+
+- **[AddressSanitizer paper](https://www.usenix.org/conference/atc12/technical-sessions/presentation/serebryany)** — USENIX ATC 2012
+  - **核心貢獻**：ASan 的設計（shadow memory、編譯時插樁）
+  - **為什麼值得讀**：ASan 怎麼運作的權威
+
+下一個是練習 C——多執行緒 bug 獵殺，綜合 valgrind/sanitizers 抓記憶體和並發 bug。
+
+→ [練習 C：多執行緒 bug 獵殺](./practice-c-multithreaded-hunt.md)
