@@ -1,377 +1,208 @@
 # Ch 7 — Image recipe 與 rootfs 組裝
 
-> 目標：理解 Yocto 如何把一堆 package recipe 組合成可 boot 的 image。學會寫 image recipe、選 package、調整 rootfs 內容。
+> **目標**：理解 Yocto 怎麼把一堆 package recipe 組合成可開機的 image——image recipe 怎麼定義（放哪些套件）、rootfs 怎麼組裝、IMAGE_INSTALL/IMAGE_FEATURES 等控制變數、以及怎麼寫/客製 image recipe。理解 image recipe，你知道你的 toolchain 建出的套件怎麼組成最終 image，也能客製出客戶要的 image。
 
-## Image 是什麼
+> **環境**：Yocto（poky + meta-riscv，Ch 3）。看和寫 image recipe。
 
-**Image recipe** 是特殊 recipe，它的 `do_rootfs` task 把多個 package 組合成 rootfs，再 wrap 成 boot 得起來的 format (ext4、squashfs、wic 等)。
+## 為什麼要懂 image recipe？
 
-典型 image recipe：
+前面你 build 了 `core-image-minimal`，但它**怎麼決定放哪些套件**？rootfs（根檔案系統）怎麼從一堆編好的套件**組裝**起來？要客製 image（如加你的測試工具、調整內容），你要懂 **image recipe**——它定義「這個 image 包含哪些套件、有哪些功能」。
+
+對 compiler 工程師，理解 image recipe 有兩個用途：(1) 知道你的 toolchain 建出的套件**怎麼組成最終 image**（你 patch 的 gcc 編出的 library/程式進到 rootfs）；(2) 能**客製 image**（如加一個用你的 patched gcc 編的測試程式，驗證 patch 在真實 image 裡的行為）。這章講 image recipe 的結構和怎麼客製——這讓你掌握「從套件到最終 image」這一步。
+
+## 先建立直覺:image 是套件的組裝
 
 ```
-# poky/meta/recipes-core/images/core-image-minimal.bb
+image recipe = 「這個 image 放哪些套件」的清單
 
-SUMMARY = "A small image just capable of allowing a device to boot."
+  一堆編好的套件（gcc 編出的 .ipk/.deb/.rpm）：
+    busybox、glibc、你的測試程式、各種 library...
+        │
+  image recipe 定義「選哪些放進 rootfs」：
+    IMAGE_INSTALL = "busybox glibc my-app ..."
+    IMAGE_FEATURES = "..." （功能集，如 ssh-server）
+        │
+  rootfs 組裝（do_rootfs task）：
+    1. 安裝選定的套件到一個目錄（rootfs）
+    2. 解決依賴（套件的 RDEPENDS 也裝）
+    3. 設定（建 user、設權限、跑 post-install）
+    4. 打包成 image 格式（ext4/squashfs/...）
+        │
+  → image recipe 是「套件清單 + 組裝設定」
+    bitbake 按它選套件、組裝成 rootfs、打包成可開機 image
+    你客製 image = 改 IMAGE_INSTALL（加你要的套件）
+```
 
-IMAGE_INSTALL = "packagegroup-core-boot ${CORE_IMAGE_EXTRA_INSTALL}"
+關鍵心智：**image recipe** 是「這個 image 放哪些套件」的清單——用 **IMAGE_INSTALL**（選哪些套件）、**IMAGE_FEATURES**（功能集）定義。**do_rootfs** task 組裝 rootfs（安裝套件、解決依賴、設定、打包成 image 格式）。你客製 image = 改 IMAGE_INSTALL 加你要的套件。
 
-IMAGE_LINGUAS = " "
+## image recipe 的結構
 
+```bash
+cd ~/yocto/poky
+# 看 core-image-minimal 的 recipe
+cat meta/recipes-core/images/core-image-minimal.bb
+# SUMMARY = "A small image just capable of allowing a device to boot."
+# IMAGE_INSTALL = "packagegroup-core-boot ${CORE_IMAGE_EXTRA_INSTALL}"
+# IMAGE_LINGUAS = " "
+# inherit core-image       ← 繼承 core-image class（rootfs 組裝邏輯）
+# → image recipe 很簡單：選套件（IMAGE_INSTALL）+ inherit core-image
+
+# image recipe 的核心變數
+cat > /tmp/my-image.bb <<'EOF'
+SUMMARY = "我的客製 image"
 LICENSE = "MIT"
 
-inherit core-image
+inherit core-image          # 繼承 image 組裝邏輯
 
-IMAGE_ROOTFS_SIZE ?= "8192"
-IMAGE_ROOTFS_EXTRA_SPACE:append = "${@bb.utils.contains("DISTRO_FEATURES", "systemd", " + 4096", "" ,d)}"
+# 放哪些套件（核心！）
+IMAGE_INSTALL = "packagegroup-core-boot \
+                 my-test-app \          # 你的測試程式
+                 nano \                 # 加個編輯器
+                 "
+# 功能集（高層的功能，自動拉相關套件）
+IMAGE_FEATURES += "ssh-server-openssh"   # 加 SSH server
+# rootfs 大小、檔案系統格式
+IMAGE_FSTYPES = "ext4 wic"
+EOF
+
+# build 你的 image
+# bitbake my-image
 ```
 
-關鍵：
-
-- `IMAGE_INSTALL`：列 package 名 (空格分隔) 決定 rootfs 含什麼
-- `inherit core-image`：繼承 core-image.bbclass (image-level 邏輯)
-- `IMAGE_ROOTFS_SIZE`：rootfs 大小
-
-## IMAGE_INSTALL：選 package
-
-這是 **image 定義的核心**。列哪些 package 進 rootfs：
-
 ```
-IMAGE_INSTALL = " \
-    packagegroup-core-boot \
-    busybox \
-    ssh-server-openssh \
-    bash \
-    nano \
-    mycustom-package \
-"
+image recipe 的核心變數：
+
+  IMAGE_INSTALL    放哪些套件（最直接，列套件名）
+        │
+  IMAGE_FEATURES   功能集（高層，如 ssh-server/debug-tweaks）
+                   一個 feature 自動拉相關套件
+        │
+  IMAGE_FSTYPES    image 的檔案系統格式（ext4/squashfs/wic）
+        │
+  IMAGE_ROOTFS_SIZE / EXTRA_SPACE  rootfs 大小
+        │
+  inherit core-image  繼承組裝邏輯（do_rootfs）
+        │
+  → image recipe = 選套件（IMAGE_INSTALL/FEATURES）+ 格式 + inherit
+    客製 image 主要改 IMAGE_INSTALL（加套件）
 ```
 
-每個名字對應一個 recipe 的 binary output。
+> **image recipe 用 IMAGE_INSTALL（選套件）+ IMAGE_FEATURES（功能集）+ inherit core-image（組裝邏輯）——客製 image 主要改 IMAGE_INSTALL 加套件**。image recipe 的結構很簡單（看 core-image-minimal.bb）——核心是**選套件 + 繼承組裝邏輯**。核心變數：**IMAGE_INSTALL**（**放哪些套件**——最直接，列套件名，如 `busybox my-test-app nano`）；**IMAGE_FEATURES**（**功能集**——高層的功能，如 `ssh-server-openssh`/`debug-tweaks`，一個 feature 自動拉相關套件，比逐個列套件方便）；**IMAGE_FSTYPES**（image 的**檔案系統格式**——ext4/squashfs/wic 等，決定產出的 image 格式）；**IMAGE_ROOTFS_SIZE/EXTRA_SPACE**（rootfs 大小）；**`inherit core-image`**（繼承組裝邏輯——do_rootfs 等 task）。所以 image recipe = **選套件（IMAGE_INSTALL/FEATURES）+ 格式（FSTYPES）+ inherit core-image**。**客製 image 主要改 IMAGE_INSTALL**（加你要的套件）。對 compiler 工程師，這讓你能客製測試 image——如加一個用你的 patched gcc 編的測試程式（`IMAGE_INSTALL += "my-test-app"`），build image 後在裡面測你的 patch（Ch 5 的驗證方法之一——在真實 image 裡測）。IMAGE_FEATURES 的常用值：`debug-tweaks`（開發用，root 無密碼等）、`ssh-server-openssh`（SSH）、`tools-debug`（debug 工具）。理解 image recipe 讓你掌握「從套件到 image」——你的 toolchain 編出的套件，透過 IMAGE_INSTALL 選進 image，do_rootfs 組裝成最終的可開機 image。
 
-## Package group：一組 package
-
-```
-IMAGE_INSTALL += "packagegroup-core-boot"
-```
-
-`packagegroup-core-boot` 是「boot 需要的基本 package group」— 定義在 `meta/recipes-core/packagegroups/packagegroup-core-boot.bb`：
-
-```
-PACKAGES = "packagegroup-core-boot"
-RDEPENDS:packagegroup-core-boot = "\
-    base-files \
-    base-passwd \
-    busybox \
-    sysvinit \
-    udev \
-"
-```
-
-Package group recipe 只定義 `RDEPENDS`、install 會 pull 進來。
-
-## Common packagegroups
-
-```
-packagegroup-core-boot          基本 boot
-packagegroup-core-ssh-openssh   SSH server
-packagegroup-core-tools-debug   gdb, strace
-packagegroup-core-tools-profile perf, valgrind
-packagegroup-core-tools-testapps 測試 binary
-packagegroup-core-weston        weston 視窗系統
-```
-
-用 `bitbake-layers show-recipes 'packagegroup-*'` 列全部。
-
-## IMAGE_FEATURES：更高階選項
-
-```
-# conf/local.conf or image recipe
-IMAGE_FEATURES += "ssh-server-openssh debug-tweaks tools-profile"
-```
-
-Feature 選項：
-
-```
-debug-tweaks          root 無密碼、disable security
-read-only-rootfs
-ssh-server-dropbear / ssh-server-openssh
-tools-debug / tools-profile / tools-sdk
-x11 / x11-base
-weston / pulseaudio
-nfs-server
-splash                 開機 logo
-```
-
-Feature 是 high-level「要這個能力」、Yocto 自動 install 需要的 package。
-
-## 繼承 core-image.bbclass
-
-`inherit core-image` 帶來：
-
-- `do_rootfs` implementation
-- Standard feature handling
-- Image conversion 到 ext4 / tar.bz2 等
-
-大多 image recipe 都 inherit 這個。
-
-## IMAGE_FSTYPES：輸出 format
-
-```
-IMAGE_FSTYPES = "ext4 tar.bz2 wic"
-```
-
-Yocto 會 build 每種 format 一個檔。
-
-Common format：
-
-- `ext4`：rootfs filesystem
-- `squashfs`：壓縮 read-only rootfs
-- `tar.bz2`：tarball (深度 customize)
-- `wic`：partition-aware disk image
-- `wic.qcow2`：QEMU disk
-- `ubi`：UBI filesystem for flash
-
-## WIC image：partition layout
-
-`wic` format 讓 image 有 partition：
-
-```
-my-layout.wks:
-
-# short-description: Create an SD card image
-part /boot --source bootimg-partition --active --align 4 --size 64 --fstype=vfat
-part / --source rootfs --fstype=ext4 --align 4 --size 256
-```
-
-在 local.conf：
-
-```
-WKS_FILE = "my-layout.wks"
-IMAGE_FSTYPES += "wic wic.bmap"
-```
-
-產生 `.wic` 檔可以直接 `dd` 到 SD card。
-
-## 自訂 image recipe
-
-```
-# meta-sifive/recipes-core/images/sifive-demo-image.bb
-
-require recipes-core/images/core-image-minimal.bb
-
-SUMMARY = "SiFive demo image for RISC-V boards"
-
-IMAGE_FEATURES += "ssh-server-openssh debug-tweaks"
-
-IMAGE_INSTALL:append = " \
-    vim \
-    htop \
-    iperf3 \
-    perf \
-    sifive-demo-app \
-"
-
-IMAGE_ROOTFS_SIZE = "524288"       # 512 MB
-```
-
-Build：
+## rootfs 組裝過程
 
 ```bash
-bitbake sifive-demo-image
+cd ~/yocto/poky/build
+# 看 image 的 rootfs 組裝（do_rootfs task）
+bitbake -c listtasks core-image-minimal 2>/dev/null | grep -E 'rootfs|image'
+# do_rootfs       組裝 rootfs（安裝套件）
+# do_image        產生 image 檔
+# do_image_ext4   產生 ext4 格式
+# ...
+
+# rootfs 的組裝過程（do_rootfs 做的）：
+# 1. 解析 IMAGE_INSTALL + 依賴（要裝哪些套件）
+# 2. 從 package feed 安裝套件到 rootfs 目錄
+# 3. 跑 post-install scripts（設定）
+# 4. 設定 users/groups/權限
+# 5. 最佳化（移除不需要的、strip binary）
+
+# 看組裝好的 rootfs（image 解開）
+ls tmp/work/*/core-image-minimal/*/rootfs/ 2>/dev/null
+# bin/ etc/ lib/ usr/ ...   ← 標準的 Linux rootfs
+
+# 看最終 image
+ls tmp/deploy/images/qemuriscv64/
+# core-image-minimal-qemuriscv64.rootfs.ext4   ← 可開機的 image
+
+# image 怎麼來的（從套件到 image）：
+# gcc 編套件 → 套件存到 package feed → do_rootfs 選套件組裝 rootfs
+# → do_image 打包成 ext4 → 可 flash/boot
 ```
 
-## Customize rootfs
+> **do_rootfs 組裝 rootfs（解析 IMAGE_INSTALL+依賴 → 安裝套件 → 設定 → 最佳化），do_image 打包成 image 格式——這是「從套件到可開機 image」的最後一步**。**rootfs 組裝**由 **do_rootfs** task 做——過程：(1) 解析 **IMAGE_INSTALL + 依賴**（要裝哪些套件——你選的 + 它們的 RDEPENDS）；(2) 從 **package feed**（之前 build 的套件存放處）**安裝套件**到 rootfs 目錄；(3) 跑 **post-install scripts**（套件的安裝後設定）；(4) 設定 **users/groups/權限**；(5) **最佳化**（移除不需要的、strip binary 減小體積）。然後 **do_image**（和 do_image_ext4 等）把組裝好的 rootfs **打包成 image 格式**（ext4/squashfs/wic）。完整的「**從套件到 image**」鏈：**你的 patched gcc 編套件 → 套件存到 package feed → do_rootfs 選套件組裝 rootfs → do_image 打包成 ext4 → 可 flash/boot**。這讓你看到整個 build 的終點——你 patch 的 gcc（Ch 5）編出的套件，透過 image recipe（IMAGE_INSTALL）選進 image，do_rootfs/do_image 組裝成最終的可開機 image。`tmp/work/*/core-image-minimal/*/rootfs/` 是組裝好的 rootfs（標準 Linux 目錄）、`tmp/deploy/images/` 是最終 image。對 compiler 工程師，理解這個讓你知道「你的 toolchain 改動怎麼影響最終 image」——patched gcc 編的套件進到 rootfs，所以 image 裡的程式/library 是用你的 gcc 編的。這也是 Ch 5 驗證的脈絡——在真實 image 裡測 patched gcc 編出的程式的行為。
 
-`ROOTFS_POSTPROCESS_COMMAND` 讓你在 rootfs 組完後執行 script：
-
-```
-ROOTFS_POSTPROCESS_COMMAND += "my_custom_setup;"
-
-my_custom_setup() {
-    # Add custom script
-    echo "SiFive BSP 1.0" > ${IMAGE_ROOTFS}/etc/sifive-version
-    chmod 0644 ${IMAGE_ROOTFS}/etc/sifive-version
-}
-```
-
-`${IMAGE_ROOTFS}` 是 rootfs 組裝的 staging dir。
-
-## Init system 選擇
-
-Yocto 預設 sysvinit。改 systemd：
-
-```
-# conf/local.conf
-DISTRO_FEATURES:append = " systemd"
-DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"
-VIRTUAL-RUNTIME_init_manager = "systemd"
-VIRTUAL-RUNTIME_initscripts = "systemd-compat-units"
-```
-
-需要 `meta-openembedded/meta-oe` 有 systemd recipe。
-
-## 調整 rootfs size
-
-預設 Yocto 算 minimal + 自動 pad：
-
-```
-IMAGE_ROOTFS_SIZE = "8192"           # minimum KB
-IMAGE_ROOTFS_EXTRA_SPACE = "2048"    # add KB after content
-IMAGE_OVERHEAD_FACTOR = "1.3"        # multiply content size
-```
-
-如果 image 太大塞不進 SD card → 砍 package、用 squashfs。
-
-## Small image variants
-
-```
-core-image-tiny-initramfs         microscopic
-core-image-minimal                basic
-core-image-full-cmdline           CLI 工具齊全
-core-image-weston                 GUI
-```
-
-選對 image 做 starting point、不要 from scratch。
-
-## rootfs_deps: 誰決定 final package list
-
-```
-bitbake -g core-image-minimal
-```
-
-產生 `pn-depends.dot` 等 depend graph。看清楚 which package 被 install。
-
-## 實戰：為 SiFive dev board 出 BSP image
-
-```
-# meta-sifive/recipes-core/images/sifive-bsp-image.bb
-
-require recipes-core/images/core-image-minimal.bb
-
-# Core tools for developers
-IMAGE_FEATURES += " \
-    ssh-server-openssh \
-    debug-tweaks \
-    tools-debug \
-    tools-profile \
-"
-
-# SiFive 特定 package
-IMAGE_INSTALL:append = " \
-    sifive-uart-utils \
-    riscv-perf-tool \
-    opensbi \
-"
-
-# Documentation
-IMAGE_INSTALL:append = " packagegroup-core-docs"
-
-# 512 MB rootfs
-IMAGE_ROOTFS_SIZE = "524288"
-
-# 產 wic 可 flash 到 SD
-IMAGE_FSTYPES = "ext4 wic.gz"
-```
-
-客戶拿到這個 image 就能 flash + boot。
-
-## 驗證 image 內容
+## 故意弄壞:套件沒進 image
 
 ```bash
-# 解壓檢查
-mkdir rootfs
-cd rootfs
-sudo tar -xpf ../tmp/deploy/images/unmatched/sifive-bsp-image-unmatched.tar.bz2
+cd ~/yocto/poky/build
+# 常見問題：你加的套件沒進 image
 
-# 看 package list
-ls etc/
+# 加了 IMAGE_INSTALL += "my-app" 但 image 裡沒有
+# 可能原因：
 
-# 看 version
-cat etc/os-release
+# 1. 套件名錯（recipe 名 vs 套件名不同）
+#    recipe my-app_1.0.bb 可能產生套件 my-app + my-app-dev + my-app-dbg
+#    IMAGE_INSTALL 要用對的「套件名」（通常是 recipe 名，但有變體）
+bitbake -e my-app 2>/dev/null | grep '^PACKAGES='
+# PACKAGES="my-app my-app-dev my-app-dbg ..."  ← 看產生哪些套件
 
-# 看 binary
-ls bin/
+# 2. 套件沒被 build（recipe 有問題或沒在 layer）
+bitbake my-app    # 先確認套件能單獨 build
+
+# 3. 依賴問題（套件的 RDEPENDS 缺）
+# 看 do_rootfs log（套件安裝失敗會在這報）
+cat tmp/work/*/core-image-minimal/*/temp/log.do_rootfs | grep -i 'my-app'
+
+# 4. 改了 image recipe 但沒重新 build image
+bitbake core-image-minimal    # 重新 build image
+
+# 驗證套件在 image 裡：
+# runqemu 後 which my-app  或  解開 rootfs 看
+ls tmp/work/*/core-image-minimal/*/rootfs/usr/bin/ | grep my-app
+
+# → 教訓：套件沒進 image 的常見原因
+#   套件名錯、套件沒 build、依賴缺、沒重 build image
+#   debug：bitbake -e 看 PACKAGES、do_rootfs log、解開 rootfs 確認
 ```
 
-## deb / rpm / ipk package
-
-`PACKAGE_CLASSES` 控制：
-
-```
-PACKAGE_CLASSES = "package_rpm"        # RedHat style
-# 或
-PACKAGE_CLASSES = "package_deb"         # Debian style
-# 或
-PACKAGE_CLASSES = "package_ipk"         # Opkg (embedded)
-```
-
-IPK (opkg) 是 embedded 系統常見選擇。每 recipe 產 `.ipk` file、rootfs 用 opkg 裝。
-
-## Runtime dependency resolution
-
-Image build 時 opkg / dpkg / rpm 解 RDEPENDS → 自動拉入缺 dependencies。
-
-```bash
-# Check what's installed
-du -sh tmp/deploy/ipk/
-ls tmp/deploy/ipk/riscv64/
-```
-
-每個 `.ipk` 對應一個 runtime package.
-
-## /etc configuration
-
-Yocto 提供多種方式改 `/etc`：
-
-1. **Per-recipe**：recipe 的 `do_install` copy `.conf` file
-2. **ROOTFS_POSTPROCESS_COMMAND**：image 的 post-process
-3. **bbappend** to existing recipe：加 `file://conf` 到 SRC_URI
-
-對 SiFive BSP，常 customize 的：
-
-- `/etc/motd`：banner
-- `/etc/profile`：shell env
-- `/etc/opensbi.conf`：SBI 設定
-- `/etc/network/`：network
-
-## 網路 config
-
-default Yocto image 用 DHCP。想固定 IP、或 WiFi：加對應 package + config。
-
-`meta-networking` 層有很多網路 package：NetworkManager、hostapd、openvpn 等。
+> **套件沒進 image 的常見原因：套件名錯、套件沒 build、依賴缺、沒重 build image——用 bitbake -e 看 PACKAGES、do_rootfs log debug**。客製 image 常見的問題——**你加的套件沒進 image**。常見原因：(1) **套件名錯**——recipe 名 vs 套件名可能不同（`my-app_1.0.bb` 可能產生 `my-app` + `my-app-dev` + `my-app-dbg` 等套件，`bitbake -e my-app | grep PACKAGES` 看產生哪些套件，IMAGE_INSTALL 要用對的套件名）；(2) **套件沒被 build**（recipe 有問題或不在啟用的 layer——`bitbake my-app` 先確認能單獨 build）；(3) **依賴問題**（套件的 RDEPENDS 缺——看 `log.do_rootfs` 套件安裝失敗的訊息）；(4) **改了 image recipe 但沒重 build image**（要 `bitbake core-image-minimal` 重建）。**debug 方法**：`bitbake -e my-app | grep PACKAGES`（看套件名）、`log.do_rootfs`（看安裝問題）、解開 rootfs 確認（`ls tmp/work/*/core-image-minimal/*/rootfs/`）。對 compiler 工程師，這在你客製測試 image 時會遇到——加一個測試程式但 image 裡沒有，照這個流程 debug。理解 image recipe 和組裝過程，你能客製 image（加測試程式驗證 patch）和 debug「套件沒進 image」的問題。這章完成了「從套件到 image」的理解——image recipe 選套件、do_rootfs 組裝、debug 套件沒進去。對 compiler 工程師，這讓你能在真實 image 裡驗證 patched toolchain（Ch 5 驗證方法的脈絡），也理解你的 toolchain 改動怎麼影響最終交付的 image。
 
 ## 動手練習
 
-1. `bitbake core-image-minimal`，解壓 rootfs 看內容、列出 `bin/` 有啥。
-2. 寫 `mycompany-image.bb`，含 `ssh` + `htop` + 自選 package。
-3. 試 `IMAGE_FEATURES += "debug-tweaks tools-profile"`，觀察 rootfs 大小變化。
-4. 寫 `ROOTFS_POSTPROCESS_COMMAND` 在 image `/etc/` 加一個 file。
-5. 用 `bitbake -g myimage` 產生 depend graph、看包含的 package。
+1. 看 image recipe：讀 core-image-minimal.bb，理解 IMAGE_INSTALL/inherit core-image
 
-## 常見坑
+2. 客製 image：寫一個 image recipe（或用 local.conf 的 IMAGE_INSTALL:append）加一個套件（如 nano）
 
-1. **IMAGE_INSTALL 跟 PACKAGES 搞混**：IMAGE_INSTALL 是 binary package 名、PACKAGES 是 recipe 產的 package list。
-2. **Rootfs 太大**：IMAGE_ROOTFS_SIZE 要大於實際 content。bitbake 報錯告訴你。
-3. **Feature 衝突**：`image-feature-xx` 跟 `IMAGE_INSTALL` 都指向相同 package 可能出錯。
-4. **rootfs 沒你加的 file**：postprocess script 沒 run 或 path 錯。看 log。
-5. **Size 不夠 flash**：用 squashfs 或砍 package。
+3. 看 rootfs：解開組裝好的 rootfs（tmp/work/*/core-image*/*/rootfs/），看標準 Linux 結構
 
-## 常見誤會
+4. 看組裝：理解 do_rootfs 怎麼從套件組裝 rootfs（看 listtasks 和 log）
 
-1. **「Image 總是含所有 package」**：只含 IMAGE_INSTALL + dependency。
-2. **「改 IMAGE_INSTALL 要重 build toolchain」**：不用。只 rebuild rootfs。
-3. **「image recipe 等於 package recipe」**：不。image 不是 package、是 rootfs 組裝單位。
-4. **「IMAGE_FEATURES 是必要語法」**：optional。`IMAGE_INSTALL` 也能達成。Features 較 high-level。
-5. **「rootfs 大小由 IMAGE_INSTALL 決定」**：也受 feature / postprocess 影響。
+5. debug 套件沒進：故意加一個名字錯的套件，看 image 沒有，用 bitbake -e 看 PACKAGES debug
+
+## 本章重點整理
+
+- image recipe 是「放哪些套件」的清單：IMAGE_INSTALL（選套件）+ IMAGE_FEATURES（功能集）+ inherit core-image
+- do_rootfs 組裝 rootfs（解析 IMAGE_INSTALL+依賴 → 安裝套件 → 設定 → 最佳化），do_image 打包成格式
+- 從套件到 image：gcc 編套件 → package feed → do_rootfs 選套件組裝 → do_image 打包 → 可開機 image
+- 客製 image 主要改 IMAGE_INSTALL（加套件）；compiler 工程師用它加測試程式驗證 patch
+- 套件沒進 image 常見原因：套件名錯、沒 build、依賴缺、沒重 build——用 bitbake -e PACKAGES/do_rootfs log debug
 
 ## 自我檢核
 
-- [ ] 我能寫自訂 image recipe
-- [ ] 我知道 IMAGE_INSTALL / IMAGE_FEATURES / PACKAGE_CLASSES 的分工
-- [ ] 我能改 rootfs 內容（加 file、config）
-- [ ] 我知道 wic image 的 partition layout
-- [ ] 我能 build + verify image 產出
+- [ ] 理解 image recipe 怎麼定義 image（IMAGE_INSTALL/FEATURES）
+- [ ] 知道 rootfs 怎麼從套件組裝（do_rootfs → do_image）
+- [ ] 會客製 image（加套件）
+- [ ] 理解「從套件到 image」的完整鏈
+- [ ] 能 debug「套件沒進 image」的問題
 
-下一章 devtool workflow — 比 bbappend 更便捷的日常工具。
+## 延伸閱讀
 
-→ [Ch 8 devtool workflow](./08-devtool-workflow.md)
+### 官方
+
+- **[Yocto Images](https://docs.yoctoproject.org/dev-manual/customizing-images.html)** — Yocto Project
+  - **讀哪裡**：customizing images、IMAGE_INSTALL/FEATURES
+  - **為什麼值得讀**：image 客製的官方權威
+
+- **[Image Recipes](https://docs.yoctoproject.org/ref-manual/images.html)** — Yocto
+  - **讀哪裡**：內建的 image recipe（core-image-* 的差別）
+  - **為什麼值得讀**：理解各種內建 image
+
+### 書籍
+
+- **《Embedded Linux Systems with the Yocto Project》— image 章** — Streif
+  - **為什麼值得讀**：image 和 rootfs 的權威
+
+下一章看 devtool workflow——Yocto 提供的方便工具，讓 patch/開發/測試的迭代快很多。這是 day-to-day 比手動改 recipe 更方便的方式（Ch 5 的自動化版）。
+
+→ [Ch 8 devtool workflow：該你常用的指令](./08-devtool-workflow.md)

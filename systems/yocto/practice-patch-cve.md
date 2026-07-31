@@ -1,304 +1,149 @@
 # 練習 — Patch 一個 CVE fix 進 gcc recipe
 
-> 目標：真實 scenario — 你是 SiFive 工程師，客戶回報上游 gcc CVE。你要把 fix 快速 backport 進 Yocto image、驗證、交付。
+> **目標**：真實情境——你是 SiFive 工程師，客戶回報上游 gcc（或某 toolchain 套件）有個 CVE/bug。你要把 fix backport 進客戶的 Yocto image、驗證、交付。整合 Ch 2（.bbappend）、Ch 4（toolchain recipe）、Ch 5（patch GCC）、Ch 8（devtool）、Ch 9（debug）的知識，完整走一次「拿到 fix → 整合進 Yocto → 驗證 → 交付」的真實流程。
 
-## 情境設定
+## 背景與動機
 
-假設：
+這是 compiler 工程師在 SiFive 最真實的任務之一——客戶用著你們的 toolchain（在他們的 Yocto BSP 裡），某天 upstream 公布一個 gcc 的 CVE 或重要 bug fix，客戶要求你**把 fix 整合進他們的 image**。你要：找到 upstream 的 fix patch、用正確的方式（.bbappend，不改上游）加進 Yocto、rebuild、驗證 fix 生效、交付給客戶。
 
-- poky 的 gcc 11.2.0 有一個已知 CVE（例：**CVE-2023-XXXX**）
-- Upstream gcc 13 已 fix，但 poky 還沒 bump
-- 客戶的 Yocto BSP 用 kirkstone（gcc 11.2.0）
-- 你要 backport fix 給客戶
+這個練習模擬這個完整流程。完成它，你驗證了這門課的核心能力——**拿一個 toolchain patch，正確地整合進 Yocto、驗證、交付**。這正是 README 說的「能改 recipe 把 patched GCC 塞進 RISC-V distro image」，也是你向 SiFive 證明能勝任的核心技能。
 
-這是 SiFive support team 的日常 task。
+## 任務規格
 
-## Workflow
+把一個 fix patch 整合進 Yocto 的 gcc（或某 toolchain 套件）recipe：
 
-```
-1. Identify patch from upstream
-2. Backport patch to 11.2
-3. Add via .bbappend
-4. Rebuild gcc + image
-5. Verify fix
-6. Document + deliver
-```
+| 步驟 | 要做的 | 對應章節 |
+|---|---|---|
+| 取得 patch | 找到 upstream 的 fix（git commit → patch）| Ch 5 |
+| 確認版本 | 確認客戶的 gcc 版本，patch 對應 | Ch 1/9 |
+| 整合 | 用 .bbappend 加 patch（不改上游）| Ch 2/5 |
+| rebuild | cleansstate + rebuild | Ch 5/9 |
+| 驗證 | 五層驗證 patch 生效 | Ch 5 |
+| 交付 | 乾淨的 patch + .bbappend（給客戶的 layer）| Ch 5 |
 
-## Step 1: 找 upstream patch
+**核心要求**：用正確的方式（.bbappend 不改上游、命名對版本、:append 疊加）、驗證 patch 真的生效（不是「以為加了」）、交付乾淨可維護（patch + .bbappend 在客戶的 layer）。
 
-假設 CVE fix 的 commit 是 `abc123...` on gcc master branch：
+## 如果你卡住了
 
-```bash
-git clone git://gcc.gnu.org/git/gcc.git /tmp/gcc
-cd /tmp/gcc
-git log --oneline --all | grep "CVE-2023"
-# 找到 commit hash
+1. 先確認客戶的 gcc 版本（`bitbake -e gcc | grep '^PV='`），patch 要對應這個版本
+2. patch 用 .bbappend 加（不改上游），命名 `gcc_%.bbappend`（跨版本）
+3. FILESEXTRAPATHS + SRC_URI:append（Ch 2/5 的標準模板）
+4. rebuild 前 cleansstate（確保重建，Ch 9 的坑）
+5. 驗證：bitbake -e 看 patch 在 SRC_URI、do_patch log 看套用、測 fix 的行為
+6. patch 套不上 → rebase 到客戶的 gcc 版本（Ch 5/9）
+7. 也可以用 devtool（Ch 8）加速迭代
 
-git format-patch -1 abc123 -o /tmp/patches/
-# 產生 0001-fix-CVE-2023-XXXX.patch
-```
+## 實作步驟建議
 
-## Step 2: 嘗試 apply 到 gcc-11.2
+### Step 1：確認客戶的 gcc 版本
+### Step 2：取得對應版本的 fix patch
+### Step 3：在客戶的 layer 用 .bbappend 加 patch
+### Step 4：cleansstate + rebuild
+### Step 5：五層驗證 + 測 fix 行為
+### Step 6：交付（乾淨的 patch + .bbappend）
 
-```bash
-git checkout releases/gcc-11.2.0
-git apply --check /tmp/patches/0001-fix-CVE-2023-XXXX.patch
-```
+## 完整參考解答
 
-兩種結果：
+**自己走一遍！** 親手做才學到完整的 patch 流程。
 
-### Clean apply
-Great. 直接用。
-
-### Rejected
-```
-error: patch failed: gcc/foo.c:123
-```
-
-要 backport：
+<details>
+<summary>完整流程</summary>
 
 ```bash
-git apply --reject /tmp/patches/0001-fix-CVE-2023-XXXX.patch
-# 手動 fix foo.c.rej 對應 11.2 source structure
-vim gcc/foo.c
-git add -A && git commit -m "Backport CVE-2023-XXXX fix to 11.2"
-git format-patch -1 HEAD -o /tmp/patches/
-# 產生新 backport 版 patch
+cd ~/yocto/poky/build
+
+# ===== Step 1: 確認客戶的 gcc 版本 =====
+bitbake -e gcc 2>/dev/null | grep '^PV='
+# PV="13.2.0"  ← 客戶用 gcc 13.2，patch 要對應這個版本
+
+# ===== Step 2: 取得對應版本的 fix patch =====
+# 從 gcc 的 git 抓修 CVE 的 commit（對應 13.2 分支）
+# git clone git://gcc.gnu.org/git/gcc.git
+# cd gcc && git checkout releases/gcc-13
+# git format-patch -1 <fix-commit> -o /tmp/
+# 得到 /tmp/0001-Fix-CVE-xxx.patch
+# （這裡假設你有了 fix patch）
+
+# ===== Step 3: 在客戶的 layer 加 patch（.bbappend）=====
+cd ~/yocto/meta-mycompany    # 客戶的 layer（或你提供的）
+mkdir -p recipes-devtools/gcc/gcc
+cat > recipes-devtools/gcc/gcc_%.bbappend <<'EOF'
+# Backport CVE-xxx fix to gcc
+FILESEXTRAPATHS:prepend := "${THISDIR}/${PN}:"
+SRC_URI:append = " file://0001-Fix-CVE-xxx.patch"
+EOF
+cp /tmp/0001-Fix-CVE-xxx.patch recipes-devtools/gcc/gcc/
+
+# ===== Step 4: cleansstate + rebuild =====
+cd ~/yocto/poky/build
+# 確認 patch 會被套用
+bitbake -e gcc 2>/dev/null | grep 'Fix-CVE-xxx'
+# SRC_URI="... file://0001-Fix-CVE-xxx.patch ..."  ← 在 SRC_URI（生效）
+
+bitbake -c cleansstate gcc-cross-riscv64    # 清快取（Ch 9 的坑）
+bitbake gcc-cross-riscv64                     # rebuild
+
+# ===== Step 5: 五層驗證 =====
+# 1. patch 在 SRC_URI ✓（上面確認了）
+# 2. do_patch 套用成功
+cat tmp/work/*/gcc-cross*/*/temp/log.do_patch | grep -i 'CVE-xxx'
+# Applying patch 0001-Fix-CVE-xxx.patch  ✓
+# 3. source 真的改了
+grep -r 'fixed_code' tmp/work/*/gcc-cross*/*/gcc-*/  # patch 改的內容 ✓
+# 4. gcc 重建成功 ✓（bitbake 成功）
+# 5. fix 的行為對（測會觸發 CVE 的 case，確認修好）
+# 用 patched gcc 編一個觸發 CVE 的測試，確認不再有問題
+
+# ===== Step 6: 交付 =====
+# 交付給客戶的：
+#   meta-mycompany/recipes-devtools/gcc/
+#     gcc_%.bbappend            ← 乾淨的 .bbappend
+#     gcc/0001-Fix-CVE-xxx.patch  ← 對應版本的 patch
+# 客戶把這加進他們的 build → 他們的 image 含 fix
+# 附帶文件：CVE 編號、影響、fix 來源、驗證方法
 ```
 
-## Step 3: 建 meta-mycompany layer (若沒)
+**流程說明**：
 
-```bash
-cd /path/to/yocto-workspace
-mkdir -p meta-mycompany/conf
-mkdir -p meta-mycompany/recipes-devtools/gcc/files
-```
+- **確認版本**（Ch 1/9）：patch 要對應客戶的 gcc 版本（13.2），否則套不上
+- **正確整合**（Ch 2/5）：.bbappend 不改上游、gcc_% 跨版本、:append 疊加、FILESEXTRAPATHS
+- **cleansstate**（Ch 9）：rebuild 前清快取確保重建
+- **五層驗證**（Ch 5）：patch 在 SRC_URI → do_patch 套用 → source 改 → gcc 重建 → fix 行為對
+- **交付**：乾淨的 patch + .bbappend + 文件（CVE 資訊、驗證方法）——客戶能直接用和維護
+- **核心**：正確的方式（不改上游）+ 驗證生效（不是以為）+ 可維護的交付
 
-`conf/layer.conf`:
+</details>
 
-```
-BBPATH .= ":${LAYERDIR}"
-BBFILES += "${LAYERDIR}/recipes-*/*/*.bb ${LAYERDIR}/recipes-*/*/*.bbappend"
+## 測試用案例
 
-BBFILE_COLLECTIONS += "mycompany"
-BBFILE_PATTERN_mycompany = "^${LAYERDIR}/"
-BBFILE_PRIORITY_mycompany = "15"
+| 檢查項 | 標準 |
+|---|---|
+| 版本對應 | patch 對應客戶的 gcc 版本 |
+| 不改上游 | patch 在你的 layer 的 .bbappend |
+| patch 生效 | bitbake -e 看 SRC_URI、do_patch log |
+| fix 行為 | 測會觸發問題的 case，確認修好 |
+| 交付乾淨 | patch + .bbappend + 文件 |
 
-LAYERDEPENDS_mycompany = "core riscv"
-LAYERSERIES_COMPAT_mycompany = "kirkstone"
-```
+## 延伸挑戰（加分）
 
-加 bblayers：
+- **挑戰一**：用 devtool（Ch 8）做這個流程，比較和手動的差異
 
-```bash
-cd build
-bitbake-layers add-layer /path/to/meta-mycompany
-```
+- **挑戰二**：patch 套不上——故意用版本不對的 patch，練習 rebase 到客戶的版本
 
-## Step 4: 放 patch + 寫 bbappend
+- **挑戰三**：影響 SDK——確認你的 fix 也進到給客戶的 SDK（Ch 6 的變體問題）
 
-```bash
-cp /tmp/patches/0001-fix-CVE-2023-XXXX.patch \
-   meta-mycompany/recipes-devtools/gcc/files/
-```
+- **挑戰四**：多個 toolchain 套件——patch 不只 gcc，也 patch binutils 或 glibc（不同的 toolchain recipe）
 
-寫 `gcc_11.%.bbappend`:
-
-```
-# meta-mycompany/recipes-devtools/gcc/gcc_11.%.bbappend
-
-FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
-
-SRC_URI:append = " \
-    file://0001-fix-CVE-2023-XXXX.patch \
-"
-
-# Document the patch
-CVE_CHECK_WHITELIST += "CVE-2023-XXXX"
-```
-
-`CVE_CHECK_WHITELIST`: 告訴 Yocto 的 CVE scanner「這個已修了、不要 warn」。
-
-## Step 5: Clean + rebuild
-
-```bash
-bitbake -c cleansstate gcc-cross-riscv64 gcc gcc-runtime gcc-sanitizers
-bitbake gcc-cross-riscv64
-```
-
-第一次 ~20 分鐘（full gcc rebuild）。
-
-Verify patch applied:
-
-```bash
-tail tmp/work/x86_64-linux/gcc-cross-riscv64/11.2.0-r0/temp/log.do_patch
-```
-
-應看到 `Applying patch 0001-fix-CVE-2023-XXXX.patch`。
-
-## Step 6: Rebuild image
-
-```bash
-bitbake -c cleansstate core-image-minimal   # force rootfs re-assembly
-bitbake core-image-minimal
-```
-
-結果：rootfs 的 libgcc.so 跟 libstdc++.so 含 fix。
-
-## Step 7: Verify
-
-### Method A: Check version string
-
-```bash
-runqemu qemuriscv64
-# login
-gcc --version
-# 應顯示 11.2.0 + SiFive patch indicator (if added)
-```
-
-### Method B: Test binary
-
-如果 fix 是 code generation issue：
-
-```c
-// test.c
-// 特定 input 會觸發 CVE
-void test() { ... }
-```
-
-```bash
-gcc test.c -o test  # using patched compiler
-./test              # 應該 not crash / 正確 behavior
-```
-
-### Method C: CVE scanner
-
-Yocto 有 CVE check tool：
-
-```bash
-bitbake -c cve_check core-image-minimal
-```
-
-掃 rootfs 的 package、對 NVD 比對。應該不再 flag CVE-2023-XXXX。
-
-## Step 8: Document for customer
-
-寫 `meta-mycompany/recipes-devtools/gcc/files/README.md`:
-
-```markdown
-# GCC 11.2 patches applied
-
-## 0001-fix-CVE-2023-XXXX.patch
-Backport of upstream commit abc123def from gcc master
-(https://gcc.gnu.org/git/?p=gcc.git;a=commit;h=abc123def).
-
-Fixes: CVE-2023-XXXX (details at https://nvd.nist.gov/vuln/detail/CVE-2023-XXXX)
-
-Applies cleanly to GCC 11.2.0 source.
-Backport required: <yes/no>, see inline patch description for changes.
-
-Verified by: [your name]
-Date: 2026-04-24
-```
-
-## Step 9: Deliver
-
-兩種交付：
-
-### Option A: Patched SDK
-
-```bash
-bitbake -c populate_sdk core-image-minimal
-```
-
-給客戶 `.sh` SDK installer。客戶裝、用含 fix 的 cross-gcc。
-
-### Option B: Patched binary
-
-如果客戶只需要 runtime fix：產 rpm / deb / ipk of libgcc / libstdc++：
-
-```bash
-ls tmp/deploy/ipk/riscv64/ | grep -E "libgcc|libstdc"
-```
-
-客戶 deploy 這些 package 到 existing system。
-
-### Option C: Full image
-
-```bash
-bitbake core-image-minimal
-```
-
-給 `.ext4` 或 `.wic` 檔、客戶 re-flash。
-
-## Debug：patch 不 apply
-
-**Symptom**: `do_patch` fail:
-
-```
-Applying patch 0001-fix-CVE-2023-XXXX.patch
-patching file gcc/foo.c
-Hunk #1 FAILED at 123
-```
-
-Debug:
-
-```bash
-cd tmp/work/.../gcc-cross-riscv64/11.2.0-r0/gcc-11.2.0/
-# Look at the file manually
-cat gcc/foo.c.rej
-```
-
-修 patch、re-generate、重試。
-
-## CI integration
-
-SiFive 內部 automate:
-
-```yaml
-# .github/workflows/ci.yml
-- name: Build and test
-  run: |
-    cd yocto-build
-    bitbake -c cleansstate gcc-cross-riscv64
-    bitbake gcc-cross-riscv64
-    bitbake core-image-minimal
-    bitbake -c cve_check core-image-minimal
-    # Expected: no new CVE
-```
-
-自動跑 CVE check、fail 就 alert。
-
-## Long-term maintenance
-
-這個 patch 要 maintain 多久？
-
-- Poky 下版本 (langdale) 可能升 gcc 12 → fix 可能 already included → remove bbappend
-- Check poky release notes 看有沒有 bumped gcc 版本
-
-自家 bbappend 隨 poky 升級 rebase。
-
-## 實戰 checklist
-
-交 patch 給客戶前：
-
-- [ ] Patch apply 成功
-- [ ] gcc-cross build 過
-- [ ] Full image build 過
-- [ ] CVE scanner 不 flag
-- [ ] Test case verify fix
-- [ ] No regression in existing test
-- [ ] Document 完整
-- [ ] Patch source 可 upstream（若需要）
+- **挑戰五**：寫交付文件——像真實的 security advisory response，寫 CVE 編號、影響、fix、驗證、客戶怎麼套用
 
 ## 自我檢核
 
-- [ ] 我完成從 upstream 抓 patch 到 apply 到 Yocto 的 flow
-- [ ] 我能處理 patch rejected 情況（backport）
-- [ ] 我知道 CVE_CHECK_WHITELIST 的用途
-- [ ] 我能用 bitbake -c cve_check 掃 image
-- [ ] 我能寫 documentation 給客戶
+- [ ] 能確認客戶的 gcc 版本，取得對應的 patch
+- [ ] 能用正確的方式（.bbappend 不改上游）整合 patch
+- [ ] 知道 rebuild 要 cleansstate（清快取）
+- [ ] 能五層驗證 patch 真的生效
+- [ ] 能交付乾淨可維護的 patch + .bbappend + 文件
 
-## 下一步
+這個練習走了 compiler 工程師的核心任務（backport fix 進 Yocto）。接下來 Final Project——更完整的：把你自家的 custom RISC-V extension 支援 patch 進 gcc + 塞進 image。
 
-→ [Final Project：把 custom extension patch 塞進 RISC-V Yocto image](./final-project-custom-extension-yocto.md)
+→ [Final Project：把你自家 custom extension patch 塞進 RISC-V Yocto image](./final-project-custom-extension-yocto.md)
