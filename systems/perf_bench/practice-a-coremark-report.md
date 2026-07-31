@@ -1,254 +1,191 @@
 # 練習 A — 寫一份 Coremark 效能報告
 
-> 目標：實際 run Coremark、收集多組數據、寫成一份 professional performance report。Template 對應 SiFive / 客戶 benchmark team 的標準格式。
+> **目標**：整合 Part 1（benchmark 哲學 + 統計）的知識，實際跑 Coremark、收集多組數據（不同 compiler/flag）、用嚴謹的統計分析、寫成一份**專業的效能報告**。報告格式對應 SiFive/客戶 benchmark team 的標準。完成後你能產出「可信、可重現、有統計支撐」的效能報告——這是效能工程師的核心交付物，也是和 benchmark team 對話的基礎。
 
-## 為什麼寫 report
+## 背景與動機
 
-bench 跑完不等於工作完。**report 是 deliverable**。格式合規、分析到位的 report 比數字本身更 impact。
+效能工程師的一個核心交付是**效能報告**——測量某個 benchmark、用嚴謹的方法、寫成別人能信任和重現的報告。報告不是「測一個數字貼上去」，而是「完整地揭露條件、用統計分析、得出可信的結論」。
 
-面試時拿出這份 report 讓 interviewer 感受你懂 benchmark 方法論。
+這個練習讓你實際跑 Coremark（Ch 3）、應用 Part 1 的方法論（控制環境 Ch 0、避陷阱 Ch 1、統計嚴謹 Ch 4）、寫成專業報告。這正是 SiFive compiler 工程師和 benchmark team 對話的基礎——你的報告要讓他們能信任你的數字、理解你的分析、重現你的測量。完成這個練習，你建立了「產出專業效能報告」的能力——這是效能工作的標準交付，也是專業 vs 業餘的重要區分。
 
-## 任務
+## 任務規格
 
-在你能跑 Coremark 的環境（host native、QEMU-user、真 RISC-V hardware 皆可），做：
+跑 Coremark 並寫一份完整的效能報告，包含：
 
-1. Build 4 個版本 (不同 `-march` / `-O`)
-2. 跑 5+ 次、量數字
-3. 算 statistics
-4. 寫成 report
+| 部分 | 內容 | 對應章節 |
+|---|---|---|
+| 測量環境 | machine、CPU、頻率、governor、OS、編譯器版本 | Ch 0 |
+| 測量方法 | 多次測量、控制變因、warmup | Ch 0/4 |
+| 數據 | 多組（不同 compiler/flag）的 Coremark 分數 + 統計 | Ch 3/4 |
+| 統計分析 | 平均、標準差、信賴區間、差異是否顯著 | Ch 4 |
+| 結論 | 可信的結論（哪個 flag/compiler 最好，差異顯著嗎）| Ch 4 |
+| 揭露 | 完整的條件揭露（讓人能重現）| Ch 2/3 |
 
-## Step 1: 環境
+**核心要求**：報告要「可信」（統計嚴謹）、「可重現」（完整揭露條件）、「誠實」（差異不顯著就說不顯著，不誇大）。
+
+## 如果你卡住了
+
+1. 先控制測量環境（Ch 0：governor、綁核心、關 ASLR）——否則數據變異大不可信
+2. Coremark 要跑多次（至少 5-10 次）才能算統計（Ch 4）
+3. 比較不同 flag（-O2/-O3/-march）要用相同的 compiler 和環境（Ch 2 的誤用）
+4. 算統計：平均、標準差、信賴區間（看差異是否顯著）
+5. 報告要揭露完整條件（compiler 版本、flag、machine——讓人能重現）
+6. 誠實：如果 -O3 和 -O2 差異在誤差範圍內，就說「無顯著差異」（不要誇大）
+
+## 實作步驟建議
+
+### Step 1：控制測量環境（Ch 0）
+### Step 2：跑 Coremark 多組（不同 flag）× 多次（統計）
+### Step 3：統計分析（平均/標準差/CI/顯著性）
+### Step 4：寫報告（環境/方法/數據/分析/結論/揭露）
+### Step 5：檢查報告的可信度（可重現嗎、誠實嗎）
+
+## 完整參考解答
+
+**自己跑並寫一遍！** 親手做才學到「嚴謹的效能報告」。
+
+<details>
+<summary>測量流程 + 報告範本</summary>
 
 ```bash
-git clone https://github.com/eembc/coremark
-cd coremark
-```
+# ===== Step 1: 控制環境 (Ch 0) =====
+sudo cpupower frequency-set -g performance 2>/dev/null
+echo 0 | sudo tee /proc/sys/kernel/randomize_va_space   # 關 ASLR（測完恢復）
+# 記錄環境
+echo "=== Environment ===" > report.md
+echo "CPU: $(lscpu | grep 'Model name' | sed 's/.*: *//')" >> report.md
+echo "Cores: $(nproc), Freq governor: performance" >> report.md
+echo "OS: $(uname -sr)" >> report.md
+echo "GCC: $(gcc --version | head -1)" >> report.md
 
-看 README 確認 build instruction。
-
-## Step 2: 定義 test matrix
-
-```
-Variant 1: -O2                          baseline
-Variant 2: -O3                          
-Variant 3: -O3 -flto                    
-Variant 4: -O3 -flto -march=rv64gc_zba_zbb_zbs_zicond
-```
-
-對 RISC-V target：
-
-```bash
-# host native (if x86)
-make PORT_DIR=linux64 XCC=gcc XCFLAGS="-O2" ITERATIONS=500000
-
-# For RISC-V (example)
-make PORT_DIR=linux64 XCC=riscv64-linux-gnu-gcc \
-     XCFLAGS="-O2 -march=rv64gc" ITERATIONS=500000
-```
-
-## Step 3: 跑 benchmark
-
-```bash
-# 對每個 variant
-for i in 1 2 3 4 5; do
-    ./coremark.exe > result_$i.txt
-    sleep 2
+# ===== Step 2: 跑 Coremark 多組 × 多次 =====
+cd ~/perflab/coremark
+for flags in "-O2" "-O3" "-O2 -march=native" "-O3 -march=native"; do
+    make clean > /dev/null 2>&1
+    make PORT_DIR=linux64 XCFLAGS="$flags" > /dev/null 2>&1
+    echo "=== flags: $flags ==="
+    # 跑 10 次，收集分數
+    for run in $(seq 1 10); do
+        taskset -c 2 ./coremark.exe 0x0 0x0 0x66 0 7 1 2000 2>/dev/null | \
+            grep "CoreMark 1.0" | grep -oP ': \K[0-9.]+'
+    done
 done
-```
 
-用 hyperfine 自動化：
-
-```bash
-hyperfine --warmup 3 --runs 10 \
-    --export-json results.json \
-    "./coremark-O2.exe" \
-    "./coremark-O3.exe" \
-    "./coremark-O3-lto.exe" \
-    "./coremark-O3-lto-march.exe"
-```
-
-## Step 4: 處理數據
-
-```python
-import json
-import statistics as s
-
-with open("results.json") as f:
-    data = json.load(f)
-
-for r in data['results']:
-    print(f"{r['command']}: mean={r['mean']:.3f}s std={r['stddev']:.3f}s")
-```
-
-或 Python 專屬分析：
-
-```python
-import pandas as pd
-import scipy.stats as stats
-
-# 讀 10 run 的 Coremark 數字
-runs = {
-    'O2':       [4500, 4510, 4498, 4505, 4502, 4497, 4506, 4501, 4499, 4503],
-    'O3':       [4580, 4585, 4582, 4578, 4583, 4581, 4579, 4584, 4586, 4580],
-    'O3-lto':   [4650, 4648, 4652, 4651, 4649, 4653, 4650, 4647, 4654, 4651],
-    'O3-lto-march': [4780, 4775, 4782, 4779, 4781, 4778, 4784, 4776, 4780, 4779],
+# ===== Step 3: 統計分析 (Ch 4) =====
+# 用 python 算統計（平均/標準差/CI）
+python3 <<'PYEOF'
+import statistics, math
+# 假設收集到的數據（替換成你的）
+data = {
+    "-O2":              [11020, 11050, 11000, 11030, 11010, 11040, 11025, 11015, 11035, 11005],
+    "-O3":              [11100, 11120, 11080, 11110, 11090, 11130, 11105, 11095, 11115, 11085],
+    "-O2 -march=native":[11500, 11520, 11480, 11510, 11490, 11530, 11505, 11495, 11515, 11485],
 }
+print(f"{'Flags':<22} {'Mean':<10} {'StdDev':<8} {'95% CI':<18}")
+results = {}
+for flags, scores in data.items():
+    mean = statistics.mean(scores)
+    stdev = statistics.stdev(scores)
+    ci = 1.96 * stdev / math.sqrt(len(scores))   # 95% CI
+    results[flags] = (mean, ci)
+    print(f"{flags:<22} {mean:<10.0f} {stdev:<8.1f} [{mean-ci:.0f}, {mean+ci:.0f}]")
 
-for name, vals in runs.items():
-    m = s.mean(vals)
-    sd = s.stdev(vals)
-    cv = sd / m * 100
-    print(f"{name:15s}: mean={m:7.1f} stddev={sd:5.1f} CV={cv:4.2f}%")
-
-# Compare O2 vs O3-lto-march
-t, p = stats.ttest_ind(runs['O2'], runs['O3-lto-march'])
-print(f"O2 vs O3-lto-march: t={t:.2f}, p={p:.4g}")
+# 判斷差異是否顯著（CI 重疊嗎）
+print("\n=== 顯著性分析 ===")
+o2_mean, o2_ci = results["-O2"]
+o3_mean, o3_ci = results["-O3"]
+# O2 vs O3
+if abs(o3_mean - o2_mean) > (o2_ci + o3_ci):
+    print(f"-O3 vs -O2: 顯著差異（O3 快 {(o3_mean/o2_mean-1)*100:.1f}%）")
+else:
+    print(f"-O3 vs -O2: 無顯著差異（CI 重疊，差異可能是雜訊）")
+PYEOF
 ```
-
-## Step 5: 寫 report
-
-Template：
 
 ```markdown
-# Coremark Performance Report
+<!-- ===== Step 4: 報告範本 ===== -->
+# Coremark 效能報告
 
-**Author**: [Your name]
-**Date**: [Date]
-**Target**: [CPU / frequency]
-**Compiler**: [gcc version]
+## 測量環境
+- CPU: [型號], [核心數] cores
+- 頻率: performance governor（固定），turbo: disabled
+- OS: Linux [版本]
+- 編譯器: GCC [版本]
+- Coremark: [版本], ITERATIONS=2000
 
-## Executive Summary
+## 測量方法
+- 每組 flag 跑 10 次（taskset 綁定 CPU 2，ASLR 關閉）
+- 報告平均 ± 95% 信賴區間
+- warmup: 前 2 次丟棄
 
-Compared 4 compiler configurations running Coremark on [target].
-Best configuration achieved X Coremark/MHz, a Y% improvement over baseline.
+## 數據
 
-## Test Environment
+| Flags | Mean Coremark | StdDev | 95% CI |
+|---|---|---|---|
+| -O2 | 11023 | 16.2 | [11013, 11033] |
+| -O3 | 11103 | 16.2 | [11093, 11113] |
+| -O2 -march=native | 11503 | 16.2 | [11493, 11513] |
 
-- **CPU**: [details]
-- **Memory**: [size]
-- **OS**: [version]
-- **Compiler**: [full version]
-- **Kernel governor**: performance
-- **SMT**: disabled
-- **ASLR**: disabled
-- **Perf governor**: performance
+## 統計分析
+- **-O3 vs -O2**: O3 快 0.7%，CI [11093,11113] vs [11013,11033] 不重疊 → **顯著**
+- **-march=native vs -O2**: 快 4.4%，明顯顯著
+- Coremark/MHz: [分數/頻率] = [值]（核心效率指標）
 
-## Methodology
+## 結論
+1. -march=native 提供最大提升（4.4%，使用本機指令集）
+2. -O3 比 -O2 略快（0.7%，統計顯著但幅度小）
+3. 對此 workload（Coremark），-O2 -march=native 是好的選擇
 
-- Coremark v1.0
-- Iterations: 500,000 (to guarantee > 10 sec runtime)
-- 10 runs per configuration
-- Warmup: 3 discarded runs
-- All runs on isolated CPU (taskset)
+## 重現
+完整命令：`make PORT_DIR=linux64 XCFLAGS="-O2 -march=native"`，環境如上。
 
-## Results
-
-| Config | Coremark | Coremark/MHz | vs Baseline |
-|--------|----------|--------------|-------------|
-| O2 (baseline)          | 4502 | 3.75 | 0.0% |
-| O3                     | 4582 | 3.82 | +1.8% |
-| O3 + LTO               | 4650 | 3.87 | +3.3% |
-| O3 + LTO + march=rv64gc_zbb_zba_zbs_zicond | 4780 | 3.98 | +6.2% |
-
-All CV < 0.2%, p < 0.001 between neighbors.
-
-## Analysis
-
-[解釋各個 configuration 的 improvement 來源]
-
-- `-O3` over `-O2`: marginal improvements from aggressive inlining
-- `-flto` adds cross-TU optimization, primarily helps function call overhead
-- Extra `-march` gives access to Zbb (bitmanip), which is hot in Coremark's list/CRC code
-
-## Recommendations
-
-For production release targeting [this CPU]:
-- Use `-O3 -flto -march=rv64gc_zba_zbb_zbs_zicond`
-- Expect 6-7% Coremark improvement over baseline `-O2`
-
-For embedded (memory-constrained):
-- Use `-Os -flto`
-- Trade some speed for size
-
-## Appendix: Raw Data
-
-[table of 10 runs per config]
+## 限制與注意
+- Coremark 是合成 benchmark（Ch 3 的爭議），不完全代表真實 workload
+- -march=native 的 binary 只能在同型 CPU 跑
+- 結果是此特定環境/編譯器的，換環境要重測
 ```
 
-## 進階：對比硬體
+**報告說明**：
 
-如果有多 RISC-V boards：
+- **完整的環境揭露**（Ch 0）：machine/CPU/頻率/governor/OS/編譯器——讓人能重現
+- **嚴謹的方法**（Ch 4）：多次測量、控制變因、報告 CI
+- **統計分析**（Ch 4）：不只報平均，報 CI 和「差異是否顯著」（CI 是否重疊）
+- **誠實的結論**：-O3 只快 0.7%（雖顯著但小）——誠實呈現，不誇大
+- **限制揭露**（Ch 2/3）：Coremark 的限制、march=native 的相容性、結果的特定性
+- **核心**：報告「可信」（統計嚴謹）+「可重現」（完整揭露）+「誠實」（不誇大）
 
-- SiFive U74 vs P550 vs P670
-- 同 Coremark binary 跑三個、對比 MHz 正規化分數
+</details>
 
-顯示 "microarchitecture delta"、不只是 compiler。
+## 測試用案例
 
-## 加 profile
+| 檢查項 | 標準 |
+|---|---|
+| 環境揭露 | machine/CPU/頻率/編譯器都有 |
+| 多次測量 | 至少 5-10 次 |
+| 統計 | 平均 + CI + 顯著性判斷 |
+| 誠實 | 不顯著就說不顯著 |
+| 可重現 | 別人照報告能重現 |
 
-Report 加一段："為什麼 Zbb 這麼有效"：
+## 延伸挑戰（加分）
 
-```bash
-perf stat -e cycles,instructions,branch-misses \
-    ./coremark-base.exe vs ./coremark-zbb.exe
-```
+- **挑戰一**：加 perf 分析——對最快和最慢的版本用 perf stat，解釋「為什麼快」（IPC/cache 的差別）
 
-比對 counts：
+- **挑戰二**：RISC-V——在 RISC-V 硬體/QEMU 上跑 Coremark，比較 -march=rv64gc vs rv64gcv（向量）
 
-```
-Coremark (-O2):          120B cycles, 180B instructions (IPC 1.5)
-Coremark (zbb):          100B cycles, 150B instructions (IPC 1.5)
-```
+- **挑戰三**：Coremark/MHz——算並報告 Coremark/MHz（核心效率），和公開的其他 core 比較
 
-相同 IPC → 但 instructions 減少（Zbb combine 多條 → 一條）→ 快。
+- **挑戰四**：compiler 比較——比較 gcc vs clang 的 Coremark，分析差異（compiler 的優化差別）
 
-**這種 explanatory paragraph 是 professional report 的加分項**。
-
-## 加 Coremark 內部 breakdown
-
-Coremark 有三個 workload（list、matrix、state machine）。有些版本支援：
-
-```
-CoreMark 1.0 : 4780.00 / GCC 11.2 -O3 -flto ...
-Per-component breakdown:
-  List processing: 38%
-  Matrix math: 32%
-  State machine: 30%
-```
-
-某些 optimization 只對某 component 有效。report 裡指出。
-
-## 檢核 checklist
-
-Report 交出前：
-
-- [ ] 有 executive summary
-- [ ] 環境 detail（CPU、OS、compiler、governor）
-- [ ] methodology 清楚（run 數、warmup、tune）
-- [ ] 數字有 mean + std + CV
-- [ ] 有 statistical significance 驗證
-- [ ] 有 raw data appendix
-- [ ] 有 actionable recommendation
-
-## 面試用
-
-完成後把 report 放 GitHub。面試時：
-
-- 用 report 做 demo
-- 解釋每個 configuration 為何 improve
-- 聊 "如果我是 SiFive 工程師要如何往上 push"
-
-**這比口頭 claim "我會 benchmark" 可信 100 倍**。
+- **挑戰五**：自動化——寫一個腳本自動跑多組 × 多次、算統計、產生報告（可重複使用的 benchmark harness）
 
 ## 自我檢核
 
-- [ ] 我 run 完 4+ 個 Coremark configuration
-- [ ] 每個 configuration 10 次 run
-- [ ] 我算出 mean、stddev、CV、p-value
-- [ ] 我寫出完整 professional report
-- [ ] Report 放 GitHub
+- [ ] 能控制測量環境（governor/綁核心/ASLR）做可信的測量
+- [ ] 能跑 Coremark 多組多次，收集統計數據
+- [ ] 會做統計分析（平均/CI/顯著性）
+- [ ] 能寫完整、誠實、可重現的效能報告
+- [ ] 理解報告的可信度來自統計嚴謹 + 完整揭露
 
-## 下一步
+這個練習訓練了「產出專業效能報告」的能力。接下來練習 B——用 llvm-mca 深入分析一段 hot loop 的指令層瓶頸。
 
 → [練習 B：用 llvm-mca 分析一段 hot loop](./practice-b-llvm-mca-case.md)
-→ [Final Project：Performance case study](./final-project-perf-case-study.md)

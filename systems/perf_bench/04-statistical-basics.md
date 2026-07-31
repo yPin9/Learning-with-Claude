@@ -1,286 +1,235 @@
-# Ch 4 — 統計基本功：geomean / CI / noise 控制
+# Ch 4 — 統計基本功：geomean、CI、noise 控制
 
-> 目標：讓你的 benchmark 數字 scientifically 有意義。理解 arithmetic mean vs geometric mean、confidence interval、outlier 處理、如何判斷「改進是 real 還是 noise」。
+> **目標**：讓你的 benchmark 數字在統計上有意義——理解算術平均 vs 幾何平均（為什麼 benchmark 比值要用 geomean）、信賴區間（confidence interval）、outlier 處理、以及最重要的：怎麼判斷「改進是真的還是雜訊」。沒有統計，你的「優化 5%」可能只是運氣。這章是讓 benchmark 從「測一個數字」變成「得出可信結論」的關鍵。
 
-## 為什麼統計重要
+> **環境**：概念為主，搭配簡單的計算和 hyperfine（Ch 0）。
 
-典型的糟糕 benchmark report：
+## 為什麼 benchmark 需要統計？
 
-> "After my change, performance improved by 2.3%."
+效能測量的核心問題是：**這個數字可信嗎？** 你測到「優化後快 5%」——但這 5% 是真的改進，還是測量雜訊（Ch 0 說過變異可達 30%）？如果不用統計，你可能把雜訊當成優化（浪費時間在沒用的「優化」上），或把真實的改進當成雜訊（錯過好的優化）。
 
-問題：
+統計讓你回答「這個差異是真的還是雜訊」——這是 benchmark 的核心。也回答「多個 benchmark 的綜合分數怎麼算」（為什麼 SPEC/Embench 用幾何平均）。沒有統計嚴謹性，你的效能工作就是在猜。這章講最關鍵的幾個統計概念——不是完整的統計課，而是「做 benchmark 必須懂的統計」。掌握它們，你的數字才能支撐可信的結論。
 
-- 跑幾次？
-- 同一 machine？
-- 時間尺度？
-- 確信區間？
-
-沒有統計框架，「2.3% 改進」可能就是 noise。
-
-真實 compiler 工作中，**最大的痛是 regression noise**：改一個 pattern、某 benchmark 正負 1% 、每天花時間分辨是改對還是改錯。嚴謹統計讓你事半功倍。
-
-## Arithmetic mean vs Geometric mean
-
-### Arithmetic mean（算術平均）
-
-$$\text{AM} = \frac{x_1 + x_2 + \ldots + x_n}{n}$$
-
-適合：**absolute 數量**（seconds, bytes, cycles）。
-
-### Geometric mean（幾何平均）
-
-$$\text{GM} = \sqrt[n]{x_1 \cdot x_2 \cdot \ldots \cdot x_n}$$
-
-適合：**ratio、normalized score**。
-
-### 為什麼 SPEC 用 geomean
-
-SPEC 對每個 benchmark 算 ratio（reference / yours）。若用 arithmetic mean：
+## 先建立直覺:算術平均 vs 幾何平均
 
 ```
-benchmark A: ratio 10
-benchmark B: ratio 0.1
-AM = 5.05 (明顯被 A dominate)
-GM = 1.0  (合理：一個快 10×、一個慢 10×，平均 0)
+為什麼 benchmark 的「比值」要用幾何平均（geomean）？
+
+  情境：3 個 benchmark，新版 vs 舊版的速度比值（>1 = 變快）
+    benchmark A：2.0x（快 1 倍）
+    benchmark B：0.5x（慢一半）
+    benchmark C：1.0x（沒變）
+        │
+  算術平均（arithmetic mean）：(2.0 + 0.5 + 1.0) / 3 = 1.17
+    → 「平均快 17%」？但這誤導！
+    A 快 1 倍、B 慢一半，直覺應該「打平」（一個快一倍一個慢一半）
+        │
+  幾何平均（geometric mean）：(2.0 × 0.5 × 1.0)^(1/3) = 1.0
+    → 「平均沒變」—— 這才對！
+    A 的 2.0 和 B 的 0.5 互相抵消（2×0.5=1）
+        │
+  → 比值/比率要用幾何平均（算術平均會被大比值扭曲）
+    這是為什麼 SPEC/Embench 的綜合分數用 geomean
+    算術平均適合「絕對值」（如時間），geomean 適合「比值」
 ```
 
-Arithmetic mean 被 outlier 拉偏。Geometric mean 對 ratio 更公平。
+關鍵心智：benchmark 的**比值/比率**（新舊版速度比、相對於參考的分數）要用**幾何平均（geomean）**，不是算術平均。因為算術平均會被大比值扭曲（2.0x 和 0.5x 算術平均是 1.17 誤導，幾何平均是 1.0 才對——它們互相抵消）。這是為什麼 SPEC/Embench 用 geomean。算術平均適合絕對值（時間），geomean 適合比值。
 
-**記憶法**：「比例用幾何、絕對用算術」。
+> geomean 是 SPEC（Ch 2）、Embench（Ch 3）綜合分數的計算方法。理解它，你知道那些「綜合分數」怎麼來的，以及為什麼這樣算。
 
-## Median vs Mean
-
-Mean 對 outlier 敏感。10 次 run：
-
-```
-9 runs 都 1.0 秒
-1 run 因 OS 干擾 10 秒
-
-Mean = 1.9 秒
-Median = 1.0 秒
-```
-
-benchmark run 常有 outlier（GC、page fault、interrupt 等），**median 較穩健**。
-
-### 實務建議
-
-- 5 次 run：用 median
-- 10+ 次：用 mean of middle N （丟前後 10% outlier）
-- 100+ 次：mean + stddev 就夠
-
-## 標準差（Standard Deviation）
-
-$$\sigma = \sqrt{\frac{\sum (x_i - \bar{x})^2}{n}}$$
-
-衡量分散程度。常看 **coefficient of variation (CV)**：
-
-$$CV = \frac{\sigma}{\bar{x}}$$
-
-- CV < 1%：benchmark 乾淨
-- CV = 1-3%：正常 noise
-- CV > 5%：系統有問題（turbo、thermal、background）
-
-SPEC 官方要求 CV < 2% 才 reportable。
-
-## Confidence Interval
-
-95% CI 的粗估：
-
-$$CI = \bar{x} \pm 1.96 \cdot \frac{\sigma}{\sqrt{n}}$$
-
-例：10 次 run、mean=1000ms、stddev=20ms：
-
-```
-CI = 1000 ± 1.96 × 20/√10 = 1000 ± 12.4
-95% CI = [987.6, 1012.4]
-```
-
-意思：真實 mean 有 95% 機率在這範圍內。
-
-**用途**：比較兩組 benchmark，CI 重疊 → 改進可能是 noise。
-
-## A/B 比較：t-test
-
-我改了 compiler，測 N=10 runs before + N=10 runs after。怎麼判斷 real improvement？
-
-**Welch's t-test**：
-
-```python
-import scipy.stats as stats
-
-before = [1002, 1005, 998, 1001, 1003, 999, 1004, 1002, 1000, 1003]
-after = [985, 987, 990, 988, 986, 989, 987, 984, 988, 986]
-
-t, p = stats.ttest_ind(before, after, equal_var=False)
-print(f"t = {t:.3f}, p = {p:.6f}")
-```
-
-- `p < 0.05`：95% 有統計意義 → 可能 real
-- `p >= 0.05`：可能是 noise
-
-**不是 magic**。`p < 0.05` 是 convention、不保證 causation。
-
-## Noise 的來源與控制
-
-### 來源
-
-1. **OS**：scheduler、page fault、ASLR、interrupt
-2. **CPU**：turbo、thermal throttle、PEU (perf event units) conflict
-3. **Memory**：huge pages、NUMA
-4. **Branch predictor**：cold start
-5. **Other process**：cron、systemd、background
-
-### 控制方法
+## 幾何平均的正確使用
 
 ```bash
-# 1. 固定 CPU 頻率（禁 turbo）
-sudo cpupower frequency-set --governor performance
-echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost
+# 計算幾何平均（benchmark 比值的綜合）
+# geomean = (x1 × x2 × ... × xn)^(1/n)
+#         = exp( (ln(x1) + ln(x2) + ... + ln(xn)) / n )   ← 避免溢位的算法
 
-# 2. Isolate CPU core
-# 開機 kernel command line: isolcpus=3
-taskset -c 3 ./benchmark
-
-# 3. 禁 ASLR
-setarch $(uname -m) -R ./benchmark
-
-# 4. 用 cgroup 限制其他 process
-# (advanced)
-
-# 5. Disable SMT/HT
-echo off | sudo tee /sys/devices/system/cpu/smt/control
-
-# 6. Huge pages (prevent TLB noise)
-echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+# 用 python 算
+python3 -c "
+import math
+ratios = [2.0, 0.5, 1.0, 1.5, 0.8]   # 5 個 benchmark 的速度比值
+geomean = math.exp(sum(math.log(r) for r in ratios) / len(ratios))
+arithmean = sum(ratios) / len(ratios)
+print(f'Geometric mean: {geomean:.3f}')   # 比值的正確綜合
+print(f'Arithmetic mean: {arithmean:.3f}') # 會被大比值扭曲
+"
+# Geometric mean: 1.041   ← 比值的綜合（正確）
+# Arithmetic mean: 1.160  ← 被 2.0 扭曲（誤導）
 ```
 
-實際生產中 SiFive 類公司有 dedicated benchmark machine，以上 tune 全開。
+```
+什麼時候用哪個平均：
 
-## Warmup
-
-每次 run 的前幾 iteration 往往慢（cold cache、未 JIT、CPU scaling up）。丟棄：
-
-```python
-def bench():
-    for _ in range(5):
-        run()  # warmup
-    
-    results = []
-    for _ in range(10):
-        results.append(run())
-    
-    return median(results)
+  幾何平均（geomean）：
+    - benchmark 的速度比值（新/舊）
+    - 相對於參考的分數（SPEC ratio）
+    - 任何「比率」的綜合
+        │
+  算術平均（arithmetic mean）：
+    - 絕對的時間（多次測同一個 benchmark 的時間）
+    - 絕對的計數（cycles、cache miss 數）
+    - 任何「絕對值」的綜合（同單位、同尺度）
+        │
+  → 比值用 geomean、絕對值用 arithmetic
+    搞錯會得出誤導的綜合分數
+    （把不同 benchmark 的時間直接算術平均也錯——
+     因為不同 benchmark 的時間尺度不同，要先正規化成比值）
 ```
 
-SPEC 自帶 warmup，其他 micro-benchmark 自己處理。
+> **比值用幾何平均、絕對值用算術平均——這是 benchmark 統計最常被搞錯的地方**。判斷用哪個平均：**幾何平均**用於「**比率**」——benchmark 的速度比值（新版/舊版）、相對於參考的分數（SPEC ratio）、任何比率的綜合。**算術平均**用於「**絕對值**」——絕對的時間（多次測**同一個** benchmark 的時間，算平均時間）、絕對的計數（cycles、cache miss）。**常見錯誤**：(1) 把不同 benchmark 的「比值」算術平均（被大比值扭曲，前面的例子）；(2) 把不同 benchmark 的「絕對時間」直接算術平均（也錯——因為不同 benchmark 的時間尺度差很多，一個跑 1 秒一個跑 100 秒，直接算術平均被大的主導，要先正規化成比值再 geomean）。所以**綜合多個 benchmark 的效能**幾乎都用 geomean（先算每個的比值，再 geomean）——這是 SPEC/Embench 的做法。但**測同一個 benchmark 多次取平均**用算術平均（同一個東西的多次測量，絕對值，算術平均）。記住這個區別——「比較多個 benchmark」用 geomean、「同一個 benchmark 多次測量」用算術平均。搞錯會得出誤導的數字。這是 benchmark 統計的基本功，也是區分「懂統計」和「亂算平均」的關鍵。
 
-## Geometric mean 的陷阱
-
-不能有 0 或負值（log 不定義）。實務：
-
-- Ratio 全正數時 OK
-- Time / throughput 都是正 → OK
-- 某些 bug reveal 成 ratio=0 → 手動處理
-
-## Amdahl's Law 跟 benchmark 解讀
-
-改 part of program：
-
-$$\text{Speedup} = \frac{1}{(1-P) + \frac{P}{S}}$$
-
-- `P`: 被改部分佔總時間比例
-- `S`: 被改部分的 speedup
-
-例：某 function 佔 10% 時間、改快 10×：
+## 信賴區間:差異是真的還是雜訊
 
 ```
-Speedup = 1 / (0.9 + 0.1/10) = 1 / 0.91 = 1.099
+怎麼判斷「優化是真的還是雜訊」（信賴區間）：
+
+  測量舊版 10 次：平均 100ms，標準差 σ=3ms
+  測量新版 10 次：平均 97ms，標準差 σ=3ms
+        │
+  問題：97 vs 100，新版「快 3%」是真的嗎？
+    還是只是這次運氣好（雜訊）？
+        │
+  信賴區間（confidence interval）：
+    舊版：100ms ± CI（如 95% CI = 100 ± 2ms = [98, 102]）
+    新版：97ms ± CI（如 97 ± 2ms = [95, 99]）
+        │
+  判斷：
+    區間「不重疊」（[98,102] vs [95,99] 在 98-99 有點重疊）
+    → 重疊 = 差異「不顯著」（可能是雜訊）
+    → 不重疊 = 差異「顯著」（真的不同）
+        │
+  → 用信賴區間判斷差異是否顯著
+    區間重疊 = 不能說「真的快了」（可能雜訊）
+    區間分離 = 可以說「真的快了」（統計顯著）
+        │
+  hyperfine 自動算這個：
+    'b' ran 1.03 ± 0.04 times faster
+    → 1.03 ± 0.04 = [0.99, 1.07]，含 1.0 → 可能沒差！
 ```
 
-**整體只快 9.9%**。雖然 hot function 快 10×，但非 hot path 不變。
+> **用信賴區間判斷「差異是否顯著」——區間重疊（含 1.0）= 可能是雜訊，不能說「真的快了」**。效能比較的核心問題：「優化後快 3%」是真的還是雜訊？答案靠**信賴區間（CI）**——它表示「真實值有 95% 機率在這個範圍內」。判斷方法：比較兩版的信賴區間，**如果區間重疊，差異不顯著**（可能是雜訊，不能下結論「真的快了」）；**如果區間分離，差異顯著**（真的不同）。例子：新版 97ms±2、舊版 100ms±2，區間 [95,99] vs [98,102] 在 98-99 重疊——所以「快 3%」**可能不顯著**（要更多測量或更小的變異才能確定）。**hyperfine 自動算這個**——它報告 `b ran 1.03 ± 0.04 times faster`，這個 `1.03 ± 0.04` = [0.99, 1.07] **包含 1.0**（1.0 = 沒差），所以**可能根本沒差**！如果報告 `1.10 ± 0.02` = [1.08, 1.12] 不含 1.0，才能說「真的快了約 10%」。這是 benchmark 最重要的統計判斷——**不要把區間重疊（含 1.0）的「改進」當成真的優化**（那可能是雜訊，你會浪費時間「優化」沒用的東西，或基於假改進做錯誤決策）。要得出可信的「真的快了」結論，需要：(1) 足夠的測量次數（更多測量縮小 CI）；(2) 小的變異（控制環境，Ch 0）；(3) 看區間是否分離（不含 1.0）。這是 perf_bench 的核心紀律——**統計顯著性是「真改進」vs「雜訊」的判準**。
 
-benchmark 看到「x1.10 speedup」時想一下：可能 hot function 大幅改進（值得）、或全面小改進（可疑）。
-
-## Benchmark noise 的 "dynamic range"
-
-同 machine 兩次 run 的 CV 是 baseline。如果你的 change 影響 < baseline CV，**基本不可能 detect**。
+## 增加測量的可信度
 
 ```
-Baseline CV: 0.8%
-Your change claims: +0.5%
-→ Below noise floor, not trustable
+怎麼讓 benchmark 結論更可信：
+
+  1. 多次測量（more samples）：
+     測 1 次 = 不可信；測 10-30 次 = 能算統計
+     更多測量 → 更小的信賴區間 → 更能分辨小差異
+        │
+  2. 控制變異（Ch 0）：
+     固定頻率、綁核心、關 ASLR、減少干擾
+     → 變異小 → 信賴區間小 → 小差異也能分辨
+        │
+  3. 處理 outlier：
+     偶爾的超慢值（被中斷、被搶 CPU）
+     → 看 median（中位數，抗 outlier）而非只看 mean
+     → 或排除明顯的 outlier（但要小心，別亂排除）
+        │
+  4. warmup：
+     丟掉前幾次（cache 冷、頻率沒升）
+        │
+  5. 報告完整：
+     不只報「快 5%」，要報「快 5% ± 1%（95% CI），n=20 次」
+        │
+  → 可信的 benchmark = 多次測量 + 控制變異 + 處理 outlier
+    + 看信賴區間/median + 完整報告
+    這樣「優化有效」才站得住腳
 ```
 
-要先量 baseline noise、再 claim improvement > noise。
+> **可信的 benchmark = 多次測量 + 控制變異 + 看 median/CI + 完整報告——這讓「優化有效」站得住腳**。要讓 benchmark 結論可信，綜合運用：(1) **多次測量**（測 1 次不可信，測 10-30 次能算統計；更多測量縮小信賴區間，能分辨更小的差異）；(2) **控制變異**（Ch 0 的固定頻率/綁核心/關 ASLR——變異小則信賴區間小，小差異也能分辨）；(3) **處理 outlier**（偶爾的超慢值——被中斷/被搶 CPU——會扭曲平均，看 **median**（中位數，抗 outlier）比只看 mean 穩健，或謹慎排除明顯 outlier）；(4) **warmup**（丟掉前幾次，cache 冷/頻率沒升的不準）；(5) **完整報告**（不只報「快 5%」，要報「快 5% ± 1%（95% CI），n=20 次，machine/compiler/flag」——讓別人能評估和重現）。這些讓你的「優化有效」**站得住腳**（有統計支撐，不是一次測量的運氣）。對 compiler 工作，這特別重要——你宣稱「這個優化讓 SPEC 提升 X%」，要有統計嚴謹性（多次跑、看 CI、報告條件），否則同行會質疑（「你測幾次？變異多大？顯著嗎？」）。hyperfine 幫你做大部分（多次測量、算統計、A/B 比較的 CI），但你要理解這些概念才能正確解讀和報告。**統計嚴謹性是專業效能工程師 vs 業餘的根本差別**——業餘的「測一次說快了 5%」，專業的「測 20 次，快 5% ± 1%（95% CI），統計顯著，machine/compiler 條件如下」。這是 perf_bench 培養的核心素養——讓效能宣稱可信、可重現、可驗證。
 
-## Aggregate 多個 benchmark 的方法
+## 故意弄壞:把雜訊當成優化
 
-你改 compiler、跑 SPEC 10 個 benchmark：
+```bash
+cd ~/perflab
+# 展示「不嚴謹的測量怎麼把雜訊當成優化」
+cat > bench.c <<'EOF'
+#include <stdio.h>
+int main() {
+    volatile long sum = 0;
+    for (long i = 0; i < 50000000L; i++) sum += i % 7;
+    printf("%ld\n", sum);
+    return 0;
+}
+EOF
+gcc -O2 bench.c -o version_a
+gcc -O2 bench.c -o version_b    # 完全一樣的程式碼！（應該沒差別）
 
-| Benchmark | Before | After | Ratio |
-|-----------|--------|-------|-------|
-| perl      | 100    | 98    | 0.98 |
-| gcc       | 200    | 195   | 0.975 |
-| mcf       | 150    | 155   | 1.033 (worse!) |
-| ...       | ...    | ...   | ... |
+# 不嚴謹：各測一次，可能看到「差異」（其實是雜訊）
+echo "=== 不嚴謹（各測一次）==="
+time ./version_a 2>&1 | grep real
+time ./version_b 2>&1 | grep real
+# version_a: real 0.085s
+# version_b: real 0.082s    ← 「b 快 3.5%」？但它們是一樣的程式！
+# → 這個「差異」純粹是雜訊（一樣的程式不可能有真實差異）
 
-**怎麼總結？**
+# 嚴謹：用 hyperfine 多次測量 + 信賴區間
+echo "=== 嚴謹（hyperfine 多次 + CI）==="
+hyperfine './version_a' './version_b'
+# Summary: './version_b' ran 1.00 ± 0.02 times faster than './version_a'
+# → 1.00 ± 0.02 = [0.98, 1.02]，含 1.0 → 「沒有顯著差異」（正確！）
+#   hyperfine 正確地判斷「它們一樣」（因為真的一樣）
 
-- Geometric mean of ratio：顯示整體 speed-up
-- 列出 regression：mcf 退 3.3% 要 explain
-- Per-benchmark 5% threshold：關心 > 5% 的變化
-
-**做 compiler 的工程師報告格式**：
-
-```
-Overall geomean: 1.02x (improvement)
-Regressions: mcf (-3.3%), xz (-1.5%)
-Improvements: gcc (+2.5%), leela (+4.0%)
-```
-
-## Python 快速統計 template
-
-```python
-import numpy as np
-from scipy import stats
-
-def compare(before, after):
-    m1, m2 = np.mean(before), np.mean(after)
-    std1, std2 = np.std(before, ddof=1), np.std(after, ddof=1)
-    t, p = stats.ttest_ind(before, after, equal_var=False)
-    
-    print(f"Before: {m1:.2f} ± {std1:.2f} (CV {std1/m1*100:.1f}%)")
-    print(f"After:  {m2:.2f} ± {std2:.2f} (CV {std2/m2*100:.1f}%)")
-    print(f"Change: {(m2-m1)/m1*100:+.2f}%")
-    print(f"p-value: {p:.4f} {'*' if p < 0.05 else ''}")
-
-compare(before_times, after_times)
+# → 教訓：不嚴謹的測量（測一次）會把雜訊當成「差異」
+#   嚴謹的測量（多次 + CI）才能正確判斷「有沒有真的差異」
+#   如果你用「測一次」的方法，可能基於雜訊做錯誤的優化決策
 ```
 
-## 常見誤會
-
-1. **「一次 run 夠」**：絕對不夠。至少 5 次。
-2. **「Mean 就好」**：outlier sensitive、用 median 或 trimmed mean。
-3. **「SPEC 分數沒 CI」**：SPEC 規則要求 3 次、取 median。官方沒印 CI、但 rule 隱含 variance 夠小。
-4. **「改進 0.5% 在 benchmark 有意義」**：看 noise。baseline 0.3% noise 才有意義。
-5. **「所有 benchmark 都提升 1% 就是 win」**：要看是否超過 noise、是否有 outlier regression。
+> **兩個一模一樣的程式，測一次會看到「差異」（雜訊），hyperfine 多次測量正確判斷「沒差異」——這是統計嚴謹性的震撼示範**。這個實驗用**兩個完全一樣的程式**（同樣的原始碼編譯）——它們**不可能有真實的效能差異**。但**測一次**（time）會看到「b 比 a 快 3.5%」——這純粹是**雜訊**（一樣的程式怎麼可能有真實差異？）。如果你用「測一次」的方法做效能工作，你會把這種雜訊當成「優化效果」，基於假象做錯誤決策（「我的改動讓程式快 3.5%」其實只是運氣）。**hyperfine 多次測量 + 信賴區間**正確地判斷——`1.00 ± 0.02`（含 1.0）= **「沒有顯著差異」**（正確！因為它們真的一樣）。這個震撼示範了統計嚴謹性的價值——**它讓你分辨「真改進」和「雜訊」**。沒有統計（測一次），你會被雜訊欺騙；有統計（多次+CI），你能正確判斷。這是 perf_bench 最重要的教訓之一——**永遠用嚴謹的測量（多次+統計），永遠看信賴區間判斷顯著性**。當你宣稱「優化有效」，先問自己：測幾次？變異多大？信賴區間含 1.0 嗎？如果只測一次或區間含 1.0，你不能下結論「真的快了」。這個習慣（嚴謹測量 + 統計判斷）是專業效能工程師的核心紀律，也是 perf_bench 整門課反覆強調的——讓效能宣稱建立在可信的統計上，而非一次測量的運氣。Part 1（benchmark 哲學）到此，你有了做可信 benchmark 的方法論基礎：選對 benchmark（Ch 1-3）+ 統計嚴謹（Ch 4）。
 
 ## 動手練習
 
-1. 寫一個簡單 C program、跑 100 次，用 Python 分析：mean、median、stddev、CV。
-2. 改 CPU 頻率 scaling governor，對比 noise 差異。
-3. 用 Python 的 `scipy.stats.ttest_ind` 比較兩組 benchmark 結果。
-4. 對一個 SPEC benchmark 跑 3 次、10 次，比較 CI 收斂速度。
-5. 讀一份 SPEC result 的原始 raw file，辨認 per-run 數字、median、final ratio。
+1. 算 geomean：對一組 benchmark 比值算幾何平均和算術平均，看差別（被大比值扭曲）
+
+2. 看信賴區間：用 hyperfine 比較兩個版本，看 `± X` 是否含 1.0（顯著嗎）
+
+3. 跑「故意弄壞」：兩個一樣的程式，測一次 vs hyperfine 多次，看雜訊 vs 正確判斷
+
+4. 變異與 CI：在控制好 vs 沒控制的環境（Ch 0），看 hyperfine 的變異和 CI 差別
+
+5. 完整報告：寫一份 benchmark 報告，包含 n、平均、CI、machine/compiler/flag
+
+## 本章重點整理
+
+- benchmark 比值用幾何平均（geomean），絕對值用算術平均；搞錯會得出誤導的綜合分數
+- geomean 是 SPEC/Embench 綜合分數的算法（比值的正確綜合，大比值不會扭曲）
+- 信賴區間判斷「差異是否顯著」：區間重疊（含 1.0）= 可能雜訊，不能說「真的快了」
+- 可信 benchmark = 多次測量 + 控制變異 + 處理 outlier（看 median）+ warmup + 完整報告
+- 統計嚴謹性是「真改進 vs 雜訊」的判準——測一次會把雜訊當優化，多次+CI 才正確
 
 ## 自我檢核
 
-- [ ] 我知道何時用 arithmetic mean、何時用 geometric mean
-- [ ] 我能算 confidence interval 跟 CV
-- [ ] 我能做 A/B comparison 的 t-test
-- [ ] 我知道怎麼 tune system 降 noise
-- [ ] 我能判斷 「這改進 real 還是 noise」
+- [ ] 知道 benchmark 比值用 geomean、絕對值用算術平均，為什麼
+- [ ] 會用信賴區間判斷差異是否顯著（區間是否含 1.0）
+- [ ] 知道怎麼增加測量可信度（多次/控制變異/median/報告）
+- [ ] 理解為什麼測一次不可信（雜訊）
+- [ ] 能寫一份統計嚴謹的 benchmark 報告
 
-下一章切到硬體側 — CPU 微架構速成，讓你聽得懂 IPC、ROB、cache hierarchy 這些詞。
+## 延伸閱讀
 
-→ [Ch 5 CPU 微架構速成](./05-microarch-primer.md)
+### 文章
+
+- **[Statistically rigorous benchmarking](https://easyperf.net/blog/2019/12/30/Cpu-Microarchitecture-And-Performance-Counters)** — Denis Bakhvalov / 各種統計 benchmark 文章
+  - **這篇說什麼**：benchmark 的統計嚴謹性
+  - **為什麼值得讀**：本章統計的實用版
+
+- **[Why geometric mean for benchmarks](https://dl.acm.org/doi/10.1145/5666.5673)** — Fleming & Wallace（經典論文）
+  - **核心貢獻**：為什麼 benchmark 比值要用幾何平均（學術論證）
+  - **為什麼值得讀**：geomean 的理論基礎
+
+### 書籍
+
+- **《The Art of Computer Systems Performance Analysis》— Raj Jain**
+  - **讀哪幾章**：統計、信賴區間、實驗設計那幾章
+  - **這本書的定位**：效能分析的統計權威
+
+### 工具
+
+- **[hyperfine](https://github.com/sharkdp/hyperfine)** — 自動做這些統計
+  - **為什麼值得讀**：它的輸出（mean ± σ、A/B 比較的 CI）就是本章的實踐
+
+Part 1（Benchmark 哲學）到此完成——你有了做可信 benchmark 的方法論（選對類型、避陷阱、統計嚴謹）。接下來 Part 2 進入硬體——CPU 微架構速成和效能計數器，理解「數字背後的硬體」。
+
+→ [Ch 5 CPU 微架構速成：pipeline / OoO / ROB / cache](./05-microarch-primer.md)

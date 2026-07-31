@@ -1,303 +1,215 @@
 # Ch 3 — Coremark / Embench：RISC-V 與嵌入式主力
 
-> 目標：理解 Coremark 跟 Embench 兩個 embedded / RISC-V 常用 benchmark 的結構、差異、跑法。這比 SPEC 更常在 RISC-V 社群被引用。
+> **目標**：理解 Coremark 和 Embench 兩個嵌入式/RISC-V 常用 benchmark 的結構、差異、跑法（這章能實際動手跑）、以及 Coremark 的爭議（為什麼它被批評、Embench 為何誕生）。這兩個在 RISC-V 社群比 SPEC 更常被引用——它們免費、輕量、適合嵌入式，是嵌入式效能討論的共同語言。
 
-## 為什麼這兩個重要
+> **環境**：Linux，gcc（可跑在 x86 或 RISC-V/QEMU）。Coremark 是開源的（Ch 0 已 clone）。
 
-RISC-V 的 embedded / low-power 市場重要。SPEC CPU 對 MCU 太大：
+## 為什麼嵌入式用 Coremark/Embench 而非 SPEC？
 
-- SPEC mcf_r 需要 4 GB RAM
-- MCU 可能只 512 KB
-- SPEC 3 小時跑完，MCU perf 量測常要 10 秒尺度
+SPEC CPU（Ch 2）是業界標準，但它**太重**——一份 license 幾千美元、跑一次要幾小時、需要不少記憶體。對嵌入式（微控制器、小型 SoC）和 RISC-V 社群，這不實際——嵌入式裝置可能只有幾 KB 記憶體，跑不動 SPEC；RISC-V 社群是開源的，不會買付費 license。
 
-**Coremark + Embench** 填這個空缺。
+所以嵌入式/RISC-V 用 **Coremark**（最常被引用）和 **Embench**（更現代）——它們**免費、開源、輕量**（能在小裝置上跑）、聚焦嵌入式 workload。當你看到「這個 MCU 的 Coremark 分數是 X」「這個 RISC-V core 的 Coremark/MHz 是 Y」，那就是嵌入式效能的共同語言。這章講它們的結構和跑法（能實際動手），以及 Coremark 的爭議（為什麼有 Embench）。
 
-## Coremark：最簡單的標準 benchmark
-
-**Coremark** 由 EEMBC（Embedded Microprocessor Benchmark Consortium）2009 推出。取代老舊的 Dhrystone。
-
-### 特點
-
-- **單檔 C code**，~3000 行
-- **免費**
-- **執行時間可調整**（通常跑 10 秒以上）
-- **不用 libc 特定 function**（minimal dependency）
-- **single-threaded**（也有 CoremarkPro 是多執行緒版）
-
-### 測什麼
-
-Coremark 內部跑三種 workload：
-
-1. **List processing**：linked list search, sort, reverse
-2. **Matrix math**：int 矩陣運算
-3. **State machine**：CRC、input parsing
-
-用這三種 cover 典型 embedded workload。
-
-### 分數：CoreMark/MHz
+## 先建立直覺:輕量的嵌入式 benchmark
 
 ```
-Coremark 跑完印出：
-Total ticks      : 12345678
-Total time (secs): 12.34
-Iterations/Sec   : 8112.34
-Iterations       : 100000
-CoreMark 1.0 : 8112.34 / GCC 11.2 -O2 ...
+Coremark / Embench 的定位（vs SPEC）：
+
+  SPEC（Ch 2）：重、付費、跑幾小時、要不少記憶體
+    → 評估桌面/伺服器 CPU
+        │
+  Coremark：輕、免費、跑幾秒、極小記憶體
+    單一程式，含：list 處理、矩陣運算、state machine、CRC
+    → 評估嵌入式 MCU、簡單的 core
+    指標：Coremark 分數、Coremark/MHz（每 MHz 的分數，比較核心效率）
+        │
+  Embench：輕、免費、更現代、一籃子小程式
+    多個真實的嵌入式程式（不是單一合成程式）
+    → 改善 Coremark 的缺點（更代表真實嵌入式 workload）
+        │
+  → 嵌入式/RISC-V 用 Coremark（最常引用）和 Embench（更現代）
+    輕量、免費、適合小裝置
+    Coremark/MHz 是比較「核心微架構效率」的常見指標
 ```
 
-**CoreMark/MHz = Score / CPU clock MHz**。這是歸一化分數：
+關鍵心智：Coremark/Embench 是**輕量、免費、適合嵌入式**的 benchmark（vs SPEC 的重、付費）。**Coremark** 是單一合成程式（list/矩陣/state machine/CRC），最常被引用，指標是 **Coremark/MHz**（每 MHz 的分數，比較核心效率）。**Embench** 是更現代的一籃子小程式（改善 Coremark 的缺點）。它們是嵌入式效能的共同語言。
 
-```
-SiFive U74 @ 1200 MHz: Coremark = 5040
-                      Coremark/MHz = 4.2
-```
-
-**越高越好**。典型值：
-
-- Cortex-M0: ~1.7
-- Cortex-M4: ~3.4
-- Cortex-M7: ~5.0
-- RISC-V SiFive U74: ~4.2
-- RISC-V SiFive P870: ~9.0 (high-end)
-
-### 缺點
-
-- 太小 → 完全 fit L1 cache → 測不到 memory system
-- Pattern 簡單 → compiler 可以過度 optimize
-- 只一個 workload → 不能代表 broad coverage
-
-**SiFive 內部從不單靠 Coremark**。但 customer marketing 常看它。
+> Coremark/Embench 是 Ch 1 的 benchmark（介於 micro 和 macro 之間——比 micro 完整，比 SPEC 輕）。分數計算也用 geomean（Ch 4）。
 
 ## 跑 Coremark
 
 ```bash
-git clone https://github.com/eembc/coremark
-cd coremark
-make PORT_DIR=linux64 XCC=riscv64-linux-gnu-gcc \
-     XCFLAGS="-O2 -march=rv64gc" \
-     ITERATIONS=500000
+cd ~/perflab/coremark    # Ch 0 clone 的
 
-qemu-riscv64 ./coremark.exe
-```
-
-或 host native：
-
-```bash
+# === 編譯並跑 Coremark ===
+# Coremark 在不同平台有不同的 port（porting layer）
+# Linux 用 linux64 port
+make PORT_DIR=linux64 ITERATIONS=100000
+# 或直接 make（用預設 port）
 make
-./coremark.exe
+
+# 跑（會印出 Coremark 分數）
+./coremark.exe 0x0 0x0 0x66 0 7 1 2000 > run.log
+cat run.log
+# CoreMark 1.0 : 12345.67 / GCC ... / Heap
+#   12345.67 = Coremark 分數（每秒迭代數的相關值）
+# Total ticks, Total time, Iterations 等
+
+# === Coremark/MHz（比較核心效率的關鍵指標）===
+# Coremark 分數 / CPU 頻率(MHz) = 每 MHz 的 Coremark
+# 例：12345 分 @ 3000 MHz → 4.1 Coremark/MHz
+# → 這個比較「核心微架構的效率」（不受頻率影響）
+#   RISC-V core 常報 Coremark/MHz 來比較設計（如 3.5 vs 4.5）
+echo "Coremark/MHz = 分數 / 頻率MHz"
 ```
 
-跑出來：
-
 ```
-2K performance run parameters for coremark.
-...
-CoreMark 1.0 : 12345.67 / GCC 11.2.0 -O2 ...
-```
+Coremark 的組成（單一程式的幾個部分）：
 
-## Coremark 的「PORT」
-
-每個平台要有個 `port` 資料夾：
-
-```
-coremark/
-├── core_main.c
-├── coremark.h
-├── linux64/            ← for Linux x86_64
-├── barebones/          ← for bare-metal
-├── ...
+  1. Linked list 處理：指標追逐、排序（測記憶體存取、分支）
+  2. 矩陣運算：乘法、加法（測整數運算）
+  3. State machine：解析輸入（測分支、控制流）
+  4. CRC：循環冗餘檢查（測位元運算）
+        │
+  → 涵蓋嵌入式常見的運算類型（list/矩陣/狀態機/位元）
+    單一程式、極小、可重現
+    設計目標：代表「嵌入式 CPU 的一般運算能力」
 ```
 
-自己的 port 要實作：
+> **Coremark/MHz（每 MHz 的分數）是比較「核心微架構效率」的關鍵指標——它排除頻率，純比設計**。Coremark 是單一合成程式，含嵌入式常見的運算：linked list 處理（指標追逐、排序——測記憶體存取和分支）、矩陣運算（測整數運算）、state machine（測分支控制流）、CRC（測位元運算）。跑它得到 **Coremark 分數**。但最重要的指標是 **Coremark/MHz**——分數除以 CPU 頻率，得到「每 MHz 的 Coremark」。為什麼這個重要？因為它**排除了頻率的影響，純比較核心的微架構效率**。一個 5GHz 的 CPU 和 1GHz 的 CPU，Coremark 分數當然前者高（頻率高），但這不代表前者的「設計」更好——可能只是頻率高。**Coremark/MHz** 讓你比較「同樣頻率下，哪個核心設計更有效率」——這對 CPU 設計和 RISC-V core 的比較很關鍵（RISC-V core 常報 Coremark/MHz，如「我們的 core 是 4.5 Coremark/MHz，比競品的 3.5 好」——這是純設計效率的比較，不靠拉高頻率）。對 compiler 工作也相關——compiler 優化能提升 Coremark（同頻率下跑更快），這也反映在 Coremark/MHz。理解這個指標，你能參與「核心效率」的討論（Coremark/MHz 是 SiFive 等 RISC-V 廠商常用的）。能實際跑 Coremark（開源、輕量），這章建議動手跑一次，體會嵌入式 benchmark。
 
-- `core_portme.h`：timing API、size typedef
-- `core_portme.c`：start/stop timer、get time
-
-RISC-V MCU 常需自己寫 port。
-
-## Embench：新一代 RISC-V 友好 benchmark
-
-**Embench** 是 2019 年 release 的 open-source benchmark，設計給現代 embedded。RISC-V 社群重點推動。
-
-### 特點
-
-- **開源**（Apache 2）
-- **多個 benchmark**（不是單一 workload）
-- **針對 MCU**：小於 1MB 、無 libc/OS 依賴
-- **測 code size + speed**
-- **設計新、ARM 不佔 legacy 優勢**
-
-### 為什麼要新的
-
-Coremark 被 ARM 優化了十年、pattern 已經被廠商 exploit。Embench team 想重開。
-
-### 結構
-
-Embench 2.0 包含約 20 個 benchmark：
+## Coremark 的爭議
 
 ```
-aha-mont64      Montgomery modular math
-crc32           CRC
-cubic           Solve cubic equations
-edn             Vector arithmetic
-huffbench       Huffman encoding
-matmult-int     Integer matrix multiply
-md5sum          MD5 hash
-minver          Matrix inversion
-nbody           N-body simulation
-nettle-aes      AES
-nettle-sha256   SHA-256
-nsichneu        Petri net simulator
-picojpeg        JPEG decode
-primecount      Prime counting
-qrduino         QR code
-sglib-combined  Data structure library
-slre            Regex engine
-st              Statistics
-statemate       State machine
-tarfind         TAR parser
-ud              LU decomposition
-wikisort        Sort algorithm
+Coremark 為什麼被批評（理解 Embench 為何誕生）：
+
+  1. 太小、太合成：
+     單一小程式，不代表真實的嵌入式 workload 多樣性
+        │
+  2. 容易被 compiler「特殊優化」（gaming）：
+     Coremark 的某些迴圈有已知的 idiom
+     compiler 可以針對性優化（甚至有人質疑「為 Coremark 調」）
+     → 高 Coremark 不一定代表真實效能好
+        │
+  3. 沒有記憶體/cache 壓力：
+     workload 小，幾乎全在 cache 裡
+     → 不反映真實程式的記憶體行為
+        │
+  4. 單一分數，不夠細：
+     一個數字，看不出「在不同 workload 的表現」
+        │
+  → Embench 為了改善這些而誕生：
+    一籃子真實的嵌入式程式（多樣）
+    更難被單一 idiom gaming
+    更代表真實嵌入式 workload
+        │
+  → Coremark 仍廣泛使用（歷史、簡單、可比），但要知道它的限制
+    嚴謹的嵌入式效能評估該用 Embench（更現代）
 ```
 
-涵蓋 math / crypto / parsing / compression 等。
+> **Coremark 被批評「太小、易被 compiler gaming、沒記憶體壓力」——Embench 為改善這些而生**。Coremark 雖然廣泛使用，但有真實的缺點：(1) **太小太合成**——單一小程式，不代表真實嵌入式 workload 的多樣性；(2) **容易被 compiler gaming**——Coremark 的某些迴圈有已知的 idiom（pattern），compiler 可以針對性優化（業界甚至有「為 Coremark 調 compiler」的質疑），所以**高 Coremark 不一定代表真實效能好**（同 Ch 2 的 gaming 問題）；(3) **沒有記憶體/cache 壓力**——workload 小，幾乎全在 cache 裡，不反映真實程式的記憶體行為（真實嵌入式程式可能有 cache miss）；(4) **單一分數不夠細**——一個數字看不出不同 workload 的表現。**Embench** 為改善這些而誕生（由 RISC-V 社群和學界推動）——它是**一籃子真實的嵌入式程式**（多樣，不是單一合成程式），更難被單一 idiom gaming，更代表真實嵌入式 workload。**現狀**：Coremark 仍廣泛使用（歷史悠久、簡單、有大量可比的歷史數據），但**嚴謹的嵌入式效能評估該用 Embench**（更現代、更代表真實）。理解這個——當你看到 Coremark 分數，知道它的限制（可能被 gaming、不反映記憶體行為）；當你要做嚴謹評估，考慮 Embench（或多個 benchmark）。這呼應 Ch 2 的核心教訓——**任何單一 benchmark 都有限制，要理解它測什麼、不測什麼、能不能被 gaming**。沒有完美的 benchmark，理解每個的限制才能正確使用。
 
-### 分數
-
-Embench 回報兩個 metric：
-
-1. **Speed**：跑 benchmark 的相對時間（normalized）
-2. **Size**：binary 的 code size（normalized）
-
-綜合可以反映 "same binary size, how fast" 的 trade-off。
-
-### 跑 Embench
+## Embench:更現代的選擇
 
 ```bash
+# Embench（更現代的嵌入式 benchmark 套件）
+cd ~/perflab
 git clone https://github.com/embench/embench-iot
 cd embench-iot
 
-# RISC-V baremetal
-./build_all.py --arch=riscv32 --chip=generic --board=riscv32
-./run_all.py --target-module=run_spike
+# Embench 是一籃子真實的嵌入式程式
+ls src/
+# aha-mont64  crc32  cubic  edn  huffbench  matmult-int  
+# minver  nbody  nettle-aes  nsichneu  picojpeg  qrduino  
+# sglib-combined  slre  st  statemate  ud  wikisort
+# → 18 個真實的嵌入式程式（壓縮/加密/JPEG/QR碼/排序...）
+#   比 Coremark 的單一程式多樣得多
 
-# Linux userspace RISC-V
-./build_all.py --arch=native --chip=generic --board=default \
-    --cc=riscv64-linux-gnu-gcc \
-    --cflags="-O2 -march=rv64gc"
-./run_all.py --target-module=run_native
+# 跑 Embench（需要設定 toolchain，這裡概念示範）
+# python3 build_all.py --arch native --chip default --board default
+# python3 benchmark_speed.py --target-module run_native
+# → 對每個子 benchmark 跑，算 geomean（Ch 4）
+
+# Embench 的指標：相對於參考的 geomean（類似 SPEC 的方法）
+# → 一籃子程式的綜合分數，比 Coremark 單一分數更代表真實
 ```
 
-Build 跟 run 分離。`run_spike` 跑 RISC-V simulator。
+> **Embench 是「一籃子真實嵌入式程式」（18 個：壓縮/加密/JPEG/QR/排序…），比 Coremark 單一合成程式更代表真實 workload**。Embench 改善了 Coremark 的缺點——它是**一籃子真實的嵌入式程式**（18 個子 benchmark：CRC、加密 AES、JPEG 解碼、QR 碼、排序 wikisort、物理模擬 nbody…），每個是真實領域的程式。這比 Coremark 的單一合成程式**多樣得多**——更難被單一 idiom gaming（要 game 18 個不同的程式很難）、更代表真實嵌入式 workload 的多樣性。Embench 的指標是「相對於參考的 geomean」（類似 SPEC 的方法，Ch 4）——一籃子程式的綜合分數。它由 RISC-V 社群和 Embecosm 等推動，是嵌入式 benchmark 的現代選擇。**選擇**：Coremark（歷史、簡單、大量可比數據、快速比較）vs Embench（現代、多樣、更代表真實、更嚴謹）。對 RISC-V/嵌入式效能工作，理解兩者——Coremark 是「行業慣例的快速指標」，Embench 是「嚴謹評估的現代選擇」。實務上常兩者都報（Coremark 給快速比較和歷史對照、Embench 給嚴謹的多樣 workload 評估）。這也展示了 benchmark 的演進——從單一合成（Coremark）到一籃子真實程式（Embench/SPEC），追求更好的「代表真實效能」。理解這個演進和各 benchmark 的取捨，你能在嵌入式效能工作中選對工具、正確解讀數字。
 
-## Coremark vs Embench 選擇
+## 故意弄壞:compiler flag 對 Coremark 的影響
 
-| 議題 | Coremark | Embench |
-|------|----------|---------|
-| 代表性 | 低（單一 workload） | 高（多 workload） |
-| 成熟度 | 高（10+ 年）| 中（5 年）|
-| 客戶認受 | 廣（傳統） | 增加中 |
-| Code size metric | 無 | 有 |
-| 作弊風險 | 高（compiler specific）| 中 |
-| RISC-V 社群推 | 歷史 | 是 |
+```bash
+cd ~/perflab/coremark
+# 展示「compiler flag 對 benchmark 分數的巨大影響」（Ch 2 的誤用之一）
 
-**SiFive 雙跑**。Coremark 給傳統客戶、Embench 給技術對話。
+# 用不同 flag 編譯 Coremark，比較分數
+for flags in "-O0" "-O2" "-O3" "-O3 -march=native"; do
+    echo "=== flags: $flags ==="
+    make clean > /dev/null 2>&1
+    make PORT_DIR=linux64 XCFLAGS="$flags" > /dev/null 2>&1
+    ./coremark.exe 0x0 0x0 0x66 0 7 1 2000 2>/dev/null | grep CoreMark
+done
+# -O0:                CoreMark 1.0 : 3000   ← 不優化，慢
+# -O2:                CoreMark 1.0 : 11000  ← 優化，快很多
+# -O3:                CoreMark 1.0 : 11500  ← 比 O2 略快（或差不多）
+# -O3 -march=native:  CoreMark 1.0 : 12000  ← 用本機指令集，再快一點
+# → 同一個 Coremark，不同 flag 分數差 4 倍！
+#   這證明 Ch 2 的誤用：「比較 benchmark 分數要用相同的 flag」
+#   「CPU A 的 Coremark 比 B 高」可能只是 A 用了更好的 flag/compiler
 
-## 相關 micro benchmark
-
-### Dhrystone
-
-1984 年，老到不能老。現在不太該用，但某些 MCU datasheet 還印 Dhrystone 分數。
-
-```
-DMIPS = Dhrystone MIPS
-DMIPS/MHz = 1.0 (VAX 11/780 reference)
-Cortex-M0: 0.9
-Cortex-M4: 1.25
-```
-
-### Whetstone
-
-FP 版 Dhrystone。更老。幾乎不用。
-
-### BEEBS / Milepost
-
-不那麼 mainstream 的 embedded benchmark。RISC-V 社群很少提。
-
-## 本課不會跑完整的 SPEC，但會跑這些
-
-Coremark / Embench 的小尺寸讓它們適合本課的 hands-on：
-
-- 在 QEMU 跑: ~30 秒
-- 在 SBC 上跑: ~1-10 分鐘
-- Compiler flag iterate 快
-
-**本課 Practice A 會讓你寫一份 Coremark report**。
-
-## Compiler flag 對 Coremark 的影響
-
-實測 SiFive U74 的例子：
-
-```
--O0:             900 Coremark
--O1:            3800 Coremark
--O2:            4500 Coremark
--O2 -mtune=...: 4600 Coremark
--O3:            4650 Coremark
--O2 -flto:      4700 Coremark
+# 重點：報 Coremark 分數一定要說 compiler 和 flag
+#   否則數字無法比較（compiler/flag 的影響可能比 CPU 設計還大）
 ```
 
-`-O2` 到 `-O3` 差距小。但 `-flto` 多 2-3%。
-
-**這些數字你自己測 → 建立 intuition**。書本數字會過時。
-
-## 真實 Coremark 數字解讀
-
-**注意「per MHz」**：
-
-- Coremark 不等於 CoreMark/MHz
-- 頻率越高、CoreMark 絕對值越高
-- CoreMark/MHz 才比較架構
-
-```
-SiFive U74 @ 1.2 GHz: Coremark 5000, Coremark/MHz 4.2
-SiFive P870 @ 3.0 GHz: Coremark 18000, Coremark/MHz 6.0
-```
-
-U74 實際分數高於老 Cortex-M7，但 P870 per-MHz 才真的強。
-
-## 關於 Dhrystone / Coremark 的「unreliable」論
-
-資深 performance engineer 對 Coremark 的看法：
-
-> Coremark 是「給 marketing 的東西」。真 benchmark 用 SPEC / 客戶 workload。
-
-有道理，但也不完全：對 MCU / constrained system 無可替代。**關鍵是別把 Coremark 分數當絕對性能**。
+> **同一個 Coremark，不同 compiler flag 分數差 4 倍——這證明「比較 benchmark 要用相同的 compiler/flag」**。這個實驗展示 Ch 2 的核心教訓在 Coremark 上的體現——**compiler flag 對 benchmark 分數的影響巨大**。同一個 Coremark 程式，`-O0`（不優化）和 `-O3 -march=native`（優化+本機指令集）分數差**4 倍**！這意味著：**「CPU A 的 Coremark 比 CPU B 高」可能只是 A 用了更好的 compiler 或 flag**，不是 A 的設計更好。所以報 Coremark（或任何 benchmark）分數，**一定要說清楚 compiler 版本和 flag**——否則數字無法比較（compiler/flag 的影響可能比 CPU 設計差異還大）。這是 perf_bench 反覆強調的紀律——**benchmark 數字要在「完全相同的條件」下才能比較**（Ch 2 的誤用）。對 RISC-V/嵌入式效能工作，這特別重要——比較不同 RISC-V core 的 Coremark/MHz 時，要確保用**相同的 compiler 和 flag**（否則比的是 compiler 不是 core）。這也是為什麼正式的 benchmark 報告（SPEC、Embench）都嚴格要求揭露 compiler/flag——透明度讓比較公平。對 compiler 工作，這個實驗也展示了 compiler 優化的價值（-O0 到 -O2 提升 3.6 倍）——這正是 compiler 團隊的貢獻。但要警惕 gaming（針對 benchmark 的特殊優化）。理解 compiler/flag 對 benchmark 的巨大影響，你做和解讀 benchmark 時就會謹慎地控制和揭露這些條件。
 
 ## 動手練習
 
-1. 下載 Coremark，用 x86 native 跑、記分數。
-2. Cross-compile RISC-V、用 qemu 跑、對比分數。
-3. 改 flag：`-O0`、`-O1`、`-O2`、`-O3`、`-O2 -flto`，各跑一次、記錄。
-4. Clone Embench、build + run 一個 benchmark（不用全部）。
-5. 讀 SiFive 某 core 的 datasheet，找 Coremark/MHz 數字、對比 ARM 同級 core。
+1. 跑 Coremark：編譯並跑 Coremark，得到分數，算 Coremark/MHz（分數/你的頻率）
 
-## 常見誤會
+2. flag 影響：用不同 flag（-O0/-O2/-O3/-march=native）編譯 Coremark，比較分數（差幾倍）
 
-1. **「Coremark 分數高 = 實際 workload 快」**：不直接。Coremark 是 single-workload、代表性有限。
-2. **「Dhrystone 還在用」**：極少。遇到先 check 這 datasheet 寫作時間。
-3. **「Embench 完全取代 Coremark」**：長期可能、短期不會。客戶 habit 難改。
-4. **「-O3 永遠比 -O2 好」**：Coremark 上差距小、某些 benchmark -O3 反而差（code size 問題）。
-5. **「Coremark 簡單所以可靠」**：反過來。簡單 → pattern 少 → 容易被 compiler over-fit。
+3. 看 Coremark 組成：讀 Coremark 的原始碼，找出 list/矩陣/state machine/CRC 那幾部分
+
+4. 跑 Embench（選做）：設定 Embench，跑幾個子 benchmark，對比 Coremark 的單一程式
+
+5. 思考爭議：理解 Coremark 為什麼被批評、Embench 怎麼改善（多樣 vs 單一、gaming）
+
+## 本章重點整理
+
+- Coremark/Embench 是嵌入式/RISC-V 的主力 benchmark（vs SPEC）：免費、輕量、適合小裝置
+- Coremark 是單一合成程式（list/矩陣/state machine/CRC）；Coremark/MHz 是比較核心微架構效率的關鍵指標（排除頻率）
+- Coremark 被批評：太小太合成、易被 compiler gaming、沒記憶體壓力——Embench 為改善這些而生
+- Embench 是一籃子真實嵌入式程式（18 個），更多樣、更難 gaming、更代表真實
+- compiler flag 對 benchmark 分數影響巨大（差 4 倍）——比較一定要用相同 compiler/flag
 
 ## 自我檢核
 
-- [ ] 我能 build + run Coremark 並解讀分數
-- [ ] 我知道 CoreMark/MHz 跟 CoreMark 絕對值的差別
-- [ ] 我能 build + run Embench 的至少一個 benchmark
-- [ ] 我能 justify 「什麼時候該用 Coremark、什麼時候 Embench」
-- [ ] 我知道為什麼 resource-constrained device 不用 SPEC
+- [ ] 知道為什麼嵌入式用 Coremark/Embench 而非 SPEC
+- [ ] 能跑 Coremark，理解 Coremark/MHz 的意義（核心效率，排除頻率）
+- [ ] 知道 Coremark 的爭議（gaming、太小、沒記憶體壓力）
+- [ ] 知道 Embench 怎麼改善 Coremark（一籃子真實程式）
+- [ ] 理解 compiler/flag 對 benchmark 分數的巨大影響
 
-下一章進統計基本功 — 有了 benchmark 數字，怎麼嚴謹處理？
+## 延伸閱讀
 
-→ [Ch 4 統計基本功：geomean / CI / noise 控制](./04-statistical-basics.md)
+### 官方
+
+- **[Coremark](https://www.eembc.org/coremark/)** + **[Embench](https://www.embench.org/)** — EEMBC / Embench
+  - **讀哪裡**：Coremark 的 run rules、Embench 的設計理念
+  - **為什麼值得讀**：兩個 benchmark 的權威；Embench 的網站解釋了為什麼要改善 Coremark
+
+### 文章
+
+- **[Coremark 的問題](https://www.sifive.com/blog/) / 各種 Coremark 批評文章**
+  - **這篇說什麼**：Coremark 為什麼不夠好、Embench 的動機
+  - **為什麼值得讀**：理解 benchmark 演進的脈絡
+
+### 程式碼
+
+- **[Coremark GitHub](https://github.com/eembc/coremark)** + **[Embench-IOT](https://github.com/embench/embench-iot)**
+  - **為什麼值得讀**：實際的 benchmark 程式碼，研究它們的結構
+
+下一章是 Part 1 的最後——統計基本功。為什麼用幾何平均、怎麼算信賴區間、怎麼判斷「差異是否顯著」。這是讓你的 benchmark 數字「可信」的基礎。
+
+→ [Ch 4 統計基本功：geomean、CI、noise 控制](./04-statistical-basics.md)

@@ -1,271 +1,253 @@
 # Ch 9 — Flame graph 與 on-CPU profiling
 
-> 目標：學會用 FlameGraph 視覺化 perf profile、辨認 hot function + call stack。這是 profile 分析的標準圖型，SiFive / Google / Netflix 都用。
+> **目標**：用 flame graph 視覺化 perf profile——把 perf record 的取樣資料變成一張圖，一眼看出熱點和呼叫關係。理解怎麼產生、怎麼讀（寬度=佔 CPU、Y 軸=呼叫堆疊）、differential flame graph（比較兩個版本的差異）、以及它為什麼是 profile 分析的標準視覺化。比 perf report 的文字列表直觀，複雜程式特別有用。
 
-## 什麼是 flame graph
+> **環境**：Linux，perf + FlameGraph 工具（Ch 0 已 clone）。
 
-**Flame graph** 是 Brendan Gregg 2011 年發明的視覺化方法。
+## 為什麼需要 flame graph？
+
+Ch 7 的 `perf report` 給文字列表（哪個函式吃多少 CPU）——對簡單程式夠用。但對**複雜程式**（很多函式、深的呼叫堆疊、複雜的呼叫關係），文字列表難看出全貌——你看到一堆函式各佔幾 %，但難理解「整體的時間分布」和「呼叫關係」。
+
+**flame graph**（火焰圖，Brendan Gregg 發明）把 profile 視覺化——一張圖一眼看出「時間花在哪、誰呼叫的、整體分布」。它是 profile 分析的**標準視覺化**——SiFive、Google、Netflix 都用。更強的是 **differential flame graph**（比較兩個版本，看「優化讓哪裡變快/變慢」）——這對 compiler 工作（驗證優化效果、看 regression）極有用。這章把 flame graph 用熟，這是 profile 分析的標準工具。
+
+> flame graph 在 observability_tools 課的 Ch 12 介紹過。這裡從「效能優化和 compiler 工作」角度，更注重 differential flame graph（比較版本）。
+
+## 先建立直覺:火焰圖怎麼讀
 
 ```
-┌─────────────────────────────────────────────────┐
-│                      main                        │
-├──────────────────────┬──────────────────────────┤
-│        foo           │        bar                │
-├────────┬─────────────┼─────┬────────┬───────────┤
-│  sub1  │    sub2     │baz  │ baz    │    qux    │
-├─┬──────┼────┬────────┼──┬──┼───┬────┼───┬───────┤
-│ │ sub11│inner|mem_op │a │b │...│....│...│  ...  │
-└─┴──────┴────┴────────┴──┴──┴───┴────┴───┴───────┘
+flame graph（火焰圖）的讀法：
+
+  ┌────────────────────────────────────────┐
+  │           compute (70%)                 │ ← 寬度 = 佔 CPU 比例
+  │  ┌──────────────────────────────────┐  │
+  │  │  process (90%)                   │  │ ← Y 軸 = 呼叫堆疊深度
+  │  │  ┌────────┐  ┌─────────────────┐ │  │
+  │  │  │parse20%│  │ main            │ │  │
+  │  │  └────────┘  └─────────────────┘ │  │
+  │  └──────────────────────────────────┘  │
+  └────────────────────────────────────────┘
+        │
+  讀法：
+    X 軸（寬度）：函式佔 CPU 的比例（越寬越吃 CPU）★ 找寬的
+    Y 軸（高度）：呼叫堆疊（下面呼叫上面，塔頂是實際執行的）
+    顏色：通常隨機（不代表意義，只是區分）
+        │
+  → 找「寬的塔」= 熱點（佔 CPU 多的）
+    塔頂的寬函式 = 實際在執行的熱點
+    一圖看出「整體時間分布 + 呼叫關係」
+        │
+  互動（SVG）：可點擊放大、搜尋函式
 ```
 
-**Y 軸**：call stack 深度（往上越深）
-**X 軸**：time / sample count（寬 = 耗時）
-**顏色**：通常隨機（只是為了區分 function）
-
-**找「最寬的火焰」** = hottest 的 function + call stack。
+關鍵心智：flame graph 把 profile 視覺化——**X 軸寬度 = 函式佔 CPU 比例**（找寬的塔=熱點）、**Y 軸高度 = 呼叫堆疊深度**（下面呼叫上面，塔頂是實際執行的）、顏色隨機（只是區分）。一圖看出「整體時間分布 + 呼叫關係」，比文字列表直觀。
 
 ## 產生 flame graph
 
-三步：
+```bash
+cd ~/perflab
+gcc -O2 -g -fno-omit-frame-pointer surprise.c -o surprise 2>/dev/null
+
+# === 產生 flame graph ===
+# 1. perf record 取樣（要 call graph）
+perf record -F 999 -g ./surprise > /dev/null 2>&1
+
+# 2. perf script 輸出 + FlameGraph 工具轉成 SVG
+perf script | ~/FlameGraph/stackcollapse-perf.pl | ~/FlameGraph/flamegraph.pl > flame.svg
+
+# 3. 用瀏覽器開 flame.svg（互動式：點擊放大、搜尋）
+# firefox flame.svg
+
+# === 一行產生（方便）===
+perf record -F 999 -g -- ./surprise > /dev/null 2>&1
+perf script | ~/FlameGraph/stackcollapse-perf.pl | ~/FlameGraph/flamegraph.pl > flame.svg
+echo "Open flame.svg in browser"
+
+# 看 flame graph：
+# - 找最寬的塔 = 熱點（如 sprintf 相關的塔很寬 = 它吃最多 CPU）
+# - 塔的高度 = 呼叫堆疊（main → ... → sprintf）
+# - 點擊某個塊 = 放大看細節
+```
+
+```
+flame graph 的優勢（vs perf report 文字）：
+
+  perf report（文字）：
+    一列一個函式 + overhead %
+    對「簡單程式」夠用
+    但複雜程式難看出「整體分布 + 呼叫關係」
+        │
+  flame graph（視覺）：
+    一圖看出整體（哪些寬=熱點、呼叫關係、分布）
+    複雜程式（深堆疊、多函式）一目了然
+    互動（點擊放大、搜尋）
+        │
+  → flame graph 適合複雜程式的整體理解
+    perf report 適合快速看 top 函式
+    兩者互補（flame graph 看全貌、perf report 看精確數字）
+```
+
+> **flame graph 適合複雜程式的「整體理解」——一圖看出時間分布和呼叫關係，比 perf report 文字列表直觀**。產生 flame graph 的流程：`perf record -g`（取樣+call graph）→ `perf script`（輸出取樣資料）→ FlameGraph 工具的 `stackcollapse-perf.pl`（折疊堆疊）+ `flamegraph.pl`（產生 SVG）→ 用瀏覽器開（互動式）。讀法是「找寬的塔」（熱點）。flame graph 比 `perf report`（文字列表）的優勢在**複雜程式**——對有很多函式、深呼叫堆疊、複雜呼叫關係的程式，文字列表難看出「整體的時間分布和呼叫關係」（你看到一堆函式各佔幾%，但腦中難拼出全貌），而 flame graph **一圖看盡**（哪些塔寬=熱點、呼叫關係怎樣、時間怎麼分布）。互動的 SVG 還能點擊放大（聚焦某個子樹）、搜尋函式（高亮所有匹配的）。**兩者互補**——flame graph 看全貌和呼叫關係、perf report 看精確的數字。對 compiler 工作，flame graph 幫你理解「整個程式的時間分布」（哪些是熱點、優化哪裡影響大），這比逐函式看數字更有全局觀。記住產生 flame graph 需要正確的編譯選項（`-g -fno-omit-frame-pointer`，Ch 7——讓 call graph 準確，否則塔的堆疊不對）。flame graph 是 profile 分析的標準視覺化，學會讀它（找寬的塔）和產生它（perf + FlameGraph 工具），你看複雜程式的效能就像看地圖。
+
+## differential flame graph:比較版本
 
 ```bash
-# 1. Collect samples
-perf record -F 997 -g ./program
+# differential flame graph：比較兩個版本（看優化讓哪裡變快/變慢）
+cd ~/perflab
 
-# 2. Convert to text format
-perf script > out.perf
+# 假設有 old 和 new 兩個版本
+gcc -O2 -g -fno-omit-frame-pointer surprise.c -o old 2>/dev/null
+# 優化版（如把 sprintf 移到迴圈外，假設）
+gcc -O2 -g -fno-omit-frame-pointer surprise.c -o new 2>/dev/null
 
-# 3. Generate flame graph
-stackcollapse-perf.pl out.perf | flamegraph.pl > flame.svg
+# 各自 profile
+perf record -F 999 -g -o old.data -- ./old > /dev/null 2>&1
+perf record -F 999 -g -o new.data -- ./new > /dev/null 2>&1
+
+# 產生折疊的堆疊
+perf script -i old.data | ~/FlameGraph/stackcollapse-perf.pl > old.folded
+perf script -i new.data | ~/FlameGraph/stackcollapse-perf.pl > new.folded
+
+# differential flame graph（比較差異）
+~/FlameGraph/difffolded.pl old.folded new.folded | ~/FlameGraph/flamegraph.pl > diff.svg
+# diff.svg 用顏色顯示差異：
+#   紅色 = new 比 old 花更多時間（變慢/regression）
+#   藍色 = new 比 old 花更少時間（變快/優化）
+# → 一眼看出「優化讓哪些函式變快、哪些變慢（regression）」
+
+# 對 compiler 工作的價值：
+#   改了 compiler → 比較 before/after 的 flame graph
+#   → 看「優化讓哪裡變快」（驗證有效）+「哪裡意外變慢」（regression）
 ```
 
-打開 `flame.svg` 在瀏覽器。
+> **differential flame graph 用顏色顯示「優化讓哪裡變快（藍）變慢（紅）」——對 compiler 工作驗證優化和抓 regression 極有用**。**differential flame graph** 是 flame graph 的強大延伸——它**比較兩個版本**（old vs new），用顏色顯示差異：**紅色 = new 比 old 花更多時間**（變慢/regression）、**藍色 = new 比 old 花更少時間**（變快/優化）。產生方法：各自 profile → 折疊堆疊 → `difffolded.pl` 比較 → flamegraph。這對 **compiler 工作極有價值**——你改了 compiler 的某個優化，比較 before/after：(1) **驗證優化有效**（看藍色——優化讓哪些函式變快）；(2) **抓 regression**（看紅色——優化意外讓哪些變慢——這是 compiler 改動的常見風險，一個優化幫了某些 code 但傷了其他）。這個「視覺化的版本比較」比「比較兩個數字」資訊豐富得多——你看到**整體的變化分布**（哪裡變快、哪裡變慢、變化多大），而非只是「整體快了 X%」。對 compiler 開發，differential flame graph 是驗證優化和 debug regression 的利器——當一個 compiler 改動「整體效能沒變或變差」，differential flame graph 揭示「某些地方變快了但某些地方變慢了（抵消）」，幫你理解和修正。這是 perf_bench 對 compiler 工作的直接應用——**用 differential flame graph 驗證 compiler 優化的效果和影響**。配合 Ch 4 的統計（多次測量看顯著性），你能嚴謹地評估 compiler 改動（差異顯著嗎 + 影響在哪）。
 
-### 工具來源
+## on-CPU vs off-CPU profiling
+
+```
+on-CPU vs off-CPU profiling（兩種視角）：
+
+  on-CPU（前面講的）：
+    profile「CPU 在執行什麼」（占用 CPU 的時間）
+    flame graph 顯示「CPU 時間花在哪個函式」
+    適合：CPU-bound 的問題（計算密集）
+        │
+  off-CPU：
+    profile「程式『不在 CPU 上』的時間」（等待）
+    等 IO、等鎖、等網路、被排程出去
+    → 程式「卡住」但不占 CPU 的時間
+    適合：等待密集的問題（IO/鎖/網路 bound）
+        │
+  → on-CPU flame graph 看「CPU 在算什麼」
+    off-CPU flame graph 看「程式在等什麼」
+    完整分析常兩者都要（CPU 時間 + 等待時間）
+        │
+  perf_bench 主要 on-CPU（CPU-bound，Ch 0 說過專注 CPU-bound）
+  off-CPU 對 IO/並發問題重要（用 perf sched 或 eBPF）
+```
+
+> **on-CPU profiling 看「CPU 在算什麼」、off-CPU 看「程式在等什麼」——perf_bench 主要 on-CPU（CPU-bound）**。profiling 有兩種視角：**on-CPU**（前面講的）——profile「CPU 在執行什麼」（占用 CPU 的時間），flame graph 顯示「CPU 時間花在哪個函式」，適合 **CPU-bound** 問題（計算密集）；**off-CPU**——profile「程式**不在 CPU 上**的時間」（等待——等 IO、等鎖、等網路、被排程出去），這是程式「卡住但不占 CPU」的時間，適合**等待密集**的問題（IO/鎖/網路 bound）。兩者互補——完整分析常要看「CPU 時間（on-CPU）+ 等待時間（off-CPU）」。**perf_bench 主要關注 on-CPU**（Ch 0 說過本課專注 CPU-bound 的效能，compiler 優化主要影響 CPU 計算）——off-CPU（IO/並發的等待）是 observability_tools 課（strace 看卡在哪、ss 看連線）和 bpf 課（off-CPU flame graph 用 eBPF）的領域。但知道有 off-CPU 這個視角很重要——當一個程式「慢但 CPU 不忙」（on-CPU profiling 顯示 CPU 沒在做什麼），問題在「等待」（off-CPU），要用 off-CPU 分析。對 compiler/CPU 效能工作（CPU-bound），on-CPU flame graph 是主力——它顯示「CPU 的計算時間花在哪」，這正是 compiler 優化的目標。理解 on-CPU vs off-CPU，你知道「flame graph 看的是 CPU 時間」，當問題是等待時要換 off-CPU 視角。Part 3（profiling 工具）到此完成——你掌握了 perf record/report（找熱點）、llvm-mca（靜態指令分析）、flame graph（視覺化 + 比較版本）。
+
+## 故意弄壞:用 flame graph 看優化效果
 
 ```bash
-git clone https://github.com/brendangregg/FlameGraph
-export PATH=$PWD/FlameGraph:$PATH
+cd ~/perflab
+# 用 flame graph 視覺化「優化前後的差異」
+# 優化前：每次迴圈都 sprintf（surprise.c）
+gcc -O2 -g -fno-omit-frame-pointer surprise.c -o before 2>/dev/null
+
+# 優化後：sprintf 移到迴圈外
+cat > optimized.c <<'EOF'
+#include <stdio.h>
+long complex_calc(long n) {
+    long r = 0;
+    for (int i = 0; i < 50; i++) r += (n * i) % 13;
+    return r;
+}
+int main() {
+    char buf[100];
+    long total = 0;
+    for (long i = 0; i < 1000000L; i++) {
+        total += complex_calc(i);     // 計算
+    }
+    sprintf(buf, "Result: %ld\n", total);   // sprintf 只一次（移出迴圈）
+    printf("%s", buf);
+    return 0;
+}
+EOF
+gcc -O2 -g -fno-omit-frame-pointer optimized.c -o after
+
+# 比較執行時間（hyperfine，Ch 0）
+hyperfine './before' './after'
+# './after' ran 3.5 ± 0.1 times faster   ← 優化讓它快 3.5 倍！
+
+# 產生 differential flame graph 看「哪裡變快」
+perf record -F 999 -g -o b.data -- ./before > /dev/null 2>&1
+perf record -F 999 -g -o a.data -- ./after > /dev/null 2>&1
+perf script -i b.data | ~/FlameGraph/stackcollapse-perf.pl > b.folded
+perf script -i a.data | ~/FlameGraph/stackcollapse-perf.pl > a.folded
+~/FlameGraph/difffolded.pl b.folded a.folded | ~/FlameGraph/flamegraph.pl > diff.svg
+# diff.svg：sprintf 的塔變藍（消失）→ 優化讓 sprintf 的時間沒了
+
+# → 完整的優化流程（perf_bench 的綜合）：
+#   1. profile 找熱點（sprintf，Ch 7）
+#   2. 優化（移出迴圈）
+#   3. hyperfine 驗證（快 3.5 倍，統計顯著，Ch 4）
+#   4. differential flame graph 看「哪裡變快」（sprintf 消失）
 ```
 
-`stackcollapse-perf.pl` 跟 `flamegraph.pl` 是核心。
-
-## Interactive flame graph
-
-SVG 支援：
-
-- 點擊 function → zoom 進去
-- 右上 "Reset Zoom"
-- Ctrl+F → 搜尋 symbol
-
-複雜 profile 必用 interactive。
-
-## 閱讀 flame graph
-
-### 範例：simple program
-
-```
-┌────────────────────────────────────────────────┐
-│                    main (100%)                  │
-├────────────────────────────────────────────────┤
-│                slow_func (97%)                  │ ← hot!
-├────────────────────────────────────────────────┤
-│                multiply (60%)                    │
-└────────────────────────────────────────────────┘
-```
-
-解讀：
-
-- `main` 佔 100%（entry）
-- `slow_func` 佔 97% → 幾乎全部時間在它
-- 其中 60% 在 `multiply`（child function）
-
-改進目標：`multiply`。
-
-### 範例：複雜 profile
-
-```
-main (100%)
-├── parse_input (20%)
-│   ├── tokenize (15%)
-│   │   └── is_digit (10%) ←─ unexpected hot
-│   └── build_ast (5%)
-├── process_data (70%)
-│   ├── foo (40%)
-│   │   ├── bar (20%)
-│   │   └── baz (20%)
-│   └── qux (30%)
-└── output (10%)
-```
-
-解讀：
-
-- process_data 佔 70%（明顯 hot path）
-- is_digit 佔 10%（小 function 卻 hot → 值得看）
-- output 只 10%（不重要）
-
-## 為什麼 flame graph 比 top-down list 好
-
-`perf report` 的 text output 也能列 hot function、但：
-
-- 沒 visual hierarchy
-- 大 project 幾百 function 眼花
-- 不容易看 "hot call stack"
-
-Flame graph 一眼看出全景。面試 / team presentation 用 flame graph 傳達速度遠快於 text。
-
-## 變種：Inverted flame graph（Icicle）
-
-```
-┌────────────────────────────────────────────────┐
-│ main                                             │
-└───┬──────────────┬──────────────────┬───────────┘
-    │              │                   │
-    ▼              ▼                   ▼
-```
-
-Y 軸反過來：**root 在上、leaf 在下**。對某些 mental model 更 natural。
-
-`flamegraph.pl --inverted`。
-
-## 變種：Differential flame graph
-
-比較 before/after：
-
-```bash
-stackcollapse-perf.pl before.perf > before.folded
-stackcollapse-perf.pl after.perf > after.folded
-difffolded.pl before.folded after.folded | flamegraph.pl > diff.svg
-```
-
-**紅色 = 變慢、藍色 = 變快**。效能迴歸分析神器。
-
-## 非 on-CPU flame graph
-
-本章聚焦 on-CPU（CPU 在忙什麼）。其他類型：
-
-- **Off-CPU flame graph**：show where thread 被 block 的時間（lock、I/O wait）
-- **Memory flame graph**：show 哪裡 allocation
-- **Hot-cold flame graph**：同時顯示 on-CPU + off-CPU
-
-這些用 eBPF 採集。`bpf` 有 cover。
-
-## FlameGraph 的陷阱
-
-### 陷阱 1：Stack 收集錯誤
-
-`-g fp` 在 `-fomit-frame-pointer` build 下 broken。flame graph 顯示：
-
-```
-[unknown] (100%)
-```
-
-**必用 `-g dwarf`** 或 build 加 `-fno-omit-frame-pointer`。
-
-### 陷阱 2：Inlined function 消失
-
-Compiler inline 掉的 function 在 flame graph 不顯示為 separate box。看到的是 caller function 變寬。
-
-解法：LLVM 有 `--inline-threshold=0`（build time）保留 inline boundary，但會損 performance。
-
-### 陷阱 3：Recursion 造成 stack 無限
-
-Deep recursion (幾千層) 產生奇怪 flame graph。需要 post-process 截斷。
-
-### 陷阱 4：Sampling bias
-
-Sampling rate 不夠 → flame graph 不 representative。`-F 997` 跑至少 5 秒是 minimum。
-
-## 即時 flame graph
-
-```bash
-# 邊跑邊看
-perf record -F 997 -g -o out.data ./program
-# Ctrl+C 後
-perf script -i out.data | stackcollapse-perf.pl | flamegraph.pl > flame.svg
-```
-
-或用 **`hotspot`**（KDE GUI）直接 live profiling + flame graph。
-
-## System-wide flame graph
-
-整個系統：
-
-```bash
-sudo perf record -F 99 -a -g -- sleep 30
-perf script | stackcollapse-perf.pl | flamegraph.pl > system.svg
-```
-
-低 frequency（99Hz）避免 overhead、30 秒 window。
-
-看 kernel / daemon / 整個系統在幹嘛。
-
-## FlameGraph 輸出的 format
-
-```
-main;process_data;foo;bar 42
-main;process_data;foo;baz 38
-main;parse_input;tokenize 15
-...
-```
-
-每行：`call_stack value`。stack 用 `;` 分隔、最後是 sample count。
-
-**這個 format 很 portable**。你可以自己產（從 eBPF、JIT profile 等）。
-
-## Per-thread flame graph
-
-```bash
-perf script --per-thread | stackcollapse-perf.pl | flamegraph.pl > threaded.svg
-```
-
-多 thread program 看每 thread 行為。
-
-## Flame graph 對 RISC-V 的 work
-
-完全一樣。只要 `perf record` 能 work，flame graph 就能 work。
-
-常見 issue：RISC-V binary 在 QEMU 上跑 → perf data 不準 → flame graph 誤導。
-
-## Real-world demo
-
-Facebook / Meta 的 post：用 flame graph 發現 PHP 的某 hash function 在 production 佔 12%。改一行 C → 整體省 3% CPU。
-
-SiFive 內部多半有類似 case。這是 compiler 工程師找 optimization target 的主流方法。
-
-## 替代：跟 flame graph 競爭的視覺化
-
-- **Pyroscope**：持續 profiling 平台（Web UI）
-- **Perfetto**：Google 推的 trace viewer
-- **gprof2dot**：output call graph dot format
-- **speedscope**：上傳 profile 看線上視覺化
-
-對個人開發 flame graph 夠用、生產環境 Pyroscope 類 SaaS 方便。
+> 這個例子展示了 perf_bench 前 9 章的綜合應用——**完整的優化流程**：(1) **profile 找熱點**（Ch 7，perf 找出 sprintf 是熱點，不是直覺以為的 complex_calc）；(2) **優化**（把 sprintf 移出迴圈——每次迴圈都格式化但只用最後一次，移到迴圈外只做一次）；(3) **hyperfine 驗證**（Ch 4 的統計嚴謹——快 3.5 倍，看是否顯著）；(4) **differential flame graph 看「哪裡變快」**（sprintf 的塔變藍/消失，確認優化生效在預期的地方）。這個流程整合了測量（hyperfine）、profiling（perf 找熱點）、視覺化（flame graph 看差異）、統計（顯著性）——這正是 perf_bench 的核心工作流。注意這是「演算法/程式層」的優化（移出迴圈），但同樣的流程適用於 **compiler 優化**——改 compiler、profile 找熱點、驗證（hyperfine + differential flame graph）。Part 3 的工具（perf record/report、llvm-mca、flame graph）讓你能定位熱點、分析瓶頸、視覺化和比較——這是 Part 4（compiler-centric 優化）的基礎。接下來 Part 4 進入「compiler 怎麼影響效能」——flag、PGO、LTO、vectorization——以及「從 hot loop 倒推該加什麼優化」，這是 perf_bench 對 SiFive compiler 工作最直接的對口。
 
 ## 動手練習
 
-1. 裝 FlameGraph repo、生成你第一張 flame graph。
-2. 看一個 hot function、在 svg 裡 Ctrl+F 搜尋 symbol 找到位置。
-3. 產 before/after 兩張 flame graph，用 `difffolded.pl` 生成差異圖。
-4. 用 `perf script --per-thread` 產 threaded flame graph。
-5. 試 `hotspot` 或其他 GUI 工具。
+1. 產生 flame graph：對一個程式產生 flame graph，用瀏覽器開，找最寬的塔（熱點）
 
-## 常見誤會
+2. 讀 flame graph：理解寬度（佔 CPU）和高度（呼叫堆疊），點擊放大
 
-1. **「Flame graph 橫向一定有 time order」**：不。X 軸是 sample counts（sorted 或 merged by function）。時間順序要用 perf timeline、不是 flame graph。
-2. **「寬的一定要優化」**：寬可能是 intrinsic cost（memcpy 實際就是寬）。要能「縮窄」才值得。
-3. **「深的一定差」**：不。深只是 call stack 深。stack 100 層仍可 fast。
-4. **「缺 symbol 就 hopeless」**：加 debug info 或 install -dbg package 往往解決。
-5. **「Flame graph 只適合 simple program」**：complex program 更需要 (否則眼花)。
+3. differential：對優化前後的版本產生 differential flame graph，看哪裡變快（藍）變慢（紅）
+
+4. 完整流程：跑「故意弄壞」的優化流程（profile 找熱點 → 優化 → hyperfine 驗證 → diff flame graph）
+
+5. 理解 on/off-CPU：思考一個「慢但 CPU 不忙」的問題該用 off-CPU（vs 本課的 on-CPU）
+
+## 本章重點整理
+
+- flame graph 視覺化 profile：X 軸寬度=佔 CPU 比例（找寬的塔）、Y 軸=呼叫堆疊；複雜程式特別直觀
+- 產生：perf record -g → perf script → FlameGraph 工具（stackcollapse + flamegraph）→ SVG（互動）
+- differential flame graph 比較版本：紅=變慢（regression）、藍=變快（優化）——對 compiler 驗證優化+抓 regression
+- on-CPU（CPU 在算什麼，CPU-bound）vs off-CPU（程式在等什麼，IO/鎖 bound）；perf_bench 主要 on-CPU
+- 完整優化流程：profile 找熱點 → 優化 → hyperfine 驗證（統計）→ differential flame graph 看哪裡變快
 
 ## 自我檢核
 
-- [ ] 我能生成 flame graph 從 perf data
-- [ ] 我能讀 flame graph 找 hot call stack
-- [ ] 我知道 inverted / differential / system-wide 變種
-- [ ] 我知道為什麼 `-g dwarf` 重要
-- [ ] 我能 live demo 給面試官看 flame graph 分析
+- [ ] 會產生和讀 flame graph（寬度=熱點、高度=呼叫堆疊）
+- [ ] 會用 differential flame graph 比較版本（看變快/變慢）
+- [ ] 知道 differential flame graph 對 compiler 工作的價值（驗證+抓 regression）
+- [ ] 理解 on-CPU vs off-CPU profiling 的差別
+- [ ] 能走完整的優化流程（profile→優化→驗證→視覺化）
 
-Part 3 結束。下一章進 compiler-centric 分析 — 各種 flag 的真實效果。
+## 延伸閱讀
 
-→ [Ch 10 Compiler flag scan：-O2 vs -O3 真相](./10-compiler-flags.md)
+### 必讀
+
+- **[Flame Graphs](https://www.brendangregg.com/flamegraphs.html)** — Brendan Gregg
+  - **讀哪裡**：CPU flame graphs、differential flame graphs
+  - **為什麼值得讀**：火焰圖發明者的權威資源
+
+- **[FlameGraph GitHub](https://github.com/brendangregg/FlameGraph)** — Brendan Gregg
+  - **讀哪裡**：README、difffolded.pl 的用法
+  - **為什麼值得讀**：工具本身和用法
+
+### 文章
+
+- **[Differential flame graphs](https://www.brendangregg.com/blog/2014-11-09/differential-flame-graphs.html)** — Brendan Gregg
+  - **這篇說什麼**：differential flame graph 怎麼用、怎麼讀
+  - **為什麼值得讀**：本章 differential 那節的權威
+
+### 書籍
+
+- **《Systems Performance》— Ch 6 (flame graphs)** — Brendan Gregg
+  - **為什麼值得讀**：flame graph 放進效能分析的框架
+
+Part 3（Profiling 工具）到此完成。接下來 Part 4 是 perf_bench 的重頭戲——compiler-centric 的效能分析：compiler flag 的真相、PGO/LTO/vectorization。這是和 SiFive compiler 工作最直接對口的部分。
+
+→ [Ch 10 Compiler flag scan：-O2 vs -O3 真相、-march 選擇](./10-compiler-flags.md)

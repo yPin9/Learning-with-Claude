@@ -1,300 +1,223 @@
 # Ch 2 — SPEC CPU：業界 benchmark 之王
 
-> 目標：理解 SPEC CPU 的歷史、結構、報告規範、常見誤用。就算你不花錢買 license，懂這套 benchmark 方法論是 SiFive 面試基本功。
+> **目標**：理解 SPEC CPU 的歷史、結構（intrate/fprate/intspeed/fpspeed、組成的真實程式）、報告規範（base vs peak、reportable run 的規則）、常見誤用。就算你不花錢買 license，懂這套 benchmark 方法論是和 CPU/compiler 團隊對話的基本功——SiFive 的 core 要跑 SPEC，不懂它就無法參與效能討論。
 
-## 為什麼 SPEC 重要
+> **環境**：概念為主。SPEC CPU 需要 license（付費），這章講方法論（不需實際跑）。
 
-**SPEC CPU 是業界最受認可的 general-purpose CPU benchmark**。所有 CPU 廠（Intel、AMD、Arm、Apple、SiFive、T-Head）發佈新 chip 時都要公布 SPEC 分數。
+## 為什麼要懂 SPEC CPU？
 
-- 每 5-10 年出新版（2000 → 2006 → 2017 → 2025？）
-- 由 SPEC （Standard Performance Evaluation Corporation）維護
-- 需買 license（~$2000-5000 USD）
-- 成為「這 chip 多快」的共同語言
+SPEC CPU 是業界評估 CPU 和 compiler 效能的**標準 benchmark**——CPU 廠商發新晶片、compiler 團隊改優化，都用 SPEC 的分數來宣稱和比較效能。當你看到「這個 CPU 的 SPECint 分數是 X」「這個 compiler 優化讓 SPEC 提升 Y%」，那就是 SPEC CPU。
 
-**不懂 SPEC 不能跟 benchmarking team 對話**。
+即使你不花錢買 SPEC license（一份要幾千美元），**懂它的方法論**是和硬體/compiler 團隊對話的基本功——SiFive 的 core 要跑 SPEC 來證明效能、compiler 改動要用 SPEC 驗證。不懂 SPEC 的結構（base vs peak、哪些子 benchmark、報告規則），你就無法解讀別人的 SPEC 數字、無法參與「我們的 SPEC 分數怎麼提升」的討論。這章講 SPEC 的結構和方法論——這是業界效能評估的共同語言。
 
-## SPEC CPU 的版本
-
-| 版本 | 年 | 狀態 |
-|------|-----|------|
-| SPEC CPU89 | 1989 | 古早 |
-| SPEC CPU92 | 1992 | |
-| SPEC CPU95 | 1995 | |
-| SPEC CPU2000 | 2000 | 退休 |
-| SPEC CPU2006 | 2006 | retired (2018) |
-| **SPEC CPU2017** | 2017 | **current** |
-| SPEC CPU 2025 (?) | TBD | |
-
-本課以 **CPU2017** 為主。2026 時點仍是 active。
-
-## CPU2017 的結構
+## 先建立直覺:一籃子真實程式
 
 ```
-SPEC CPU2017
-├── SPECrate (throughput)          多個 copy 並跑
-│   ├── rate_int (10 個 integer)
-│   └── rate_fp (13 個 FP)
-└── SPECspeed (latency)            單個 run, time to finish
-    ├── speed_int (10 個 integer)
-    └── speed_fp (10 個 FP)
+SPEC CPU = 一籃子「真實程式」的 benchmark 套件
+
+  不是合成的 micro-benchmark，而是「真實的程式」：
+    編譯器（gcc）、壓縮（xz）、AI（deepsjeng 下棋）、
+    物理模擬、流體力學、影像處理...
+        │
+  分四類（SPEC CPU 2017）：
+    SPECrate（吞吐量，throughput）：同時跑多份，測「總處理量」
+      intrate（整數）、fprate（浮點）
+    SPECspeed（速度，latency）：跑一份，測「跑多快」
+      intspeed（整數）、fpspeed（浮點）
+        │
+  分數怎麼來：
+    每個子 benchmark 對比一個「參考機器」的時間
+    算出比值（ratio），多個子 benchmark 取 geomean（幾何平均，Ch 4）
+        │
+  → SPEC 用「一籃子真實程式」評估綜合效能
+    比單一 micro-benchmark 更能代表「真實的 CPU/compiler 效能」
+    這是它成為業界標準的原因——夠真實、夠全面
 ```
 
-- **SPECrate**：跑 N 份相同 benchmark（N = hyper-thread 數）、衡量 throughput。對 server 有意義。
-- **SPECspeed**：跑一份、衡量單核效能。對 latency-sensitive 有意義。
+關鍵心智：SPEC CPU 是「一籃子真實程式」的 benchmark——不是合成的 micro-benchmark，而是真實程式（編譯器、壓縮、AI、物理模擬）。分四類：**rate**（吞吐量，同時跑多份）和 **speed**（速度，跑一份），各有整數（int）和浮點（fp）。分數是各子 benchmark 對比參考機器的比值取**幾何平均**。它用「真實程式的籃子」評估綜合效能，比單一 benchmark 更代表真實——這是它成為業界標準的原因。
 
-## SPECrate_int：10 個 integer 測試
+> SPEC 是 macro-benchmark（Ch 1）的代表——測真實的完整程式。它的分數計算用 geomean（Ch 4 統計會深入為什麼用幾何平均）。
 
-```
-500.perlbench_r     Perl interpreter
-502.gcc_r           GCC compiler
-505.mcf_r           Memory-hungry combinatorial optimization
-520.omnetpp_r       Network simulator
-523.xalancbmk_r     XML transformation
-525.x264_r          Video encoding
-531.deepsjeng_r     AI (chess)
-541.leela_r         AI (Go)
-548.exchange2_r     Sudoku solver
-557.xz_r            Data compression
-```
-
-各自代表不同 workload：
-
-- `perlbench` / `gcc`：compiler workload，pointer-chasing 多
-- `mcf`：memory-bound，cache miss 高
-- `x264`：SIMD-heavy
-- `deepsjeng` / `leela`：branch-heavy
-
-**不同 CPU 在不同 benchmark 表現差很大**。這是 SPEC 的 power —— reveal weaknesses。
-
-## SPECrate_fp：13 個 FP 測試
+## SPEC CPU 2017 的結構
 
 ```
-503.bwaves_r        Fluid dynamics
-507.cactuBSSN_r     General relativity
-508.namd_r          Molecular dynamics
-510.parest_r        Finite element analysis
-511.povray_r        Ray tracing
-519.lbm_r           Fluid dynamics
-521.wrf_r           Weather
-526.blender_r       3D rendering
-527.cam4_r          Atmospheric modeling
-538.imagick_r       Image manipulation
-544.nab_r           Molecular dynamics
-549.fotonik3d_r     Electromagnetics
-554.roms_r          Regional ocean model
+SPEC CPU 2017 的四個套件：
+
+  整數（Integer）：
+    SPECrate 2017 Integer  —— intrate（吞吐量）
+    SPECspeed 2017 Integer —— intspeed（速度）
+    組成（部分）：
+      perlbench（Perl 直譯器）、gcc（編譯器）、mcf（路徑規劃）、
+      omnetpp（網路模擬）、xalancbmk（XML）、x264（影片編碼）、
+      deepsjeng（下棋 AI）、leela（圍棋 AI）、exchange2（數獨）、xz（壓縮）
+        │
+  浮點（Floating Point）：
+    SPECrate 2017 FP  —— fprate
+    SPECspeed 2017 FP —— fpspeed
+    組成（部分）：
+      bwaves（流體）、cactuBSSN（相對論）、lbm（流體）、
+      wrf（氣象）、cam4（氣候）、pop2（海洋）、imagick（影像）、
+      nab（分子動力學）、fotonik3d（電磁）、roms（海洋模型）
+        │
+  → 每個子 benchmark 是真實領域的程式
+    整數套件代表「一般運算」（編譯/壓縮/AI）
+    浮點套件代表「科學運算」（模擬/物理）
 ```
 
-都是 scientific computing。跟 server / desktop 用途差距大。
-
-## 一份 SPEC 分數怎麼算
-
-1. 對每個 benchmark 跑 3 次、取 median time
-2. 算 **ratio**：`reference_time / your_time`
-   - reference machine: 一台 2017 的 Intel Xeon，所以你跑得比它快 ratio > 1
-3. 對所有 benchmark 的 ratio 算 **geometric mean**
-4. 那個 geomean 就是 SPEC score
-
-範例：
-
 ```
-Benchmark     Reference  Yours     Ratio
-perlbench_r   1600s      400s      4.00
-gcc_r         1800s      500s      3.60
-...
-                                   ↓
-                        geomean = 3.5
-                        SPECrate int = 3.5
+rate vs speed 的差別（重要）：
+
+  SPECrate（吞吐量）：
+    同時跑「多份 copy」（如 N 個核心各跑一份）
+    測「總共能處理多少」（throughput）
+    → 反映「多核心、多工」的效能
+        │
+  SPECspeed（速度）：
+    跑「一份」，測它「跑多快」（latency）
+    通常開 OpenMP（用多執行緒加速單一 workload）
+    → 反映「單一任務跑多快」
+        │
+  → rate 看「總處理量」（伺服器、多工場景）
+    speed 看「單一任務速度」（互動、延遲敏感場景）
+    報效能要說清楚是 rate 還是 speed（常被混淆）
 ```
 
-**geomean 而非 mean**：因為每個 benchmark 的 ratio 分布不均、幾何平均 better handles outlier。Ch 4 會講。
+> **SPECrate（吞吐量，多份同時跑）vs SPECspeed（速度，單份跑多快）是關鍵區別——報效能要說清楚是哪個**。SPEC CPU 2017 分**整數**（一般運算：編譯器 gcc、壓縮 xz、AI deepsjeng）和**浮點**（科學運算：流體、氣象、物理模擬）。更重要的區別是 **rate vs speed**：**SPECrate**（吞吐量）同時跑**多份 copy**（如每個核心跑一份），測「**總共能處理多少**」（throughput）——反映多核多工效能（伺服器場景）；**SPECspeed**（速度）跑**一份**測它「**跑多快**」（latency，通常開 OpenMP 用多執行緒加速單一任務）——反映單一任務速度（互動/延遲敏感場景）。這個區別很重要——**報效能時要說清楚是 rate 還是 speed**（常被混淆，數字不能直接比）。一個 CPU 可能 rate 高（多核吞吐好）但 speed 一般，或反之。對 compiler 工作，兩者都重要——優化要看對哪個有幫助。子 benchmark 各代表真實領域（gcc 代表編譯器 workload、x264 代表影片編碼、流體模擬代表 HPC）——這讓 SPEC 的綜合分數能代表「真實的多樣 workload」，而非單一情境。理解這個結構，你看 SPEC 報告時知道它在測什麼、rate 和 speed 的差別、哪些子 benchmark 對你的場景最相關。
 
-## Reportable vs Non-reportable
-
-SPEC 有嚴格規範：
-
-**Reportable run**：
-
-- 所有 benchmark 必須 3 次 pass
-- 用 "base" flags（所有 benchmark 同一 flag）
-- 跑在生產 kernel + driver
-- 提交到 spec.org 前需 review
-- **這是公告的官方分數**
-
-**Non-reportable (peak)**：
-
-- 每個 benchmark 可用不同 flag（手動 tune）
-- 可以激進優化
-- 比較各 compiler / flag 效果
-
-發佈的公告通常兩個都有。`base` 是 conservative、`peak` 是 max。
-
-## Base / Peak / Strict rules
-
-規範多到一本書（SPEC runrules.html）。重點：
-
-- **所有 benchmark 用同 compiler version**
-- **不能改 source code**（除了 spec 允許的 portability change）
-- **flags 要合理**（不能硬寫 benchmark-specific 的 hack）
-- **3 runs 中位數**
-
-違反 → 提交 rejected.
-
-## 跑一次 SPEC 的流程
-
-假設你買了 license、有 DVD image：
-
-```bash
-# Install SPEC
-cd /cpu2017/
-./install.sh
-
-# Source env
-source shrc
-
-# Choose config
-cd config/
-cp -a example-linux-x86-gcc.cfg my.cfg
-# Edit my.cfg (compiler, flags)
-
-# Run reportable
-runcpu --config=my.cfg --action=run --noreportable intrate
-# --noreportable: 快跑 + 不嚴格檢查
-
-# Run reportable
-runcpu --config=my.cfg intrate
-# 跑 3 次 + 完整檢查，慢 3-5 小時
-
-# Results in:
-result/ directory
-```
-
-**第一次跑常常 fail**：某 benchmark 沒 build、flag 不對、disk 不夠大（SPEC 吃 30 GB+）。慢慢調。
-
-## Config file 的神秘
-
-`.cfg` 文件幾百行、控制所有 build + run 細節：
+## base vs peak:報告規範
 
 ```
-default:
-    CC           = gcc
-    CXX          = g++
-    FC           = gfortran
-    OPTIMIZE     = -O3 -march=native
-    
-integer:
-    OPTIMIZE     = -O3 -march=native -flto
+SPEC 的 base vs peak（報告的兩種模式）：
 
-500.perlbench_r:
-    PORTABILITY += -std=gnu89
-    
-502.gcc_r:
-    EXTRA_FLAGS  = -fpermissive
+  base（基準）：
+    所有子 benchmark 用「相同的 compiler flags」
+    限制：flag 數量有限、不能 per-benchmark 調
+    → 代表「一般使用者用一套 flag」的效能（公平、可比）
+        │
+  peak（峰值）：
+    每個子 benchmark 可以「個別調 flags」（per-benchmark 優化）
+    甚至用 feedback-directed（PGO）、不同的 flag 組合
+    → 代表「極致調校」的效能（廠商展示最佳能力）
+        │
+  → base 比較公平（同一套 flag），peak 展示極限（個別調校）
+    報 SPEC 分數要說是 base 還是 peak（差異可能很大）
+    廠商常報 peak（好看），但 base 更代表「一般情況」
+        │
+  reportable run 的規則（嚴格）：
+    要跑足夠次數、用官方的 tool、符合 run rules
+    才能宣稱是「正式的 SPEC 分數」（official）
+    隨便跑的不能拿來宣稱
 ```
 
-Per-benchmark 的 portability flag 很多、SPEC 官方有 template。
+> **base（同一套 flag，公平可比）vs peak（個別調校，展示極限）——廠商常報好看的 peak，但 base 更代表一般情況**。SPEC 報告有兩種模式：**base**——所有子 benchmark 用**相同的 compiler flags**（flag 數量有限制、不能針對個別 benchmark 調），代表「一般使用者用一套 flag 編譯」的效能（**公平、可比**——大家同樣條件）；**peak**——每個子 benchmark 可以**個別調 flags**（per-benchmark 優化、甚至用 PGO、不同 flag 組合），代表「**極致調校**」的效能（廠商展示最佳能力）。**關鍵**：報 SPEC 分數要說清楚是 **base 還是 peak**（差異可能很大——peak 通常比 base 高，因為個別調校）。廠商行銷常報 **peak**（數字好看），但 **base 更代表「一般情況」**（你不會為每個程式個別調 flag）。對 compiler 工作這很重要——你的優化是改善 base（影響所有人）還是 peak（極致調校）？另外 SPEC 有嚴格的 **reportable run 規則**——要跑足夠次數、用官方 tool、符合 run rules，才能宣稱是「正式的 SPEC 分數」（official）；隨便跑的數字（如 `-noreportable` 快跑）只能自己參考，不能對外宣稱。理解 base/peak 和 reportable 規則，你才能正確解讀別人的 SPEC 數字（「他報的是 peak，我們的 base 不能直接比」）和正確地呈現自己的（說清楚條件）。這是 SPEC 方法論的核心——數字要在「相同的條件」下才能比較。
 
-## RISC-V 上的 SPEC
+## SPEC 的常見誤用
 
-RISC-V 跑 SPEC CPU2017 可以但要注意：
+```
+SPEC 數字的常見誤用（理解這些才不會被誤導）：
 
-- **編譯 issue**：某些 benchmark (`xz_r`) 要手動 port
-- **Memory 需求**：`mcf_r` / `wrf_r` 要 4GB+。 RISC-V SBC 常只 4-8 GB，剛夠
-- **長時間**：SiFive U74 (1.5 GHz) 跑完一次完整 SPEC 約 8-24 小時
-- **ABI 一致**：`lp64d`、`-march=rv64gc` 以上是 standard
+  1. base 和 peak 混比：
+     用自己的 base 比別人的 peak → 不公平
+        │
+  2. 不同 SPEC 版本混比：
+     SPEC 2006 和 2017 的分數不能直接比（不同 workload）
+        │
+  3. rate 和 speed 混比：
+     吞吐量分數和速度分數是不同的東西
+        │
+  4. 忽略編譯器和 flag：
+     SPEC 分數高度依賴 compiler 和 flags
+     同 CPU 用不同 compiler 分數可能差 10-20%
+        │
+  5. 過度優化單一 benchmark（gaming）：
+     針對 SPEC 的特定 benchmark 加 hack（如特殊的 idiom recognition）
+     → SPEC 分數高但對真實程式沒幫助（甚至有害）
+        │
+  → SPEC 是好工具，但數字要在「相同條件」下比
+    版本、base/peak、rate/speed、compiler、flag 都要一致
+    否則「比較」毫無意義
+```
 
-SiFive 官方每個 new core release 都跑 SPEC。看他們的 datasheet / whitepaper。
+> **SPEC 數字只能在「完全相同的條件」下比較——版本/base-peak/rate-speed/compiler/flag 任一不同就不可比**。SPEC 的常見誤用都源於「比較條件不一致」：(1) **base 比 peak**（不公平，peak 是極致調校的）；(2) **不同 SPEC 版本混比**（2006 和 2017 是不同 workload，分數不能直接比）；(3) **rate 比 speed**（吞吐量 vs 速度，不同的東西）；(4) **忽略 compiler/flag**——SPEC 分數**高度依賴 compiler 和 flags**（同一個 CPU 用 gcc vs clang、用不同 flag，分數可能差 10-20%！所以「CPU A 的 SPEC 比 CPU B 高」可能只是用了更好的 compiler）；(5) **gaming（針對 SPEC 過度優化）**——廠商/compiler 針對 SPEC 的特定 benchmark 加 hack（如針對某個迴圈的特殊 idiom recognition），讓 SPEC 分數高但對真實程式沒幫助甚至有害（這是 benchmark 的根本問題——「優化 benchmark」不等於「優化真實效能」，極端的 gaming 讓 SPEC 失去代表性）。理解這些誤用，你看 SPEC 數字時會問「是什麼條件下測的」（版本/base-peak/rate-speed/compiler/flag），而非盲目相信「分數高就是好」。對 compiler 工作，你也要警惕「優化 SPEC 但不幫助真實程式」的陷阱——SiFive 的 compiler 改動應該改善真實效能，SPEC 是驗證工具不是優化目標（優化 benchmark 本身是 gaming）。SPEC 是好工具（真實、全面、業界標準），但要正確使用——相同條件下比較、警惕 gaming、理解它的限制。
 
-## SPEC 的商業意義
+## 沒有 license 怎麼學 SPEC 方法論
 
-- Intel / AMD / Arm / Apple 的 marketing：「New CPU is 20% faster in SPEC int」
-- Cloud vendor 選 CPU 時參考 SPEC rate
-- OEM 合約裡寫 SPEC 最低分數
+```
+沒買 SPEC license 也能學方法論：
 
-所以 **compiler 優化 1% 在 SPEC 上 → 商業上大事**。SiFive 之類的客戶極在意。
+  1. 讀公開的 SPEC 報告（spec.org 有公開的 result）：
+     看廠商怎麼報（base/peak、flag、machine config）
+        │
+  2. 用替代的開源 benchmark（類似的真實程式）：
+     LLVM test-suite（含很多真實程式的 benchmark）
+     Coremark（Ch 3，嵌入式的）
+        │
+  3. 理解 SPEC 的子 benchmark（很多是開源程式）：
+     gcc、xz、x264 都是開源的，可以單獨研究
+        │
+  4. 學 run rules 和方法論（公開文件）：
+     SPEC 的 run rules、reportable 規則都是公開的
+        │
+  → 重點是「懂方法論」（base/peak、geomean、run rules、誤用）
+    不一定要真的跑 SPEC（license 貴）
+    懂方法論才能解讀別人的數字、參與討論
+```
 
-## SPEC 以外
-
-SPEC CPU 不代表一切：
-
-- **Cloud workload** → CloudSuite
-- **AI** → MLPerf, TensorFlow bench
-- **Android** → AnTuTu, Geekbench
-- **Desktop** → Cinebench, Geekbench
-- **Crypto** → cryptoPP bench
-- **Embedded** → Coremark, Embench (Ch 3)
-
-現實：**多benchmark 並行**。SPEC 是 common baseline。
-
-## 「SPEC 分數怎麼 cheat」
-
-歷史上有些廠商/compiler 被抓 SPEC-specific 優化：
-
-- 某 compiler 認 `451.gobmk` 的 input 格式、generate specialized code
-- 某 compiler 對 `401.bzip2` 的 source pattern 有 hand-tuned rewrite
-- Benchmark-specific PGO
-
-**SPEC 規則禁止這些**。但某些 flag（`-fprofile-use`）本身合法、只是要對所有 benchmark 一致。
-
-**SiFive 不會做這種 cheat**—— 正派廠商的 compiler 工作是「all workload 都變好」，不是「SPEC 數字好看」。
-
-## 讀 SPEC 官方 result
-
-在 <https://www.spec.org/cpu2017/results/> 你會看到幾千份 submission。每份：
-
-- System config
-- Compiler flags (per benchmark)
-- Ratio per benchmark
-- Final geomean
-
-讀這些 results 可以學：
-
-- 不同硬體的相對效能
-- 哪個 benchmark 的 ratio 跨平台差異大（→ 對那個 workload 敏感）
-- Flag 組合的效果
-
-## SPEC 的限制
-
-- 代表傳統 desktop/server compute
-- 沒 GPU、沒 DB、沒 network
-- 2017 release、某些 workload 已過時
-- 單線程 + 多 copy，不代表真正 multi-thread application
-
-**別當聖經**。跟你的實際 workload 比對。
+> **學 SPEC 重點是「懂方法論」（base/peak/geomean/run rules/誤用），不一定要真的跑（license 貴）**。SPEC CPU 的 license 要幾千美元，但**懂它的方法論不需要實際跑**：(1) **讀公開的 SPEC 報告**（spec.org 有大量公開的 result——看廠商怎麼報 base/peak、用什麼 flag、machine config，學習正式報告的格式和條件揭露）；(2) **用替代的開源 benchmark**——**LLVM test-suite**（含很多真實程式的 benchmark，免費，類似 SPEC 的「真實程式籃子」）、Coremark（Ch 3）；(3) **研究 SPEC 的開源子 benchmark**（gcc、xz、x264 都是開源的，可以單獨拿來測和研究）；(4) **學 run rules**（SPEC 的規則是公開文件）。對 perf_bench 的目標（懂方法論、能對話），重點是理解 **base/peak（報告模式）、geomean（分數計算，Ch 4）、run rules（正式性）、常見誤用（條件一致性、gaming）**——這些讓你能解讀別人的 SPEC 數字、參與「我們的 SPEC 怎麼提升」的討論、正確地呈現自己的測量。實際跑 SPEC 是 compiler/CPU 團隊的日常（他們有 license），但作為效能工程師，懂方法論是基本功。如果你的工作真的需要跑 SPEC，公司會有 license——這章讓你準備好正確地使用它。對學習，用 LLVM test-suite 或 Coremark（Ch 3）做類似的「真實程式 benchmark」實驗，能體會 macro-benchmark 的方法論。
 
 ## 動手練習
 
-如果沒 SPEC license：
+1. 讀 SPEC 報告：去 spec.org 看一份公開的 SPEC CPU 2017 result，找出 base/peak、compiler、flag
 
-1. 讀 SPEC CPU2017 的 benchmark 列表、每個 read 簡介，挑 3 個寫「這測什麼」。
-2. 去 <https://www.spec.org/cpu2017/results/> 挑兩個 CPU (e.g., Apple M2 vs AMD Ryzen)，對比 result.
-3. 讀 SiFive P870 / Ventana Veyron 的 whitepaper，看他們 claim 的 SPEC 分數。
-4. 找 Coremark 跟 Dhrystone 的 source，理解它們相對 SPEC 更輕量。
-5. 寫一份 "如果我有 SPEC license 會怎麼 setup RISC-V benchmark" 的 plan。
+2. 理解 rate/speed：對照一個報告的 intrate 和 intspeed，理解兩者的差別
 
-有 license 的話：
+3. 研究子 benchmark：下載 xz 或 gcc（SPEC 的開源子 benchmark），單獨測它
 
-1. Install SPEC CPU2017。
-2. 用 `--noreportable` 先 build check。
-3. 挑一個 integer benchmark 跑完。
-4. 改 flag (`-O2` vs `-O3`) 對比。
-5. 讀一份 full reportable result 的 raw file。
+4. 替代 benchmark：clone LLVM test-suite，看它的真實程式 benchmark（類似 SPEC）
 
-## 常見誤會
+5. 識破誤用：找兩份不同條件的 SPEC 報告，思考它們能不能直接比（版本/base-peak/compiler）
 
-1. **「SPEC 分數越高一定好」**：只代表 SPEC workload。你的 workload 可能反向。
-2. **「SPECrate = 多核分數」**：SPECrate 是 throughput（多 copy），不是 concurrent workload。
-3. **「我可以用 benchmark-specific flag」**：peak 可以，base 不可以。商用 marketing 通常引 base。
-4. **「現代 CPU 都同一 ratio」**：不。mcf / xalancbmk 特別能 reveal memory bandwidth 弱點。
-5. **「一次 run 數字信得過」**：SPEC 要求 3 次取中位數。
+## 本章重點整理
+
+- SPEC CPU 是「一籃子真實程式」的業界標準 benchmark（編譯器/壓縮/AI/科學模擬），代表綜合真實效能
+- 四類：rate（吞吐量，多份同時跑）vs speed（速度，單份跑多快），各有 int（一般）和 fp（科學）
+- base（同一套 flag，公平可比）vs peak（個別調校，展示極限）；報分數要說清楚是哪個
+- 常見誤用都源於「條件不一致」：版本/base-peak/rate-speed/compiler/flag 任一不同就不可比；警惕 gaming
+- 懂方法論（base/peak/geomean/run rules/誤用）不需買 license；用 LLVM test-suite/Coremark 做類似實驗
 
 ## 自我檢核
 
-- [ ] 我能列出 SPEC CPU2017 integer 10 個 benchmark 的 3-5 個
-- [ ] 我知道 SPECrate vs SPECspeed 差別
-- [ ] 我能解釋 base vs peak
-- [ ] 我知道 geomean 為什麼是 SPEC 的 aggregate 方式
-- [ ] 我能讀 spec.org 上 result 並解讀
+- [ ] 知道 SPEC CPU 是什麼、為什麼是業界標準
+- [ ] 能區分 rate/speed、int/fp、base/peak
+- [ ] 知道 SPEC 數字只能在相同條件下比較，能識破誤用
+- [ ] 理解 gaming（優化 benchmark 不等於優化真實效能）的問題
+- [ ] 知道沒 license 怎麼學方法論（讀報告、用替代 benchmark）
 
-下一章看 Coremark / Embench — RISC-V 社群更常用的、相對輕量的 benchmark。
+## 延伸閱讀
+
+### 官方
+
+- **[SPEC CPU 2017](https://www.spec.org/cpu2017/)** — SPEC
+  - **讀哪裡**：Documentation（run rules、子 benchmark 說明）、公開的 results
+  - **為什麼值得讀**：SPEC 的權威；公開報告是學習報告格式的最佳素材
+
+### 文章
+
+- **[Understanding SPEC benchmarks](https://www.anandtech.com/show/16315/the-ampere-altra-review/3) / 各種 SPEC 分析文章**
+  - **這篇說什麼**：怎麼解讀 SPEC 報告（CPU review 常用 SPEC）
+  - **為什麼值得讀**：實際的 SPEC 數字解讀範例
+
+### 替代 benchmark
+
+- **[LLVM test-suite](https://github.com/llvm/llvm-test-suite)** — LLVM
+  - **為什麼值得讀**：免費的「真實程式 benchmark」集合，類似 SPEC 的方法論
+
+### 書籍
+
+- **《Computer Architecture: A Quantitative Approach》— benchmarking 章** — Hennessy & Patterson
+  - **讀哪幾章**：效能評估、benchmark 那節
+  - **為什麼值得讀**：benchmark 方法論的學術權威（geomean、誤用的理論基礎）
+
+下一章看 Coremark 和 Embench——RISC-V 和嵌入式的主力 benchmark，比 SPEC 輕量、免費、適合嵌入式。理解它們的結構和怎麼跑（這章能實際動手）。
 
 → [Ch 3 Coremark / Embench：RISC-V 與嵌入式主力](./03-coremark-embench.md)

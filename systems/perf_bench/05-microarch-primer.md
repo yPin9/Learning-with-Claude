@@ -1,275 +1,204 @@
 # Ch 5 — CPU 微架構速成：pipeline / OoO / ROB / cache
 
-> 目標：用最少篇幅讓你熟悉現代 CPU 微架構詞彙。讀完聽得懂 "IPC", "branch predictor", "ROB size", "L2 miss", "dispatch width" 等詞，足以跟硬體工程師對話。
+> **目標**：用最少篇幅讓你熟悉現代 CPU 微架構的詞彙和概念——pipeline（管線）、superscalar（超純量）、out-of-order（亂序執行）、ROB（重排序緩衝）、branch predictor（分支預測）、cache 階層。讀完你聽得懂 IPC、branch miss、ROB size、L2 miss、dispatch width 等詞，足以跟硬體團隊對話，也理解「效能數字背後的硬體」。這是讀懂 perf 事件（Ch 6）的前置。
 
-## 這章的目標不是成硬體設計師
+> **環境**：概念章。理解微架構是讀懂效能計數器的基礎。
 
-本章**不是**要你設計 CPU。是要你：
+## 為什麼效能工程師要懂微架構？
 
-- 讀 datasheet 看 IPC / cache / ROB 不陌生
-- 分析 perf output 時知道 "L1-icache-load-misses" 意味什麼
-- 跟 SiFive 硬體工程師聊 scheduling model 不失語
+效能計數器（Ch 6 的 perf events）會告訴你「IPC 0.3」「L2 miss rate 40%」「branch misprediction 5%」——但這些數字**只有懂微架構才能解讀**。IPC 低為什麼是問題？cache miss 怎麼影響效能？branch miss 為什麼慢？不懂微架構，這些數字就是天書。
 
-**3000 字版的 Hennessy & Patterson**。想深入：讀 H&P、讀 Agner Fog。
+而且 compiler 優化的目標就是「讓程式碼更適合微架構」——減少 cache miss（改善 locality）、減少 branch miss（讓分支可預測）、增加指令級平行（讓亂序執行能塞滿管線）。不懂微架構，你無法理解「為什麼這個優化有用」或「該加什麼優化」（Ch 14）。這章用最少篇幅給你微架構的核心概念——不是完整的計算機架構課，而是「效能工程師必須懂的微架構」，讓你能解讀效能數字、跟硬體團隊對話、理解 compiler 優化。
 
-## Pipeline 的五階段（教科書版）
+## 先建立直覺:工廠的流水線
 
 ```
-Fetch → Decode → Execute → Memory → Writeback
+現代 CPU = 一條高度優化的工廠流水線
+
+  基本 pipeline（管線）：把指令執行分成階段
+    取指(fetch) → 解碼(decode) → 執行(execute) → 寫回(writeback)
+    像工廠流水線：每個階段同時處理不同的指令
+    → 多條指令「重疊」執行（不是一條做完才下一條）
+        │
+  superscalar（超純量）：每個 cycle 處理「多條」指令
+    不只一條流水線，有多個執行單元
+    dispatch width = 每 cycle 能發射幾條指令（如 4-wide）
+        │
+  out-of-order（亂序執行）：不按程式順序執行
+    如果指令 A 在等記憶體（cache miss），先執行不相依的 B、C
+    → 不讓一條卡住的指令擋住整條管線
+    ROB（重排序緩衝）：記錄亂序執行的指令，最後按序「退休」
+        │
+  → 現代 CPU 用 pipeline + superscalar + OoO 榨出平行度
+    目標：每個 cycle 完成越多指令越好（高 IPC）
+    compiler 的工作：產生「能餵飽這個機器」的程式碼
 ```
 
-每個 stage 一個 cycle。一條指令 5 cycle。但**同時五條指令在不同 stage**：
+關鍵心智：現代 CPU 是高度優化的「流水線工廠」——**pipeline**（管線，指令分階段重疊執行）、**superscalar**（超純量，每 cycle 處理多條指令）、**out-of-order**（亂序，不讓卡住的指令擋住管線，用 ROB 管理）。目標是「每個 cycle 完成越多指令越好」（高 IPC）。compiler 的工作是產生「能餵飽這個機器」的程式碼。
+
+> 這章的微架構概念是讀懂 Ch 6（perf events）的前置。如果你修過計組課或 mtk_firmware 課的計組部分，這裡是複習。
+
+## IPC:效能的核心指標
 
 ```
-cycle:  0   1   2   3   4   5   6
-inst1:  F   D   E   M   W
-inst2:      F   D   E   M   W
-inst3:          F   D   E   M   W
+IPC（Instructions Per Cycle，每週期指令數）：
+
+  IPC = 執行的指令數 / CPU 週期數
+        │
+  IPC 越高 = 每個 cycle 完成越多指令 = 越有效率
+    IPC 1.0 = 每 cycle 完成 1 條（基本）
+    IPC 3.0+ = 每 cycle 完成 3 條（superscalar 發揮，好）
+    IPC 0.3 = 每 cycle 才 0.3 條（差！大部分 cycle 在「等」）
+        │
+  IPC 低的原因（CPU 在「等」什麼）：
+    - cache miss：等記憶體（最常見，最致命）
+    - branch misprediction：分支猜錯，管線清空重來
+    - 資料相依：指令 B 要等 A 的結果（沒平行度）
+    - 執行單元不足：某類指令的單元都忙
+        │
+  → IPC 是「CPU 用得多有效率」的指標
+    低 IPC = CPU 大部分時間在等（不是在算）
+    優化的目標常是「提高 IPC」（減少等待）
+        │
+  注意：高 IPC 不一定快（可能執行了很多無用指令）
+    要看 IPC × 頻率 × 指令數的整體（後述）
 ```
 
-**Throughput**：每 cycle 一條指令完成 → IPC = 1.
+> **IPC（每週期指令數）是效能的核心指標——低 IPC 表示「CPU 大部分時間在等而非在算」**。**IPC = 執行的指令數 / CPU 週期數**——它衡量「CPU 用得多有效率」。IPC 高（3.0+）= 每個 cycle 完成多條指令（superscalar 發揮得好）；IPC 低（0.3）= 大部分 cycle 在「等」（CPU 沒在算，在等東西）。**IPC 低的原因**（CPU 在等什麼）：(1) **cache miss**（等記憶體——最常見最致命，Ch 17 提過主記憶體比 L1 慢 100 倍）；(2) **branch misprediction**（分支猜錯，管線要清空重來，浪費好幾個 cycle）；(3) **資料相依**（指令 B 要等 A 的結果，沒有平行度可榨）；(4) **執行單元不足**（某類指令的單元都忙）。所以**低 IPC 是「CPU 在等」的信號**——優化的目標常是提高 IPC（減少這些等待：改善 cache locality、讓分支可預測、增加指令級平行）。**但要注意**：高 IPC 不一定代表程式快——可能執行了很多無用指令（IPC 高但指令數也多）。真正的執行時間是 `指令數 × CPI（=1/IPC）× cycle 時間`——所以要看整體（指令數 × IPC × 頻率），不能只看 IPC。compiler 優化可以：減少指令數（更少的工作）、提高 IPC（更有效率地執行）、兩者兼顧。理解 IPC，你看 perf stat 的 IPC 數字就知道「CPU 是在有效工作還是在等」——這是效能分析的起點。
 
-這是 1980 年代 RISC 的目標。現代 CPU 更複雜。
-
-## Super-scalar：多 issue
-
-現代 CPU 每 cycle 可以 issue 多條指令（不是 1 條）：
+## cache 階層:記憶體的速度鴻溝
 
 ```
-cycle:  0
-inst1:  F1D1E1M1W1
-inst2:  F2D2E2M2W2        ← 平行
-inst3:  F3D3E3M3W3        ← 平行
-inst4:  F4D4E4M4W4        ← 平行
+cache 階層（為什麼記憶體存取是效能關鍵）：
+
+  CPU 暫存器      ~0.3 ns   （最快，但極少）
+  L1 cache        ~1 ns     （小，~32-64 KB）
+  L2 cache        ~4 ns     （中，~256KB-1MB）
+  L3 cache (LLC)  ~10-40 ns （大，~數 MB-數十 MB，多核共享）
+  主記憶體 (RAM)  ~100 ns   （大，但慢 100 倍！）
+        │
+  cache 怎麼運作：
+    存取資料時，先找 L1 → 沒有(miss)找 L2 → ... → 最後 RAM
+    cache line：一次載入一塊（通常 64 bytes，不是單個 byte）
+    → 存取一個 byte 會載入整個 cache line（空間局部性）
+        │
+  cache miss 的代價（IPC 殺手）：
+    L1 miss → L2（多等幾 cycle）
+    LLC miss → RAM（等 ~100 ns = 幾百個 cycle！）
+    → 一個 LLC miss 可能讓 CPU 等幾百個 cycle（IPC 暴跌）
+        │
+  → cache 是記憶體速度鴻溝的橋樑
+    cache 命中 = 快；cache miss = CPU 枯等記憶體
+    優化記憶體存取模式（locality）是效能的關鍵（Ch 17 cachegrind）
 ```
 
-4-wide super-scalar → IPC 最高 4。
+> **cache miss 是 IPC 的頭號殺手——一個 LLC miss 讓 CPU 枯等幾百個 cycle，這是優化記憶體存取的根本原因**。CPU 和記憶體之間有巨大的速度鴻溝——CPU 每個 cycle 不到 1ns，但主記憶體存取要 ~100ns（**慢 100 倍**）。**cache 階層**（L1/L2/L3）是這個鴻溝的橋樑——常用資料放在快的 cache，存取時先找 L1→L2→L3→RAM（一層層找，越遠越慢）。關鍵概念：**cache line**（一次載入一塊，通常 64 bytes，不是單個 byte——所以存取相鄰資料快，這是 Ch 17 的 locality）。**cache miss 的代價**是 IPC 的頭號殺手——一個 **LLC（最後一層 cache）miss → 要去 RAM → 等 ~100ns = 幾百個 cycle**！在這幾百個 cycle，CPU 可能枯等（如果沒有其他不相依的指令可做），IPC 暴跌。這就是為什麼**記憶體存取模式（locality）是效能的關鍵**（Ch 17 的按行 vs 按列遍歷差好幾倍——純粹因為 cache 行為）。compiler 和程式設計師的重要優化是**改善 cache 行為**：循序存取（cache 友善）、資料結構佈局（常一起用的放近）、減少 working set（讓常用資料放得進 cache）。perf 能測 cache miss（Ch 6），cachegrind 能精確分析（Ch 17）。理解 cache 階層和 miss 的代價，你就懂了「為什麼記憶體存取模式這麼重要」「為什麼同樣的計算 cache 行為不同會差好幾倍」——這是現代效能（memory-bound 而非 compute-bound）的核心。很多現代程式的瓶頸不是「計算太多」而是「等記憶體」（cache miss），所以「優化記憶體存取」常比「優化計算」更有效。
 
-典型 CPU 的 issue width：
-
-- Cortex-M4: 1-wide
-- Cortex-A72: 3-wide
-- SiFive U74: 2-wide
-- SiFive P870: 6-wide
-- Apple M2 P-core: 8-wide (!!)
-- AMD Zen 4: 4-wide dispatch, 6-wide rename
-
-## Out-of-Order execution
-
-問題：一條 load miss L1 → wait 10 cycle → 下一條 dependent instruction 也 stall。
-
-OoO：CPU 看後面幾百條指令，找**不依賴**的先執行。load 在等 memory 時，unrelated 指令照常跑。
-
-關鍵資料結構：**Reorder Buffer (ROB)**。紀錄 in-flight 指令、等 retire。
-
-ROB 容量 = 「CPU 能看多遠」：
-
-- Cortex-M: 無 ROB（in-order）
-- Cortex-A72: ROB ~128
-- SiFive U74: in-order（無）
-- SiFive P870: ROB ~250
-- Apple M2: ROB ~670 (!)
-
-ROB 越大 → 越能吸收 memory latency → 但面積 / power 成本高。
-
-## Register renaming
-
-SSA-like 概念在硬體。ISA 的 architectural register（RISC-V 的 x0-x31）有限。OoO 需要更多 physical register 避免 false dependency。
-
-```asm
-add t0, a0, a1     ; t0 = first use
-sw  t0, ...
-add t0, a2, a3     ; 又用 t0 = overwrite
-```
-
-沒 rename → 第二個 `add` 等第一個 `sw`。
-有 rename → 硬體分配不同 physical reg → 兩個 `add` 可以並行。
-
-典型 physical register file 大小：
-
-- Cortex-A72: 128 int reg
-- Apple M2: 400+ (!)
-- SiFive P870: ~200
-
-## Branch prediction
-
-遇到 branch 才 fetch 下一條？太慢 → 猜一個、先 execute、猜錯 rollback。
-
-典型 branch predictor 準確度：
-
-- Simple pattern: 99%+
-- Hard data-dependent pattern: 50-80%
-- Sorted data: 99%+
-- Random data: 50%
-
-**Branch mispredict 成本**：10-20 cycle（pipeline flush + refetch）。Branch-heavy code 的主要瓶頸。
-
-## Memory hierarchy
+## 分支預測:猜測的代價
 
 ```
-Registers   ~1 cycle   ~256 bytes
-L1 cache    ~3-5       32-64 KB
-L2 cache    ~10-15     256 KB - 1 MB
-L3 cache    ~30-50     2-32 MB
-DRAM        ~150-300   GBs
-SSD / NVMe  μs         TBs
+branch prediction（分支預測）：CPU 怎麼處理 if/迴圈
+
+  問題：遇到 if（分支），CPU 不知道走哪邊
+    但 pipeline 要持續取指（不能停下來等判斷）
+        │
+  解法：分支預測器「猜」走哪邊，先執行（推測執行）
+    猜對：賺到（沒浪費）
+    猜錯（misprediction）：管線裡推測執行的都白做
+      → 清空管線、從正確的分支重新取指
+      → 浪費好幾個 cycle（pipeline 深度，10-20 cycle）
+        │
+  分支預測器很準（現代 >95%）：
+    規律的分支（迴圈、總是 true 的 if）很好預測
+    不規律的分支（資料相依的、隨機的）難預測
+        │
+  → branch misprediction 是 IPC 殺手（清管線重來）
+    優化：讓分支可預測（規律化）、用 branchless 技巧消除分支
+    perf 能測 branch-misses（Ch 6）
+        │
+  例：排序過的資料的分支比沒排序的好預測（經典的 branch prediction 範例）
 ```
 
-每層延遲 10× 增加、容量 10× 增加。
+> **branch misprediction（分支猜錯）讓管線清空重來，浪費 10-20 cycle——這是另一個 IPC 殺手**。CPU 遇到分支（if/迴圈）時不知道走哪邊，但 pipeline 要持續取指（不能停下等判斷）。解法是**分支預測器「猜」**走哪邊並推測執行——猜對就賺到，**猜錯（misprediction）就要清空管線**（推測執行的都白做）、從正確分支重新取指，浪費**好幾個 cycle（管線深度，10-20 cycle）**。現代分支預測器很準（>95%）——**規律的分支**（迴圈、總是 true 的 if）很好預測；**不規律的分支**（資料相依、隨機的）難預測。經典例子：對**排序過的資料**做條件判斷（如「if (x > 128)」）比沒排序的快很多——因為排序後分支變規律（一段都 true、一段都 false），預測器準；沒排序則隨機，預測器常猜錯。所以 **branch misprediction 是 IPC 殺手**（每次猜錯浪費 10-20 cycle）。優化方法：**讓分支可預測**（規律化資料/邏輯）、**branchless 技巧**（用算術/位元運算消除分支，如用條件移動 cmov 代替 if）。compiler 也會做分支優化（PGO 用 profile 知道分支的傾向，Ch 11）。perf 能測 branch-misses（Ch 6）。理解分支預測，你看到 perf 的高 branch-miss rate 就知道「程式有難預測的分支拖累效能」，並知道怎麼優化（規律化或 branchless）。這和 cache miss 是兩大 IPC 殺手——CPU 大部分的「等待」來自這兩個（等記憶體 = cache miss、清管線 = branch miss）。
 
-### Cache miss 的 3C
-
-- **Compulsory (Cold)**：第一次 access，必 miss
-- **Capacity**：working set 大於 cache
-- **Conflict**：不同 address map 到同 set → 互相踢出
-
-寫 code 時考慮：**keep working set small, access 連續、avoid conflict**。
-
-### Cache line 大小
-
-通常 64 byte (RISC-V / x86) 或 32/128 byte。每次 access 一次 load 整個 line。
-
-**False sharing**：兩個 thread 改同 cache line 的不同 variable → 互相 invalidate → 慢。
-
-## TLB (Translation Lookaside Buffer)
-
-virtual → physical address 的 cache。miss 時去 walk page table（慢）。
-
-- L1 DTLB: 32-64 entries
-- L2 TLB: 512-2000 entries
-
-**大 working set → TLB pressure**。Huge pages (2MB, 1GB) 減少 TLB miss。
-
-## Prefetcher
-
-硬體觀察 memory access pattern，自動 prefetch。
-
-典型 pattern：
-
-- Stride access (`arr[i], arr[i+8], arr[i+16]...`)：prefetcher 認得
-- Random access：prefetcher 幫不上
-- Pointer chasing：prefetcher 基本沒用
-
-**Prefetcher 是 modern CPU 的隱形武器**。寫 cache-friendly code 就在服侍它。
-
-## Speculation
-
-OoO + branch prediction 自然推向 speculation：
-
-- 執行猜測的 branch path
-- 執行猜測的 memory load
-- 結果存 ROB、等確認後 commit（或 discard）
-
-**Spectre / Meltdown 漏洞的根源**。2018 後硬體與軟體配合 mitigation。
-
-對 benchmark 意義：speculation 讓 "看起來 bad" 的 code 變快（因為 speculate 隱藏 stall）、讓 "看起來 good" 的 code 在 mitigation 後變慢（speculation window 縮小）。
-
-## IPC：Instructions Per Cycle
-
-**最重要的 metric**。衡量 CPU 效率。
+## 微架構詞彙速查
 
 ```
-IPC = instructions / cycles
+和硬體團隊對話的詞彙（讀懂這些）：
+
+  IPC / CPI          每週期指令數 / 每指令週期數（效能核心）
+  dispatch width     每 cycle 能發射幾條指令（如 4-wide superscalar）
+  ROB (Reorder Buffer)  亂序執行的指令緩衝（越大能榨越多平行）
+  branch predictor   分支預測器（準確率影響 IPC）
+  speculation        推測執行（猜測分支/資料先做）
+  cache hierarchy    L1/L2/L3 cache 階層
+  cache line         cache 的最小單位（通常 64 bytes）
+  TLB                位址翻譯快取（虛擬→實體位址，miss 也慢）
+  prefetch           預取（CPU 預測會用什麼，提前載入 cache）
+  in-flight          正在執行中（還沒退休）的指令
+  retire             指令「退休」（按序完成，OoO 的最後一步）
+  bound：
+    front-end bound  瓶頸在「取指/解碼」（如 I-cache miss、分支）
+    back-end bound   瓶頸在「執行」（如 D-cache miss、執行單元不足）
+        │
+  → 這些詞讓你能讀懂 perf 的 top-down 分析（Ch 6）
+    和硬體團隊討論「瓶頸在 front-end 還 back-end」
 ```
 
-對各類型 code 的典型 IPC：
-
-- Integer-heavy loop: 2-4
-- Memory-bound: 0.3-1.0
-- Branch-heavy: 1-2
-- Well-vectorized: 4+ (但 vector 指令 1 條 做多 ops)
-- Waiting on cache miss: <0.5
-
-**IPC 低 → 可能 opportunity**。但低 IPC 不一定壞（memory bound 是 fundamental）。
-
-## CPU vs system behavior
-
-Perf event 常分兩層：
-
-- **CPU 事件**：cache miss、branch miss、IPC
-- **System 事件**：context switch、page fault、interrupt
-
-兩者都影響效能。micro benchmark 常 CPU-bound、macro benchmark 兩者都重。
-
-## 現代 CPU 的 "Front-end / Back-end"
-
-```
-Front-end               Back-end
---------------          --------
-Fetch → Decode    →    Rename → Schedule → Execute → Retire
-- I-cache               - ROB
-- Branch pred           - Reservation station
-- Decoders              - Execution units
-                         - Writeback
-```
-
-Bottleneck 可能：
-
-- **Front-end bound**：fetch 不夠快（branch miss、I-cache miss）
-- **Back-end bound**：execute 不夠快（ALU 忙、memory wait）
-
-perf 有工具 (Top-down methodology) 幫你判斷。
-
-## Top-down 分析
-
-Intel 推的效能分析框架。把 slots 分類：
-
-```
-Retiring    - 實際做有用事 (目標)
-Bad Speculation - 猜錯、rollback
-Front-End Bound - fetch/decode 不夠
-Back-End Bound  - execute 不夠
-```
-
-`perf stat -M TopdownL1` 在新 Intel CPU 印這些 ratio。RISC-V 社群還在 adopt。
-
-## RISC-V microarchitecture 對照
-
-| CPU | Type | Issue | ROB | Freq |
-|-----|------|-------|-----|------|
-| SiFive E31 | In-order | 1 | - | <500 MHz |
-| SiFive U74 | In-order | 2 | - | 1.5 GHz |
-| SiFive P270 | OoO | 2 | 64 | 1.5 GHz |
-| SiFive P550 | OoO | 3 | 128 | 2 GHz |
-| SiFive P670 | OoO | 4 | 192 | 2.5 GHz |
-| SiFive P870 | OoO | 6 | 256 | 3.0 GHz |
-| Rivos Veyron | OoO | 8+ | 500+ | 3+ GHz |
-
-數字持續更新、可能不精確。看 whitepaper 為準。
-
-## 對 compiler 工程師的啟示
-
-知道微架構讓你做更好決策：
-
-- **低 IPC 的 hot function** → 看是 front-end 還是 back-end bound
-- **Branch-heavy** → 可能要 Zicond 或 branch-free pattern
-- **Memory bound** → 看 prefetcher 是否 work、可不可以 improve locality
-- **Vector 不夠飽和** → auto-vectorize miss 什麼 pattern
-
-## 常見誤會
-
-1. **「IPC = 1 是 target」**：現代 CPU 的 target 是 3-5. IPC=1 的 CPU 是 1990 年代水準。
-2. **「clock 越高越快」**：有關但不絕對。ARM 1.5 GHz 可能比 x86 2.5 GHz 的某 workload 快（IPC 差異）。
-3. **「L1 cache 命中就 fast」**：本身 fast，但 L1 容量小（32K）。working set 大 → L1 miss 必然。
-4. **「OoO 完全隱藏 memory latency」**：ROB 容量有限。長 latency miss 仍 stall。
-5. **「branch predictor 總是對」**：95-99%。但 hot loop 中 1% miss 也累積成大 overhead。
+> **front-end bound vs back-end bound 是現代效能分析的關鍵分類——它告訴你「瓶頸在取指還是執行」**。和硬體團隊對話需要這些詞彙，最重要的是**bound 的分類**（top-down 分析，Ch 6 會深入）：**front-end bound**（瓶頸在「**取指/解碼**」——CPU 餵不飽，如 I-cache miss、分支預測問題讓取指卡住）；**back-end bound**（瓶頸在「**執行**」——CPU 想算但被卡，如 D-cache miss 等記憶體、執行單元不足）。這個分類直接指向優化方向——front-end bound 要改善指令供給（減少 I-cache miss、改善分支）、back-end bound 要改善執行（減少 D-cache miss、增加平行度）。其他詞彙：**ROB**（重排序緩衝，越大能榨越多亂序平行）、**dispatch width**（每 cycle 發射幾條，如 4-wide）、**TLB**（位址翻譯快取，miss 也慢）、**prefetch**（預取，CPU 預測會用什麼提前載入）、**retire**（指令退休，按序完成）。這些讓你能讀懂 perf 的 **top-down 分析**（Ch 6——把效能瓶頸分類成 front-end/back-end/retiring/bad-speculation）和跟硬體團隊討論（「我們的 workload 是 back-end bound，主要是 D-cache miss」）。對 RISC-V/compiler 工作，這些詞彙是日常——compiler 優化要知道「目標微架構的 dispatch width、ROB size、cache 大小」才能產生最適合的程式碼。理解這些詞彙，你不只能解讀效能數字，還能參與微架構層級的效能討論。這章是「最少篇幅的微架構」——不是完整的計組課，而是「效能工程師必須懂的」。深入的微架構（亂序執行的細節、各種預測器、記憶體一致性）是計算機架構課的內容，但這些核心概念足以讓你解讀 perf 事件（Ch 6）和理解 compiler 優化（Part 4）。
 
 ## 動手練習
 
-1. 跑 `lscpu` 看你 CPU 的 L1/L2/L3 size、core 數。
-2. 寫一個 cache-friendly vs cache-unfriendly loop，用 perf 對比 miss 數。
-3. 寫 branch-heavy vs branch-free 版本，量 branch miss。
-4. 讀 SiFive P870 的 whitepaper，認出 pipeline width / ROB size / cache hierarchy。
-5. 用 `perf stat -M TopdownL1`（若 CPU 支援）分析一個 program，看 Retiring / Bad Spec / FE/BE bound 分布。
+1. 理解 IPC：用 `perf stat ./prog` 看 IPC，判斷程式是「有效工作」還是「在等」
+
+2. cache 階層：查你的 CPU 的 cache 大小（`lscpu | grep cache`），理解 L1/L2/L3
+
+3. 分支預測：寫一個對排序 vs 未排序資料做條件判斷的程式，用 perf 比較 branch-misses
+
+4. 詞彙：對照本章的詞彙表，確認你能解釋 IPC/cache miss/branch miss/front-back-end bound
+
+5. 對話練習：用微架構詞彙描述一個效能問題（如「這個程式 back-end bound，D-cache miss 高」）
+
+## 本章重點整理
+
+- 現代 CPU 是流水線工廠：pipeline（重疊執行）+ superscalar（每 cycle 多條）+ OoO（亂序，ROB 管理）
+- IPC（每週期指令數）是效能核心：低 IPC = CPU 在等（cache miss/branch miss/相依），高 IPC = 有效率
+- cache 階層（L1~RAM 速度差 100 倍）；cache miss 是 IPC 頭號殺手（LLC miss 等幾百 cycle）——locality 是關鍵
+- branch misprediction 讓管線清空重來（浪費 10-20 cycle）；規律分支好預測、不規律難——優化用規律化/branchless
+- front-end bound（取指瓶頸）vs back-end bound（執行瓶頸）是 top-down 分析的關鍵分類
 
 ## 自我檢核
 
-- [ ] 我能解釋 pipeline / super-scalar / OoO 的差別
-- [ ] 我知道 ROB / physical register 的角色
-- [ ] 我能畫 memory hierarchy 並給各層典型 latency
-- [ ] 我能看 IPC 數字判斷 code 是否 efficient
-- [ ] 我知道 Front-end vs Back-end bound 的差異
+- [ ] 理解 pipeline/superscalar/OoO 怎麼榨出平行度
+- [ ] 知道 IPC 是什麼，低 IPC 代表 CPU 在等什麼
+- [ ] 理解 cache 階層和 cache miss 為什麼是 IPC 殺手
+- [ ] 理解 branch misprediction 的代價和優化方向
+- [ ] 能用微架構詞彙（front/back-end bound 等）描述效能問題
 
-下一章專攻 performance event —— perf 工具能量的具體事件清單。
+## 延伸閱讀
+
+### 書籍
+
+- **《Computer Architecture: A Quantitative Approach》— Ch 3 (ILP)** — Hennessy & Patterson
+  - **讀哪幾章**：Ch 2（記憶體階層）、Ch 3（指令級平行、亂序執行、分支預測）
+  - **這本書的定位**：計算機架構的權威；微架構的完整版
+  - **前提**：本章
+
+- **《Performance Analysis and Tuning on Modern CPUs》— Ch 3 (CPU Microarchitecture)** — Denis Bakhvalov
+  - **讀哪幾章**：Ch 3（微架構）、Ch 4（效能計數器）
+  - **這本書的定位**：從效能分析角度講微架構，最貼近本課
+  - **連結**：免費 PDF
+
+### 文章
+
+- **[Modern CPU 微架構](https://www.lighterra.com/papers/modernmicroprocessors/)** — Jason Robert Carey Patterson
+  - **這篇說什麼**：現代微處理器的完整介紹（pipeline/superscalar/OoO）
+  - **為什麼值得讀**：本章的視覺化深入版，圖很多
+
+- **[Agner Fog 的 microarchitecture manual](https://www.agner.org/optimize/)** — Agner Fog
+  - **這篇說什麼**：各 x86 微架構的詳細分析
+  - **為什麼值得讀**：微架構優化的權威（雖然 x86，概念通用）
+
+下一章看 perf 的效能事件——IPC、cache miss、branch miss 怎麼用 perf 實際測量，以及 top-down 分析。把這章的微架構概念變成可測量的數字。
 
 → [Ch 6 Performance events：IPC / cache miss / branch miss](./06-performance-events.md)

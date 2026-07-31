@@ -1,376 +1,240 @@
-# Final Project — Performance Case Study
+# Final Project — Performance case study + compiler optimization proposal
 
-> 目標：整合全課程 — 選一個真實 workload、profile、找 bottleneck、propose compiler-level optimization、validate。產出 2-3 頁 professional report。這份 report 可以直接給 SiFive 面試當 portfolio。
+> **目標**：整合整門課（Ch 0–14）的所有能力——選一個真實的 workload、嚴謹地 profile、找出瓶頸、分析為什麼、提出 compiler-level 的優化建議、驗證效果，產出一份**專業的 performance case study + compiler optimization proposal**（2-3 頁）。這份報告整合了測量嚴謹（Part 1）、微架構分析（Part 2）、profiling 工具（Part 3）、compiler 優化（Part 4）和思考框架（Ch 14）。完成後你有一份能直接當 portfolio 的作品——展示「分析效能、提出 compiler 改進」的完整能力，這正是 SiFive job spec 的核心。
 
-## 為什麼這是好 final project
+## 專案總覽
 
-1. **模擬 SiFive 工作流**：拿到 benchmark regression → profile → propose → validate
-2. **整合 Ch 1-14 的知識**：每章的技能都會用上
-3. **可放 GitHub**：做完直接當履歷 showcase
-4. **Scale 可調**：小 workload 一天、大 case study 兩週
-
-## 流程
+你要對一個真實 workload 做完整的 performance case study：
 
 ```
-Phase 1: Pick a workload (1 day)
-Phase 2: Establish baseline (1-2 days)
-Phase 3: Profile to find hot function (1-2 days)
-Phase 4: Analyze bottleneck (2-3 days)
-Phase 5: Propose + implement optimization (3-7 days)
-Phase 6: Validate + regression test (1-2 days)
-Phase 7: Write report (1-2 days)
+Performance case study 的完整流程：
+
+  1. 選 workload（真實的，有優化空間）
+     如：一個演算法（排序/矩陣/壓縮）、一個 benchmark 的子項、自己的程式
+        │
+  2. 測量基準（baseline）
+     嚴謹測量（控制環境、多次、統計）—— Part 1
+        │
+  3. Profile 找熱點
+     perf 找出 hot function/loop —— Part 3
+        │
+  4. 分析瓶頸
+     perf events（IPC/cache/branch）判斷瓶頸類型 —— Part 2
+     llvm-mca/vectorization report 分析結構 —— Part 3/4
+        │
+  5. 提出優化（source + compiler）
+     瓶頸 → 優化對應（Ch 14 的思考框架）
+     source 改進 + compiler-level 建議
+        │
+  6. 驗證
+     優化後嚴謹測量（統計顯著嗎）+ perf 確認瓶頸改善
+        │
+  7. 寫報告
+     case study（分析過程）+ compiler optimization proposal（建議）
+        │
+  → 從「一個 workload」到「完整的分析 + compiler 建議」
+    這是 SiFive compiler 工程師的核心交付
 ```
 
-總共 10-20 天。一般人選 2 週 scope。
+這個 case study 整合了全課——它展示你能「拿到一個 workload，系統地分析效能、定位瓶頸、提出有資料支撐的 compiler 優化建議、驗證」。這是 perf_bench 的終極能力，也是 SiFive job spec「analyze performance results and suggest new compiler optimizations」的完整展現。
 
-## Phase 1: Pick workload
+## 為什麼做這個專案？
 
-選擇 criterion：
+這正是 SiFive compiler 工程師的核心工作——benchmarking team 找出某個 workload 慢，你要做完整的分析：profile 找瓶頸、理解為什麼、提出 compiler 能做的優化、驗證效果。前面的練習各做了一塊（練習 A 報告、練習 B llvm-mca），這個 Final 整合成「完整的 case study + compiler proposal」。
 
-- **Real-world**：不是 toy code
-- **Compute-bound**：profile 有意義（否則 I/O bound 工具 useless）
-- **Reproducible**：能固定 input 多次跑
-- **Open-source**：方便 share / review
+完成它，你獲得：一份能直接當 **portfolio 的作品**（展示完整的效能分析和 compiler 優化能力）、把全課知識整合應用的經驗、以及「面對任何 workload，系統地分析並提出 compiler 改進」的能力。這份報告可以直接給 SiFive 或其他 compiler/效能職位的面試當作品集——它證明你具備這個領域的核心能力。
 
-### 候選
+## 整合的課程概念
 
-**Level 1（簡單）**：
-- `zlib` compression/decompression
-- `libpng` decode
-- `JSON parsing` (simdjson)
-- `regex matching` (pcre)
+| 階段 | 整合的章節 |
+|---|---|
+| 嚴謹測量 | Ch 0（環境）、Ch 4（統計）|
+| benchmark 選擇 | Ch 1-3（micro/macro、SPEC、Coremark）|
+| 微架構分析 | Ch 5-6（微架構、perf events、top-down）|
+| profiling | Ch 7-9（perf、llvm-mca、flame graph）|
+| compiler 優化 | Ch 10-13（flag、PGO、LTO、vectorization）|
+| 思考框架 | Ch 14（hot loop → 優化）|
 
-**Level 2（中等）**：
-- `OpenSSL AES`（crypto）
-- `libjpeg-turbo` decode
-- `miniz` compression
-- `SQLite query`
+整門課至少 70% 的核心概念都用上了——這是 Final Project 的標準。
 
-**Level 3（進階）**：
-- `Coremark` + specific sub-benchmark
-- `SPEC` 某個 single benchmark (if you have license)
-- `FFmpeg transcode` (一個 codec)
+## 任務規格
 
-**建議**：第一次做選 Level 1。
+選一個 workload，產出 2-3 頁的 case study + compiler proposal：
 
-## Phase 2: Establish baseline
+### 報告結構
 
-Build workload、準備固定 input、量 baseline 效能：
+1. **Workload 介紹**：是什麼、為什麼選它、有什麼優化空間
+2. **測量環境與方法**（Ch 0/4）：完整揭露、嚴謹的方法
+3. **Baseline 測量**（Ch 4）：基準效能 + 統計
+4. **Profiling**（Ch 7-9）：熱點在哪（perf/flame graph）
+5. **瓶頸分析**（Ch 5-6）：瓶頸類型（perf events/top-down）+ 結構分析（llvm-mca/report）
+6. **優化**（Ch 10-14）：source 改進 + compiler-level 建議
+7. **驗證**（Ch 4/6）：優化後的效能（統計顯著）+ 瓶頸改善（perf）
+8. **Compiler optimization proposal**：具體的 compiler 改進建議（有資料支撐）
 
-```bash
-# Example: zlib compress
-git clone https://github.com/madler/zlib
-cd zlib
-./configure
-make
+### 驗收標準
 
-# 準備 input
-dd if=/dev/urandom of=test.dat bs=1M count=100
+- 測量嚴謹（控制環境、多次、統計顯著）
+- profiling 找到真實的熱點（不是猜）
+- 瓶頸分析正確（用 perf/llvm-mca 的資料）
+- 優化有效（驗證統計顯著）
+- compiler proposal 具體可行動（有資料支撐）
+- 報告專業（可信、可重現、誠實）
 
-# Baseline measurement
-hyperfine --warmup 3 --runs 10 \
-    './minigzip -d < test.gz > /dev/null'
-```
-
-記錄：mean、stddev、CV、p-value。
-
-## Phase 3: Profile
-
-```bash
-perf record -F 997 -g --call-graph dwarf ./minigzip -d < test.gz > /dev/null
-perf report
-```
-
-或 FlameGraph：
-
-```bash
-perf script | stackcollapse-perf.pl | flamegraph.pl > flame.svg
-```
-
-**找 top 3 hot function**。通常佔 50%+ total time。
-
-典型結果（zlib）：
+## 建議的 workload
 
 ```
-30% inflate_fast
-25% adler32
-15% inflate
-...
+適合的 workload（有明顯瓶頸和優化空間）：
+
+  1. 矩陣運算（matmul、transpose）：
+     cache-bound（存取模式）+ 能向量化 → loop tiling/interchange/向量化
+        │
+  2. 排序/搜尋：
+     branch-bound（比較分支）→ branchless/PGO
+        │
+  3. reduction（sum/dot product）：
+     dependency-bound（累加鏈）→ 打破相依鏈/向量化
+        │
+  4. 字串/壓縮處理：
+     混合瓶頸 → 多種優化
+        │
+  5. 一個 benchmark 的子項（Coremark/Embench 的某個）：
+     真實的 workload → 完整分析
+        │
+  → 選一個你能完整分析的（有明顯瓶頸、優化空間、能驗證）
+    矩陣運算是好的起點（cache + 向量化，經典且豐富）
 ```
 
-## Phase 4: Analyze
+## 完整參考解答
 
-選 top 1 (`inflate_fast`)。看 asm：
+**這是 Final Project，務必自己做一個完整的 case study！** 下面是一個範例的骨架，你要選自己的 workload 完整做。
 
-```bash
-objdump -d libz.so | less
-# 搜尋 inflate_fast
-```
-
-跑 perf annotate：
-
-```bash
-perf annotate inflate_fast
-```
-
-看哪些 instruction 佔時間、哪個 basic block 熱。
-
-### 跑 llvm-mca 深度分析
-
-抓 hot inner loop asm、加 MCA markers、run。找 bottleneck 類型：
-
-- Long dependency chain → needs reordering
-- Resource saturation → needs different instruction mix
-- Memory bound → needs prefetch or cache-friendly layout
-
-### 用 perf stat 驗證
-
-```bash
-perf stat -d ./minigzip -d < test.gz > /dev/null
-```
-
-看 IPC、cache miss、branch miss。給 diagnosis 方向。
-
-## Phase 5: Propose optimization
-
-**不要 hack source**。Propose compiler-level 改動。
-
-### 可能的提案
-
-**A. Pattern-based**：發現 compiler 漏某個 pattern
-```
-"inflate_fast 中的這 4 條 asm 序列可以用 X 指令 1 條取代，
- 但 LLVM 的 DAGCombine 沒認這個 pattern。建議在 
- RISCVISelLowering.cpp 加一條 combine rule。"
-```
-
-**B. Scheduling-based**：scheduler 排得不好
-```
-"SiFive P670 的 sched model 沒反映 mul + load 的 pipelining。
- 實際 hardware 可 parallel、model 串行化。改 SiFive P670 
- sched model 的 WriteIMul 資源定義。"
-```
-
-**C. Intrinsic-based**：某 op 沒對應 intrinsic
-```
-"inflate 用的 CRC calculation 應該能用 `clmul`（Zbc）。
- 但 LLVM 沒對 CRC pattern 自動 match。建議加 pattern 
- 或至少 intrinsic 讓 source 可呼叫。"
-```
-
-**D. Vectorization**：loop 該 vec 但沒
-```
-"adler32 的 inner loop 是完美 vectorize candidate。
- Compiler report miss 原因是 cost model 保守。tune 
- vectorizer cost 讓它願意 vectorize RVV。"
-```
-
-選一個，formalize。
-
-### 實作 MVP
-
-如果有能力，**實際 prototype** 改動：
-
-- 加 DAGCombine rule
-- 改 scheduling model
-- 手寫 intrinsic 版 source → compare asm + perf
-
-這讓 proposal 有 data 背書，比純紙上談兵強 10 倍。
-
-## Phase 6: Validate
-
-對你的 optimization：
-
-1. **Micro**：改前後 asm 差異
-2. **Meso**：isolated function benchmark
-3. **Macro**：full workload benchmark
-4. **Regression**：其他 workload 沒變慢
-
-寫對比 table：
-
-| Config | Baseline | Your Opt | Δ |
-|--------|----------|----------|---|
-| inflate_fast (micro) | 100 ns | 75 ns | -25% |
-| minigzip (meso) | 2.3 s | 2.0 s | -13% |
-| other benchmark A | 1.0 s | 1.0 s | 0% (safe) |
-| other benchmark B | 0.8 s | 0.78 s | -2% (pleasant) |
-
-## Phase 7: Report
-
-Format：
+<details>
+<summary>範例骨架：矩陣轉置的 case study</summary>
 
 ```markdown
-# Performance Case Study: [Workload]
+# Performance Case Study: 矩陣轉置優化
 
-**Author**: Your name
-**Date**: 2026-XX-XX
-**Target**: [CPU]
+## 1. Workload
+矩陣轉置（transpose）—— B[j][i] = A[i][j]。
+選它因為：cache 行為是經典的優化案例，有明顯的瓶頸和優化空間。
 
-## Executive Summary
+## 2. 測量環境
+- CPU: [型號], performance governor, turbo off
+- GCC [版本], -O2 -march=native
+- 矩陣大小: 4096×4096 float
 
-Analyzed [workload] performance on [target]. Identified 
-[X% / description] optimization opportunity in [hot function]. 
-Propose compiler-level fix in [where]. Prototype shows 
-[gain]% improvement with no regression in [other 
-benchmarks tested].
+## 3. Baseline（naive 轉置）
+```c
+void transpose(float *A, float *B, int n) {
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            B[j*n+i] = A[i*n+j];   // B 按列寫（cache 不友善！）
+}
+```
+hyperfine: 85ms ± 2ms（n=4096）
 
-## Workload
-[description, why picked]
+## 4. Profiling
+perf record/report: transpose 是 hot（99%，明顯）。
 
-## Baseline
-[number, environment, method]
+## 5. 瓶頸分析
+perf stat:
+- IPC: 0.4（低 → CPU 在等）
+- LLC-load-misses: 高
+- → **cache-bound**（B[j*n+i] 按列寫，每次跳一整行 = cache miss）
+cachegrind: 確認 B 的寫入是 miss 源（D1 miss rate 高）
 
-## Profile
-[flamegraph + perf report excerpt]
-Top 3 hot functions:
-1. inflate_fast (30%)
-2. adler32 (25%)
-3. inflate (15%)
+## 6. 優化：cache blocking (tiling)
+```c
+void transpose_tiled(float *A, float *B, int n, int block) {
+    for (int ii = 0; ii < n; ii += block)
+        for (int jj = 0; jj < n; jj += block)
+            for (int i = ii; i < ii+block && i < n; i++)
+                for (int j = jj; j < jj+block && j < n; j++)
+                    B[j*n+i] = A[i*n+j];   // 分塊：block 放進 cache
+}
+```
+原理：把矩陣分成 block×block 的塊，每塊放得進 cache → 減少 cache miss。
 
-## Bottleneck Analysis
+## 7. 驗證
+hyperfine: 35ms ± 1ms（block=64）→ **快 2.4 倍**（CI 不重疊，顯著）
+perf stat: IPC 從 0.4 升到 1.2，LLC miss 大幅減少 → 瓶頸改善確認
 
-### inflate_fast
-[perf annotate + llvm-mca details]
+## 8. Compiler Optimization Proposal
+**發現**: naive transpose 是 cache-bound（perf: IPC 0.4, LLC miss 高），
+cache blocking 讓它快 2.4 倍（IPC 1.2）。
 
-Diagnosis: [what's wrong]
+**Compiler 建議**:
+1. compiler 的 loop tiling pass（如 GCC 的 -floop-block / Polly）應該能自動做這個。
+   建議檢查為什麼預設沒觸發（cost model? 啟用條件?）。
+2. 對 RISC-V，tiling 的 block size 應該根據目標 core 的 cache 大小調整
+   （SiFive U74 的 L1/L2 大小 → 對應的 block size）。
+3. 結合向量化：tiling 後的內層 loop 可以向量化（RVV）進一步加速。
 
-## Optimization Proposal
-
-[What to change, where, why]
-
-### Prototype (if any)
-[details + code snippet + patch link]
-
-## Validation
-
-[before / after tables]
-- Micro: inflate_fast speed Δ
-- Macro: full minigzip speed Δ  
-- Regression: other 5 workloads tested, no significant change
-
-## Discussion
-
-### Alternative approaches considered
-[didn't go with these because ...]
-
-### Generalization
-[this pattern can also help XXX]
-
-## References
-
-[links to relevant LLVM commits, blog posts, specs]
-
-## Appendix: Raw Data
-[full numbers, for reproducibility]
+**資料支撐**: perf（cache-bound 的證據）、cachegrind（miss 源）、
+hyperfine（2.4x 提升，統計顯著）。
 ```
 
-## 評估標準
+**case study 說明**：
 
-**60 分**（入門）：
-- 完成 Phase 1-4（identify hot + propose）
-- 紙上 proposal，no implementation
+- **完整流程**：workload → baseline（嚴謹測量）→ profile（找熱點）→ 瓶頸分析（cache-bound，用 perf/cachegrind 的資料）→ 優化（tiling）→ 驗證（統計顯著 + perf 確認）→ compiler proposal
+- **資料驅動**：每個結論有資料支撐（perf 的 IPC/cache miss、cachegrind 的分析、hyperfine 的統計）
+- **compiler proposal**：具體（loop tiling）、可行動（檢查 pass 為什麼沒觸發、為 RISC-V 調 block size）、有資料支撐
+- **誠實/嚴謹**：統計顯著（CI 不重疊）、揭露條件（可重現）
+- **核心**：這展示了「從 workload 到 compiler 建議」的完整能力——SiFive 工作的核心
 
-**75 分**：
-- 加 Phase 5 prototype（even if rough）
-- 有 validation 數據
+</details>
 
-**90 分**：
-- Proposal 是 real LLVM-level 改動
-- Prototype compile 得起來
-- Micro + macro benchmark 驗證
+## 測試用案例（自我檢查報告品質）
 
-**100 分**：
-- 改動 submitted 成 LLVM PR
-- 有 upstream engagement
-- Community feedback
+| 檢查項 | 標準 |
+|---|---|
+| 測量嚴謹 | 控制環境、多次、CI、顯著性 |
+| profiling | 找到真實熱點（perf/flame graph）|
+| 瓶頸分析 | 用 perf/llvm-mca 的資料（不是猜）|
+| 優化驗證 | 統計顯著 + perf 確認瓶頸改善 |
+| compiler proposal | 具體、可行動、資料支撐 |
+| 專業度 | 可信、可重現、誠實 |
 
-即使 60 分也是強履歷。越高越好、但不 force 到 100。
+## 延伸挑戰（加分）
 
-## 推薦 workload + optimization 組合
+- **挑戰一**：多種優化——對一個 workload 嘗試多種優化（tiling + 向量化 + 多累加器），分析各自的貢獻
 
-以下是 pre-thought combination，方便你入手：
+- **挑戰二**：RISC-V——在 RISC-V 上做 case study，包含 RVV 向量化的分析（SiFive 最相關）
 
-### Combo 1: zlib + Zbb popcount
+- **挑戰三**：PGO/LTO——對一個較大的 workload，加入 PGO/LTO 的效果分析
 
-- Workload: zlib compress
-- Hot function 可能含 popcount-style code
-- Zbb 可以加速
+- **挑戰四**：對比 compiler——比較 gcc vs clang 對同 workload 的 code，分析優化差別，提出建議
 
-### Combo 2: libpng + RVV
+- **挑戰五**：寫成 blog/talk——把 case study 寫成一篇技術 blog 或準備成一個 talk（這是真實工程師分享的形式）
 
-- Workload: PNG decode
-- Hot inner loop (filter unfold) 適合 vectorize
-- 檢查 RVV auto-vec、若無 propose 改進
-
-### Combo 3: miniz + scheduling
-
-- Workload: miniz (zlib alternative)
-- 找 hot function、看 sched 有無改善空間
-- Propose sched model tune
-
-### Combo 4: Coremark + pattern
-
-- Workload: Coremark 的 list 或 matrix phase
-- 找 compiler 漏的 pattern
-- Propose DAGCombine rule
-
-## GitHub showcase
-
-Repo 結構：
-
-```
-perf-case-study-minigzip/
-├── README.md               ← main report
-├── data/
-│   ├── baseline.csv
-│   ├── optimized.csv
-│   ├── regression.csv
-│   └── flamegraphs/
-├── scripts/
-│   ├── bench.sh
-│   ├── analyze.py
-│   └── plot.py
-├── prototype/
-│   └── llvm-patch.diff
-└── docs/
-    ├── proposal.md
-    └── background.md
-```
-
-面試時 Cursor 帶 interviewer 走過這個 repo、5 分鐘總結。
-
-## 給履歷的條目
-
-```
-Performance Case Study: minigzip Decompression on RISC-V SiFive U74
-- Profiled 100MB compression workload, identified inflate_fast as top hot
-- Diagnosed backend pressure bottleneck via llvm-mca pipeline analysis
-- Proposed Zbb-based pattern match for CRC inner loop
-- Prototyped LLVM DAGCombine rule, measured 12% minigzip speedup
-- No regression across 5 other benchmarks (Coremark, SPEC subset, custom)
-- GitHub: [link]
-```
-
-## 最後
-
-這 project 完成後你有：
-
-- 一份 professional performance report
-- GitHub portfolio
-- Performance analysis 從頭到尾的 experience
-- 面試時 demo 的彈藥
-
-**這是 SiFive job spec 第二條 responsibility 的直接證明**。
-
----
+- **挑戰六**：投稿/PR——如果你的分析發現了 compiler 的真實改進機會，考慮在 LLVM/GCC 的 issue 提出（真實的貢獻）
 
 ## 自我檢核
 
-- [ ] 我選好 workload 並 establish baseline
-- [ ] Profile 找到 hot function
-- [ ] Analysis 用 llvm-mca + perf 雙角度
-- [ ] Proposal 是 compiler-level（不是 source hack）
-- [ ] Validation 有 micro + macro + regression
-- [ ] Report 放 GitHub、LinkedIn 可 link
+完成這個專案後，你應該能回答：
 
-完成任一 Stretch Goal (prototype / LLVM PR)：你已經是 SiFive level compiler engineer。
+- [ ] 我能對任何 workload 做完整的效能分析（測量→profile→瓶頸→優化→驗證）
+- [ ] 我的測量嚴謹（控制環境、統計顯著、可重現）
+- [ ] 我能用 perf/llvm-mca 等工具定位瓶頸（不是猜）
+- [ ] 我能從瓶頸提出有資料支撐的 compiler 優化建議
+- [ ] 面試被問「你怎麼分析效能、提出 compiler 優化」，我能展示這份 case study
+- [ ] 我理解這整合了全課（測量嚴謹 + 微架構 + 工具 + compiler 優化 + 思考框架）
+
+## 結語：你現在站在哪裡
+
+完成這門課和這個 case study，你已經從「會寫程式但效能靠感覺」進化到「能量化分析效能、提出 compiler 優化」。你知道：
+
+- 怎麼做嚴謹的測量（控制環境、統計、破除迷思）（Part 1）
+- CPU 微架構和效能事件（IPC/cache/branch/top-down）（Part 2）
+- profiling 工具（perf 找熱點、llvm-mca 分析指令、flame graph 視覺化）（Part 3）
+- compiler 優化的真相（flag/PGO/LTO/vectorization，破除「越高越快」迷思）（Part 4）
+- 從 hot loop 倒推「該加什麼優化」的思考框架（Ch 14）
+
+這些不是「會用工具」，是**量化分析效能、提出 compiler 改進的能力**。你能面對任何 workload，系統地分析、定位瓶頸、提出有資料支撐的優化建議——這正是 SiFive job spec「analyze performance results and suggest new compiler optimizations」要的能力。
+
+最重要的是 perf_bench 的核心信條——**實測取代空談、破除迷思、資料驅動**。你不再說「這段 code 很慢」（沒用），而是說「這個 function 的 IPC 0.3、LLC miss 40%，是 cache-bound，建議 loop tiling，預期提升 X%，資料如下」（有用、可信、可行動）。這是效能工程師和「憑感覺優化」的人的根本差異。
+
+接下來往哪去？這門課的「參考資料」（見 [README](./README.md)）列了進階方向：Brendan Gregg 的《Systems Performance》（效能分析的全面權威）、Agner Fog 的微架構手冊（指令層優化的極致）、Denis Bakhvalov 的書（現代 CPU 效能分析）。但更重要的是——**去分析真實的 workload、去提出真實的優化**。你的工具和框架是放大鏡，真實的效能問題是最好的老師。如果你的目標是 SiFive 或 compiler 效能工作，這份 case study 就是你的入場券。
+
+恭喜你走到這裡。你現在有了量化效能、提出 compiler 優化的能力。
