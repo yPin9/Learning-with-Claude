@@ -82,6 +82,16 @@
   - Userland pwn 地基（接 kernel_pwn）：stack smashing → ROP 全譜 → format string → glibc heap 深挖（tcache/House of X）→ 現代無 hook 世界（FSOP/exit handler）+ seccomp 沙箱逃逸/反調試，全程 WSL glibc 2.39 實測，41 章 + 7 練習 + 復刻 pwnable.tw 題鏈 final
 - [browser_pwn](./security/browser_pwn/README.md)
   - V8 一條到底的瀏覽器 pwn（pwn 天梯頂端，接 binary_exploitation/kernel_pwn）：物件模型（Map/elements kind/pointer compression）→ Ignition/TurboFan/Maglev 管線 → addrof/fakeobj/任意讀寫原語 → TurboFan type confusion 五大家族（CVE-2018-17463/Math.expm1/JSON hole）→ 找洞（patch-diff + Fuzzilli）→ 任意 R/W 繞 V8 Sandbox/CET（data-only）→ CTF+full chain 全景，自編 V8 15.3 真跑驗證，41 章 + 6 練習 + 真實 CVE 到 exploit final
+- [android_reversing](./security/android_reversing/README.md)
+  - 安卓逆向從 APK 到 ART 底層：App 層還原（DEX/smali/Java）→ Frida 動態插樁 → Native 逆向（.so/ARM64/JNI）→ 加固對抗（脫殼/反調試/混淆）→ ART 系統底層，安全研究/App 破解導向，AVD 實測，42 章 + 5 練習 + 綜合防護 App 拆解 final
+- [android_app_vuln](./security/android_app_vuln/README.md)
+  - 安卓 App 漏洞分析（接 android_reversing）：以 OWASP MASVS/MASTG 為骨架、bug bounty 導向，元件/IPC 濫用 → Intent redirection/PendingIntent 劫持 → Provider SQLi/path traversal → deeplink/WebView RCE/task hijacking → 儲存/crypto 誤用/secret 洩漏 → 權限/zip slip → 自動化(MobSF/semgrep)+報告，drozer/靶場實戰，16 章 + 3 練習 + MASTG 評估報告 final
+- [android_exploitation](./security/android_exploitation/README.md)
+  - 安卓系統漏洞利用（接 binary_exploitation/kernel_pwn）：把 glibc/x86 pwn 技能移植到 Android — bionic + scudo/jemalloc heap 破壞 → ARM64 PAC/BTI/MTE 緩解對抗 → Binder/Parcel LPE → SELinux/Zygote 沙箱 → Android kernel 驅動利用 → patch diff 到穩定 exploit，32 章 + 4 練習 + CVE 到 exploit final
+- [cloud_container_security](./security/cloud_container_security/README.md)
+  - 把 pwn 攻擊直覺搬進雲端，紅隊視角、AWS 主線 + Azure/GCP 對照：IAM 提權 → 服務攻擊面（S3/metadata SSRF/Lambda）→ 容器逃逸 → Kubernetes 淪陷（從零教 K8s）→ 供應鏈/CI-CD → 補回防禦偵測（CSPM/Falco/CloudTrail），39 章 + 4 練習 + 紅隊 engagement final
+- [vm_escape](./security/vm_escape/README.md)
+  - VM escape pwn，pwn 天梯上 browser_pwn 旁的另一座山：從 guest 內部打穿 hypervisor 拿 host code exec，QEMU/KVM 主線 + VirtualBox + VMware，含 VT-x/EPT/KVM 原理補強 → device emulation/MMIO/DMA 當原語 → heap overflow/UAF/劫 callback/ROP → VENOM/virtio CVE 復刻 → seccomp 繞過/Firecracker/full-chain，41 章 + 5 練習 + CVE 到完整逃逸 final
 
 ### soft_skills/
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
@@ -94,6 +104,8 @@
   - 戰術 + 殘局 + 中局，最後 5 盤 Rapid 自我復盤
 - [go](./soft_skills/go/README.md)
   - 圍棋從零到業餘高段，死活/手筋/形 重，AI 復盤(KataGo) 整 Part，50 盤升段 final
+- [reading_code](./soft_skills/reading_code/README.md)
+  - 讀碼即逆向：把 binary RE 攻堅直覺移植到讀陌生大型 source，40 ch + 4 練習 + 冷啟動攻堅 final，工具與方法並重（rg/ctags/cscope/clangd/tree-sitter/gdb/trace），全程 WSL redis 真跑
 
 ### automation/
 - [n8n](./automation/n8n/README.md)
