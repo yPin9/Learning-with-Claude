@@ -22,6 +22,8 @@
   - 從 RV32I 到 V/B 擴充、custom extension，自寫 RV32I emulator
 - [arm](./architecture/arm/README.md)
   - Cortex-A/M 雙線，從 ISA 到 JTAG，自刻 STM32 韌體與 Cortex-M3 mini RTOS-lite
+- [cpu_design](./architecture/cpu_design/README.md)
+  - 用 SystemVerilog 從零打造 pipelined RISC-V core（補 riscv ISA 層與 compiler_backend 之間的 RTL/微架構斷層）：數位邏輯地基 → 單週期 RV32I → 五級 pipeline/hazard/forwarding → 分支預測 → cache/Sv32 VM/AXI → CSR/trap/中斷，verilator + spike 逐指令對拍，40 章 + 5 練習 + pipelined core final
 
 ### compilers/
 - [compiler_frontend](./compilers/compiler_frontend/README.md)
@@ -52,6 +54,8 @@
   - 從命題邏輯到自刻 mini-SMT solver，C++20，全程不靠 Z3 當黑盒
 - [c_interview](./programming/c_interview/README.md)
   - C 語言面試深度準備：記憶體/UB/ABI/嵌入式/效能/lock-free，30 章 + 3 練習 + mini libc final
+- [rust](./programming/rust/README.md)
+  - 給懂 C/C++20 的系統/資安工程師的 Rust：ownership/borrow/lifetime 底層 → 記憶體佈局/unsafe/FFI/Miri → async 手刻 executor → 資安研究向（逆 Rust binary/audit unsafe/RUSTSEC/fuzzing）→ Rust-for-Linux，全程 C/C++ 對照、WSL rustc 1.97+nightly+Miri 真跑，43 章 + 5 練習 + Rust-for-Linux 字元裝置 kernel module final
 
 ### security/
 - [gdb](./security/gdb/README.md)
@@ -68,6 +72,8 @@
   - Linux kernel pwn，目標 Google kernelCTF（含現代 heap / 隨機 kmalloc cache）
 - [owasp](./security/owasp/README.md)
   - OWASP Top 10 2025 + Web 安全完整課程（含 2021→2025 對照），含 API Top 10、CVE 案例、WAF/RASP、紅藍隊演習
+- [web_exploitation](./security/web_exploitation/README.md)
+  - 現代 Web 攻擊深課（接 owasp 廣度、與 browser_pwn 平行的 pwn 天梯 Web 支線）：primitive→gadget chain 思維，SSRF chain/多語言反序列化(Java/PHP/Python/.NET)/request smuggling+cache poisoning/JWT-OAuth-OIDC-SAML/prototype pollution/GraphQL/CSPT/SSTI，CTF+bug bounty 導向、PortSwigger Academy+Docker 靶場真跑，39 章 + 6 練習 + full-chain 報告 final
 - [malware_analysis](./security/malware_analysis/README.md)
   - 讀懂並分析惡意程式碼：PE/ELF → anti-analysis 對抗 → injection/C2/ransomware → Linux rootkit → .NET/CS beacon → Volatility memory forensics → Yara/Sigma 偵測規則
 - [cryptography](./security/cryptography/README.md)
@@ -82,6 +88,8 @@
   - Userland pwn 地基（接 kernel_pwn）：stack smashing → ROP 全譜 → format string → glibc heap 深挖（tcache/House of X）→ 現代無 hook 世界（FSOP/exit handler）+ seccomp 沙箱逃逸/反調試，全程 WSL glibc 2.39 實測，41 章 + 7 練習 + 復刻 pwnable.tw 題鏈 final
 - [browser_pwn](./security/browser_pwn/README.md)
   - V8 一條到底的瀏覽器 pwn（pwn 天梯頂端，接 binary_exploitation/kernel_pwn）：物件模型（Map/elements kind/pointer compression）→ Ignition/TurboFan/Maglev 管線 → addrof/fakeobj/任意讀寫原語 → TurboFan type confusion 五大家族（CVE-2018-17463/Math.expm1/JSON hole）→ 找洞（patch-diff + Fuzzilli）→ 任意 R/W 繞 V8 Sandbox/CET（data-only）→ CTF+full chain 全景，自編 V8 15.3 真跑驗證，41 章 + 6 練習 + 真實 CVE 到 exploit final
+- [windows_pwn](./security/windows_pwn/README.md)
+  - Windows 使用者態漏洞利用（補 Linux pwn 天梯缺的 Windows 大陸，接 binary_exploitation）：internals 與利用五五不妥協——PE/PEB-TEB/loader/Native API/syscall/handle 內部 → NT Heap/LFH/Segment Heap → SEH overwrite/SEHOP/DEP-ROP/ASLR/shellcode → heap UAF/vtable 劫持/info leak → 現代緩解重頭戲（CFG/XFG/CET/ACG/CIG/data-only）→ WinAFL/patch diffing 找洞 → token/UAC/EoP 提權銜接 windows_kernel_driver，CTF 導向、全程 Win11 x64（mingw/Python 真跑、MSVC/CET 段落標未實測），47 章 + 5 練習 + 全緩解 exploit chain final
 - [android_reversing](./security/android_reversing/README.md)
   - 安卓逆向從 APK 到 ART 底層：App 層還原（DEX/smali/Java）→ Frida 動態插樁 → Native 逆向（.so/ARM64/JNI）→ 加固對抗（脫殼/反調試/混淆）→ ART 系統底層，安全研究/App 破解導向，AVD 實測，42 章 + 5 練習 + 綜合防護 App 拆解 final
 - [android_app_vuln](./security/android_app_vuln/README.md)
@@ -92,6 +100,8 @@
   - 把 pwn 攻擊直覺搬進雲端，紅隊視角、AWS 主線 + Azure/GCP 對照：IAM 提權 → 服務攻擊面（S3/metadata SSRF/Lambda）→ 容器逃逸 → Kubernetes 淪陷（從零教 K8s）→ 供應鏈/CI-CD → 補回防禦偵測（CSPM/Falco/CloudTrail），39 章 + 4 練習 + 紅隊 engagement final
 - [vm_escape](./security/vm_escape/README.md)
   - VM escape pwn，pwn 天梯上 browser_pwn 旁的另一座山：從 guest 內部打穿 hypervisor 拿 host code exec，QEMU/KVM 主線 + VirtualBox + VMware，含 VT-x/EPT/KVM 原理補強 → device emulation/MMIO/DMA 當原語 → heap overflow/UAF/劫 callback/ROP → VENOM/virtio CVE 復刻 → seccomp 繞過/Firecracker/full-chain，41 章 + 5 練習 + CVE 到完整逃逸 final
+- [microarch_attacks](./security/microarch_attacks/README.md)
+  - 微架構攻擊：把 CPU 效能優化反過來當洩密通道，攻擊為主 + 完整防禦 Part。cache 側信道原語（Flush+Reload/Prime+Probe/eviction set）→ 瞬態執行（Spectre v1/v2/RSB、Meltdown/MDS/L1TF、Downfall/Zenbleed 分類學）→ Rowhammer → Hertzbleed/port contention/TLB/KASLR break → 防禦（KPTI/retpoline/constant-time+dudect/HPC 偵測）→ 找新洞方法論，x86-64 主線 i7-10700 真跑（F+R/Spectre-v1 親手做、HW 已修的誠實標），37 章 + 4 練習 + 微架構洩漏實驗室 final
 
 ### soft_skills/
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
