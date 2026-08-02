@@ -64,6 +64,8 @@
   - IDA 9.x，從只敢按 F5 到寫 IDAPython 自動化
 - [afl_plus_plus](./security/afl_plus_plus/README.md)
   - AFL++ 內部機制，從 bitmap 到 CmpLog
+- [advanced_fuzzing](./security/advanced_fuzzing/README.md)
+  - 接 afl_plus_plus 之後的進階 fuzzing 大課，目標導向工具不拘：LibAFL 造 fuzzer + 文法/stateful + kernel(syzkaller) + snapshot(Nyx) + 韌體 rehosting + JS 引擎(Fuzzilli) + hybrid(SymCC/AFLGo) + OSS-Fuzz/評測科學，CTF+CVE hunting 導向，48 章 + 6 練習 + 真實開源 campaign final
 - [symex_taint](./security/symex_taint/README.md)
   - symbolic execution + dynamic taint analysis，自寫 concolic executor
 - [pentest](./security/pentest/README.md)
@@ -96,12 +98,18 @@
   - 安卓 App 漏洞分析（接 android_reversing）：以 OWASP MASVS/MASTG 為骨架、bug bounty 導向，元件/IPC 濫用 → Intent redirection/PendingIntent 劫持 → Provider SQLi/path traversal → deeplink/WebView RCE/task hijacking → 儲存/crypto 誤用/secret 洩漏 → 權限/zip slip → 自動化(MobSF/semgrep)+報告，drozer/靶場實戰，16 章 + 3 練習 + MASTG 評估報告 final
 - [android_exploitation](./security/android_exploitation/README.md)
   - 安卓系統漏洞利用（接 binary_exploitation/kernel_pwn）：把 glibc/x86 pwn 技能移植到 Android — bionic + scudo/jemalloc heap 破壞 → ARM64 PAC/BTI/MTE 緩解對抗 → Binder/Parcel LPE → SELinux/Zygote 沙箱 → Android kernel 驅動利用 → patch diff 到穩定 exploit，32 章 + 4 練習 + CVE 到 exploit final
+- [ios_macos_exploitation](./security/ios_macos_exploitation/README.md)
+  - Apple 生態全棧逆向 + exploitation（行動安全的另一半，接 android_reversing/android_exploitation）：iOS/macOS 五五、一門到底 — Mach-O/dyld/dyld shared cache/Obj-C runtime/Swift 逆向 → lldb/Frida/dtrace 工具鏈 → App 沙箱/Keychain/SSL pinning/越獄偵測繞過 → Mach port/XPC/launchd/TCC 的 IPC 與 macOS LPE → libmalloc 內部/heap 利用/PAC 深挖/沙箱逃逸 → XNU kernel/IOKit/zone allocator/PPL → 越獄內部（checkm8/KTRR/SEP/KFD-PUAF）/full chain → fuzzing/patch diffing/防禦演進，使用者有 Mac+iPhone 動手（作者 Windows 環境故工具輸出標未實測+附驗證步驟），43 章 + 5 練習 + CVE 鏈研究報告 final
 - [cloud_container_security](./security/cloud_container_security/README.md)
   - 把 pwn 攻擊直覺搬進雲端，紅隊視角、AWS 主線 + Azure/GCP 對照：IAM 提權 → 服務攻擊面（S3/metadata SSRF/Lambda）→ 容器逃逸 → Kubernetes 淪陷（從零教 K8s）→ 供應鏈/CI-CD → 補回防禦偵測（CSPM/Falco/CloudTrail），39 章 + 4 練習 + 紅隊 engagement final
 - [vm_escape](./security/vm_escape/README.md)
   - VM escape pwn，pwn 天梯上 browser_pwn 旁的另一座山：從 guest 內部打穿 hypervisor 拿 host code exec，QEMU/KVM 主線 + VirtualBox + VMware，含 VT-x/EPT/KVM 原理補強 → device emulation/MMIO/DMA 當原語 → heap overflow/UAF/劫 callback/ROP → VENOM/virtio CVE 復刻 → seccomp 繞過/Firecracker/full-chain，41 章 + 5 練習 + CVE 到完整逃逸 final
 - [microarch_attacks](./security/microarch_attacks/README.md)
   - 微架構攻擊：把 CPU 效能優化反過來當洩密通道，攻擊為主 + 完整防禦 Part。cache 側信道原語（Flush+Reload/Prime+Probe/eviction set）→ 瞬態執行（Spectre v1/v2/RSB、Meltdown/MDS/L1TF、Downfall/Zenbleed 分類學）→ Rowhammer → Hertzbleed/port contention/TLB/KASLR break → 防禦（KPTI/retpoline/constant-time+dudect/HPC 偵測）→ 找新洞方法論，x86-64 主線 i7-10700 真跑（F+R/Spectre-v1 親手做、HW 已修的誠實標），37 章 + 4 練習 + 微架構洩漏實驗室 final
+- [firmware_security](./security/firmware_security/README.md)
+  - UEFI / Secure Boot 漏洞研究（把 pwn 從 Ring 0 往下打到 Ring -2/-3，接 linux_boot/arm/mtk_firmware）：以「信任鏈 / secure boot」貫穿全課、x86 UEFI 與 ARM 嵌入式雙線，攻擊為主 + 四支柱（韌體逆向 / 防守偵測 / 硬體故障注入 / TPM 密鑰）。UEFI PI 攻擊面/DXE/NVRAM variable → SMM 聖杯 + ME/BootGuard/PSP → ARM TF-A/U-Boot/AVB/MTK BootROM → 韌體 RE（UEFITool/Ghidra/efiXplorer）→ Secure Boot 繞過鏈（BootHole/BlackLotus/LogoFAIL）→ 硬體 glitch/SPI/JTAG → TPM 2.0/measured boot/bus sniffing → 防守偵測（CHIPSEC/attestation/廠商緩解），WSL qemu+OVMF(secboot)+aarch64+AAVMF+swtpm+tpm2-tools+uefi_firmware 真跑（chipsec/真硬體/glitch 誠實標未實測），46 章 + 6 練習 + 端到端攻防研究報告 final
+- [blue_team_dfir](./security/blue_team_dfir/README.md)
+  - 藍隊與 DFIR（補全 repo 唯一缺的防守視角，purple team 框架把既有 22 門攻擊課全變成靶）：ATT&CK/PICERL/證據可信度地基 → Detection Engineering（Sysmon/ETW、Sigma/YARA、涵蓋度、SIEM、Detection-as-Code）→ Windows endpoint DFIR 重頭戲（Volatility3 記憶體/注入、$MFT/$UsnJrnl、Prefetch/AMCache/ShimCache/SRUM、Registry、Event Log、持久化、憑證橫移）→ Linux/網路/雲/K8s IR（auditd/eBPF、Zeek/Suricata beaconing+JA3、CloudTrail/GuardDuty、Falco）→ Threat Hunting（hypothesis-driven、stacking、LOLBins、偵測 AMSI/ETW/unhooking 規避）→ 惡意程式鑑識/fileless/反鑑識對抗/偵測盲點 → 營運（alert triage/SOAR、TI/MISP、報告+MTTD/MTTR、purple team 演練閉環），跨 Windows/Linux/雲/網路四平台、概念為主關鍵處示範，39 章 + 4 練習 + 完整入侵事件調查 final
 
 ### soft_skills/
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
