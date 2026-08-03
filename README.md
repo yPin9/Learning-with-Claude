@@ -25,6 +25,10 @@
 - [cpu_design](./architecture/cpu_design/README.md)
   - 用 SystemVerilog 從零打造 pipelined RISC-V core（補 riscv ISA 層與 compiler_backend 之間的 RTL/微架構斷層）：數位邏輯地基 → 單週期 RV32I → 五級 pipeline/hazard/forwarding → 分支預測 → cache/Sv32 VM/AXI → CSR/trap/中斷，verilator + spike 逐指令對拍，40 章 + 5 練習 + pipelined core final
 
+### parallel/
+- [gpu_cuda](./parallel/gpu_cuda/README.md)
+  - GPU/CUDA/平行運算大課：CPU 平行地基（SIMD/OpenMP/patterns）→ GPU 架構（SM/記憶體階層/warp/occupancy）→ CUDA 程式設計 → 優化重頭戲（coalescing/bank conflict/ILP/divergence/reduction 七版/profiling）→ 深挖 PTX/SASS/Tensor Core → 生態（cuBLAS/Thrust/Triton）→ AI kernel（GEMM/卷積/FlashAttention/量化/PyTorch ext），44 章 + 6 練習 + 手刻優化 GEMM/mini-FlashAttention final，接 cpu_design/ssa_optimizations/ml，Colab T4 為基準
+
 ### compilers/
 - [compiler_frontend](./compilers/compiler_frontend/README.md)
   - flex + bison 寫 MiniC frontend
@@ -45,6 +49,10 @@
 - [docker](./dev_tools/docker/README.md)
   - 從 `docker run` 到生產部署：namespace/cgroup/OverlayFS 底層 + Dockerfile 進階 + Compose + 資安 hardening + Swarm，28 章 + 3 練習 + CI Pipeline final
 
+### databases/
+- [database_internals](./databases/database_internals/README.md)
+  - 用 Rust 從零手刻單機關聯式資料庫（補 CS 系統地基最後一塊，接 kernel_internals/compiler_frontend/perf_bench）：儲存地基（page/slotted page/buffer pool/fsync）→ B-tree 引擎（B+tree insert/split/delete/merge/latch crabbing/索引）→ LSM 引擎（skip list memtable/SSTable/bloom filter/leveled compaction）→ LSM vs B-tree RUM 取捨 → WAL + ARIES crash recovery + ACID + 隔離級別 + 2PL/MVCC/SSI 交易 → 查詢層（SQL parser/catalog/logical+physical plan/Volcano+vectorized executor/join 演算法/external sort+aggregation/RBO+CBO 優化器）→ 進階（histogram+HLL 統計/hash+bitmap+inverted 索引/欄式儲存+向量化/mmap 爭議）→ 分散式銜接，全程 WSL rustc 1.97 真跑（B+tree/MVCC/bloom/Volcano executor 跑真 SQL 實測綠燈），40 章 + 4 練習 + mini relational DB final
+
 ### programming/
 - [algorithms](./programming/algorithms/README.md)
   - 面試導向，從 pattern 記憶轉到原理理解，Python
@@ -62,12 +70,16 @@
   - 從會用到能改：精通 GDB 全功能 + ptrace/DWARF 底層 + Python API，自寫 mini debugger 與 gef 風格插件，43 章 + 7 練習 + 插件套件 final
 - [ida_pro](./security/ida_pro/README.md)
   - IDA 9.x，從只敢按 F5 到寫 IDAPython 自動化
+- [reverse_engineering](./security/reverse_engineering/README.md)
+  - 逆向即讀碼（reading_code/codebase_case_studies 的鏡像：沒有 source 時怎麼讀懂 binary）：通用逆向理解方法論、工具無關、x86-64 Linux ELF 主線。核心=辨識 compiler idiom（binary 版 pattern 辨識）。靈魂訓練法 ground-truth 迴圈（寫→編→strip→逆→對答案）。心智模型/編譯器做了什麼/ELF → 靜態逆向（asm 認控制流+資料+函式/讀反編譯器/型別還原/compiler idioms/標準庫指紋）→ 動態逆向（gdb/strace-ltrace/DBI Frida/資料流/靜動結合）→ 目標識別（演算法+格式協定+C++/Rust/Go/靜態strip/混淆反調試/PE-ARM64）→ 工程化（外化/腳本化angr/patch-diff/相似度/lifting/pattern字典）→ capstone，全程 WSL objdump/gdb/radare2/Frida 真跑（crackme 密碼、patch jne→nop、除法魔數、vtable、等價實作對拍都真驗），34 章 + 4 練習 + 冷啟動逆向 final
 - [afl_plus_plus](./security/afl_plus_plus/README.md)
   - AFL++ 內部機制，從 bitmap 到 CmpLog
 - [advanced_fuzzing](./security/advanced_fuzzing/README.md)
   - 接 afl_plus_plus 之後的進階 fuzzing 大課，目標導向工具不拘：LibAFL 造 fuzzer + 文法/stateful + kernel(syzkaller) + snapshot(Nyx) + 韌體 rehosting + JS 引擎(Fuzzilli) + hybrid(SymCC/AFLGo) + OSS-Fuzz/評測科學，CTF+CVE hunting 導向，48 章 + 6 練習 + 真實開源 campaign final
 - [symex_taint](./security/symex_taint/README.md)
   - symbolic execution + dynamic taint analysis，自寫 concolic executor
+- [code_auditing](./security/code_auditing/README.md)
+  - 原始碼審計 / 靜態分析變體獵殺（接 reading_code，把手讀找洞工業化）：四工具並用 CodeQL/Semgrep/Joern/weggli，多語言（C/C++ 記憶體安全 + Java/JS/Python web sink），完整理論地基（dataflow/IFDS/points-to/CPG）→ CVE 抽 pattern 跨生態掃變體 → PoC 驗證 + 報告，44 章 + 6 練習 + variant analysis campaign final
 - [pentest](./security/pentest/README.md)
   - 滲透測試的工具、心法、白帽思維
 - [kernel_pwn](./security/kernel_pwn/README.md)
@@ -124,6 +136,8 @@
   - 圍棋從零到業餘高段，死活/手筋/形 重，AI 復盤(KataGo) 整 Part，50 盤升段 final
 - [reading_code](./soft_skills/reading_code/README.md)
   - 讀碼即逆向：把 binary RE 攻堅直覺移植到讀陌生大型 source，40 ch + 4 練習 + 冷啟動攻堅 final，工具與方法並重（rg/ctags/cscope/clangd/tree-sitter/gdb/trace），全程 WSL redis 真跑
+- [codebase_case_studies](./soft_skills/codebase_case_studies/README.md)
+  - 讀碼健身房（接 reading_code 的刻意練習續章）：把「有方法」升級成「一眼認出 pattern」。用 SOP 限時攻堅六個釘死版本的傳奇 codebase——Lua 5.4.7（register VM/GC）→ SQLite 3.47.2（VDBE/B-tree/pager）→ nginx 1.26.2（reactor/memory pool）→ git 2.47.1（content-addressed 資料模型）→ CPython 3.13.1（eval loop/object model）→ PostgreSQL 17.2 capstone（火山模型 executor），每 Part 萃取可遷移設計 pattern 成字典，全程真 clone/真讀/真 gdb 追（行號對真 source 核對），32 章 + 5 限時攻堅練習 + 冷啟動攻堅 final
 
 ### automation/
 - [n8n](./automation/n8n/README.md)
@@ -152,6 +166,10 @@
   - 長線輔助：SEO 內容站 × 蝦皮分潤，關鍵字選題打分 + AI 產文 + 上線品質閘 + 成效追蹤
 - 註：此分類是「可操作 playbook + 腳本」，不是教學課程；誠實面對「不是真被動」與平台合規
 
+### languages/
+- [english_reading](./languages/english_reading/README.md)
+  - 英文閱讀流暢度：從「靠領域知識硬啃技術文」到「輕鬆讀懂 BBC 與技術原文」，刻意做薄的手冊 + 每日練習系統，詞彙引擎（NGSL/AWL 覆蓋率）+ 為讀而學的拆句文法 + extensive/intensive 方法論 + 到 BBC 的閱讀階梯 + 實戰精讀，20 章 + 4 練習 + 8–12 週個人閱讀計畫 final
+
 ### systems/
 - [bpf](./systems/bpf/README.md)
   - classic BPF 到 eBPF（verifier / CO-RE / libbpf），最後寫一個 agent
@@ -167,3 +185,5 @@
   - TCP/IP + VPN + Proxy + VPS 全套，含 GFW 對抗演進史 + 完整 production 部署 final
 - [linux_commands](./systems/linux_commands/README.md)
   - 從 VFS/inode/fd 底層到 shell scripting，31 章 + 4 練習 + SysOps 腳本工具包 final
+- [distributed_systems](./systems/distributed_systems/README.md)
+  - 「單機以上」的水平地基，接 kernel_internals/networking；46 章 + 5 練習 + 1 final，Go + 自製確定性模擬器（dsim）全程真跑：時間順序(Lamport/VC)→複製/一致性/CAP→共識(FLP/Paxos/手刻 Raft)→分片交易→BFT+分散式安全(PBFT/Nakamoto/攻擊面)→Spanner/Kafka/etcd 剖析，final = 容錯分片 KV + Jepsen 風格驗證
