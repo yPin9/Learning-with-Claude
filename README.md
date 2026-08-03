@@ -48,6 +48,8 @@
   - Docker + GitHub Actions，把 FastAPI + Postgres 服務做成可交付 pipeline
 - [docker](./dev_tools/docker/README.md)
   - 從 `docker run` 到生產部署：namespace/cgroup/OverlayFS 底層 + Dockerfile 進階 + Compose + 資安 hardening + Swarm，28 章 + 3 練習 + CI Pipeline final
+- [neovim](./dev_tools/neovim/README.md)
+  - 把 Neovim 打造成讀大型 C codebase 的機器（reading_code/codebase_case_studies 的「手」）：精通操作、自建 config（kickstart 精神非 LazyVim 黑箱），六工具流水線 motion→telescope/fzf→treesitter→clangd/LSP→gtags/cscope→marks/quickfix。心智模型/架構 → motion 地基（text object/jumplist/搜尋/buffer-window） → 模糊搜尋+全文（telescope/ripgrep/quickfix）→ treesitter（依結構移動/query）→ 語意（clangd/compile_commands/gd-gr-call hierarchy/macro-ifdef 坑）→ tags 後備（ctags/GNU Global 不 build 索引，含 nvim 0.12 移除內建 cscope 的坑）→ 整合（harpoon/session/完整讀碼流程），全程 WSL nvim 0.12.4 headless 真跑驗證 + 完整可用 config，31 章 + 5 練習 + 冷啟動攻堅 final
 
 ### databases/
 - [database_internals](./databases/database_internals/README.md)
@@ -187,3 +189,5 @@
   - 從 VFS/inode/fd 底層到 shell scripting，31 章 + 4 練習 + SysOps 腳本工具包 final
 - [distributed_systems](./systems/distributed_systems/README.md)
   - 「單機以上」的水平地基，接 kernel_internals/networking；46 章 + 5 練習 + 1 final，Go + 自製確定性模擬器（dsim）全程真跑：時間順序(Lamport/VC)→複製/一致性/CAP→共識(FLP/Paxos/手刻 Raft)→分片交易→BFT+分散式安全(PBFT/Nakamoto/攻擊面)→Spanner/Kafka/etcd 剖析，final = 容錯分片 KV + Jepsen 風格驗證
+- [build_systems](./systems/build_systems/README.md)
+  - 從 GNU Make 徹底精通到現代建構生態；36 章 + 4 練習 + 1 final，C/C++ 原生視角。Make 深挖主軸(兩階段展開/自動依賴/遞迴 harmful/job server/原始碼/Kbuild)→現代生態(autotools/Ninja/CMake target-based/Meson/Bazel)→通用理論(Build Systems à la Carte/增量正確性/可重現/ccache/供應鏈安全)→選型，final = 多平台 C/C++ 完整建構系統(CMake + 交叉編譯 + ccache + 可重現)。全程 WSL 真跑(Make/CMake/Ninja/Meson/ccache/交叉編譯 aarch64)，Bazel 標未實測
