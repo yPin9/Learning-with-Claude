@@ -2,14 +2,15 @@
 
 我跟 Claude 一起亂學東西的地方
 
-
 ## 教材索引
 
 ### algorithms/
+
 - [leetcode_patterns](./algorithms/leetcode_patterns/README.md)
   - 演算法面試完整課程：C++，從遞迴直覺到 DP/Graph/Greedy，41 章 + 6 練習 + 30 題衝刺 final
 
 ### ai/
+
 - [ai_applications](./ai/ai_applications/README.md)
   - Claude 深度應用 + 用 Claude 生態做產品 + 通用 LLM 工程（RAG / eval / observability）
 - [harness_engineering](./ai/harness_engineering/README.md)
@@ -18,6 +19,7 @@
   - 用 SDD + DDD 和 AI 協作：軟工地基 + 需求工程(EARS/BDD) + 領域驅動設計 + Spec Kit/Kiro 實戰 + 自建 pipeline + 實測批判，45 章 + 6 練習 + 完整 SDD final
 
 ### architecture/
+
 - [riscv](./architecture/riscv/README.md)
   - 從 RV32I 到 V/B 擴充、custom extension，自寫 RV32I emulator
 - [arm](./architecture/arm/README.md)
@@ -26,10 +28,12 @@
   - 用 SystemVerilog 從零打造 pipelined RISC-V core（補 riscv ISA 層與 compiler_backend 之間的 RTL/微架構斷層）：數位邏輯地基 → 單週期 RV32I → 五級 pipeline/hazard/forwarding → 分支預測 → cache/Sv32 VM/AXI → CSR/trap/中斷，verilator + spike 逐指令對拍，40 章 + 5 練習 + pipelined core final
 
 ### parallel/
+
 - [gpu_cuda](./parallel/gpu_cuda/README.md)
   - GPU/CUDA/平行運算大課：CPU 平行地基（SIMD/OpenMP/patterns）→ GPU 架構（SM/記憶體階層/warp/occupancy）→ CUDA 程式設計 → 優化重頭戲（coalescing/bank conflict/ILP/divergence/reduction 七版/profiling）→ 深挖 PTX/SASS/Tensor Core → 生態（cuBLAS/Thrust/Triton）→ AI kernel（GEMM/卷積/FlashAttention/量化/PyTorch ext），44 章 + 6 練習 + 手刻優化 GEMM/mini-FlashAttention final，接 cpu_design/ssa_optimizations/ml，Colab T4 為基準
 
 ### compilers/
+
 - [compiler_frontend](./compilers/compiler_frontend/README.md)
   - flex + bison 寫 MiniC frontend
 - [compiler_backend](./compilers/compiler_backend/README.md)
@@ -40,6 +44,7 @@
   - SSA 理論到 LLVM Pass 實作：Dominator Tree / SCCP / GVN / SCEV / 過程間分析，32 章 + 3 練習 + mini optimizer + CSmith 驗證 final
 
 ### dev_tools/
+
 - [git](./dev_tools/git/README.md)
   - 給已經會 add/commit/push、想真正熟練的人，hooks + worktree + 真實踩坑
 - [open_source](./dev_tools/open_source/README.md)
@@ -52,10 +57,12 @@
   - 把 Neovim 打造成讀大型 C codebase 的機器（reading_code/codebase_case_studies 的「手」）：精通操作、自建 config（kickstart 精神非 LazyVim 黑箱），六工具流水線 motion→telescope/fzf→treesitter→clangd/LSP→gtags/cscope→marks/quickfix。心智模型/架構 → motion 地基（text object/jumplist/搜尋/buffer-window） → 模糊搜尋+全文（telescope/ripgrep/quickfix）→ treesitter（依結構移動/query）→ 語意（clangd/compile_commands/gd-gr-call hierarchy/macro-ifdef 坑）→ tags 後備（ctags/GNU Global 不 build 索引，含 nvim 0.12 移除內建 cscope 的坑）→ 整合（harpoon/session/完整讀碼流程），全程 WSL nvim 0.12.4 headless 真跑驗證 + 完整可用 config，31 章 + 5 練習 + 冷啟動攻堅 final
 
 ### databases/
+
 - [database_internals](./databases/database_internals/README.md)
   - 用 Rust 從零手刻單機關聯式資料庫（補 CS 系統地基最後一塊，接 kernel_internals/compiler_frontend/perf_bench）：儲存地基（page/slotted page/buffer pool/fsync）→ B-tree 引擎（B+tree insert/split/delete/merge/latch crabbing/索引）→ LSM 引擎（skip list memtable/SSTable/bloom filter/leveled compaction）→ LSM vs B-tree RUM 取捨 → WAL + ARIES crash recovery + ACID + 隔離級別 + 2PL/MVCC/SSI 交易 → 查詢層（SQL parser/catalog/logical+physical plan/Volcano+vectorized executor/join 演算法/external sort+aggregation/RBO+CBO 優化器）→ 進階（histogram+HLL 統計/hash+bitmap+inverted 索引/欄式儲存+向量化/mmap 爭議）→ 分散式銜接，全程 WSL rustc 1.97 真跑（B+tree/MVCC/bloom/Volcano executor 跑真 SQL 實測綠燈），40 章 + 4 練習 + mini relational DB final
 
 ### programming/
+
 - [algorithms](./programming/algorithms/README.md)
   - 面試導向，從 pattern 記憶轉到原理理解，Python
 - [modern_cpp](./programming/modern_cpp/README.md)
@@ -68,6 +75,7 @@
   - 給懂 C/C++20 的系統/資安工程師的 Rust：ownership/borrow/lifetime 底層 → 記憶體佈局/unsafe/FFI/Miri → async 手刻 executor → 資安研究向（逆 Rust binary/audit unsafe/RUSTSEC/fuzzing）→ Rust-for-Linux，全程 C/C++ 對照、WSL rustc 1.97+nightly+Miri 真跑，43 章 + 5 練習 + Rust-for-Linux 字元裝置 kernel module final
 
 ### security/
+
 - [gdb](./security/gdb/README.md)
   - 從會用到能改：精通 GDB 全功能 + ptrace/DWARF 底層 + Python API，自寫 mini debugger 與 gef 風格插件，43 章 + 7 練習 + 插件套件 final
 - [ida_pro](./security/ida_pro/README.md)
@@ -128,6 +136,7 @@
   - SBOM（軟體物料清單）為核心 + 軟體供應鏈安全全景（接 cloud_container_security/blue_team_dfir），概念與動手工具並重、WSL 真跑：為什麼要 SBOM（Log4Shell/SolarWinds）→ SBOM 是什麼（最小要素/六型生命週期/元件識別 naming-PURL-CPE-SWID）→ 格式深挖（SPDX/CycloneDX 選型/license）→ 生成（策略/syft 內部 catalogers/build-time 各語言/品質完整度）→ 消費與漏洞管理（NVD-CPE 的痛+OSV/grype-trivy-osv-scanner/VEX 降噪/Dependency-Track 營運）→ 信任鏈（供應鏈攻擊面/in-toto/sigstore keyless/簽 SBOM attestation/SLSA provenance）→ 治理法規（EO 14028/EU CRA/FDA/企業導入/xBOM/DFIR 接口/局限批評），30 章 + 3 練習 + 端到端供應鏈 pipeline final
 
 ### soft_skills/
+
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
   - meta-learning，所有系列的前置課程
 - [chinese_writing](./soft_skills/chinese_writing/README.md)
@@ -144,26 +153,32 @@
   - 讀碼健身房（接 reading_code 的刻意練習續章）：把「有方法」升級成「一眼認出 pattern」。用 SOP 限時攻堅六個釘死版本的傳奇 codebase——Lua 5.4.7（register VM/GC）→ SQLite 3.47.2（VDBE/B-tree/pager）→ nginx 1.26.2（reactor/memory pool）→ git 2.47.1（content-addressed 資料模型）→ CPython 3.13.1（eval loop/object model）→ PostgreSQL 17.2 capstone（火山模型 executor），每 Part 萃取可遷移設計 pattern 成字典，全程真 clone/真讀/真 gdb 追（行號對真 source 核對），32 章 + 5 限時攻堅練習 + 冷啟動攻堅 final
 
 ### automation/
+
 - [n8n](./automation/n8n/README.md)
   - 從零建立個人自動化中樞：視覺化 workflow + Code Node + REST/Webhook + self-host + AI Agent，25 章 + 3 練習 + 個人自動化中樞 final
 
 ### embedded/
+
 - [protocols](./embedded/protocols/README.md)
   - ESP32 嵌入式通訊協議：SPI/I2C/UART/RS-485/Modbus/CAN/BLE/LoRa/Zigbee/USB/Ethernet，全程 register-level，不靠 HAL，26 章 + 3 練習 + 工業閘道器 final
 
 ### interview/
+
 - [mtk_firmware](./interview/mtk_firmware/README.md)
   - MTK（聯發科）韌體工程師面試衝刺：C/嵌入式/OS/計組/資料結構考古題詳解 + 概念複習，44 章 + 5 練習 + 模擬面試 final
 
 ### scripting/
+
 - [powershell](./scripting/powershell/README.md)
   - 從零到系統維運自動化：語法核心 + 系統管理 + AD + PSRemoting + 自訂模組，final = SysOpsToolkit
 
 ### ml/
+
 - [local_llm](./ml/local_llm/README.md)
   - 地端 LLM 全端工程：pre-training 原理 + QLoRA fine-tuning + Ollama 部署，CPU 跑得動，34 章 + 4 練習 + 地端繁中小模型 final
 
 ### passive_income_with_ai/
+
 - [threads_shopee_affiliate](./passive_income_with_ai/threads_shopee_affiliate/README.md)
   - ⭐主力：Threads × 蝦皮分潤可操作 playbook + 腳本，含「拆解別人爆文」判讀框架（post_teardown）與自產貼文 pipeline（鉤子產生器/留言連結/QA 閘/追蹤）
 - [seo_shopee_affiliate](./passive_income_with_ai/seo_shopee_affiliate/README.md)
@@ -171,10 +186,12 @@
 - 註：此分類是「可操作 playbook + 腳本」，不是教學課程；誠實面對「不是真被動」與平台合規
 
 ### languages/
+
 - [english_reading](./languages/english_reading/README.md)
   - 英文閱讀流暢度：從「靠領域知識硬啃技術文」到「輕鬆讀懂 BBC 與技術原文」，刻意做薄的手冊 + 每日練習系統，詞彙引擎（NGSL/AWL 覆蓋率）+ 為讀而學的拆句文法 + extensive/intensive 方法論 + 到 BBC 的閱讀階梯 + 實戰精讀，20 章 + 4 練習 + 8–12 週個人閱讀計畫 final
 
 ### systems/
+
 - [bpf](./systems/bpf/README.md)
   - classic BPF 到 eBPF（verifier / CO-RE / libbpf），最後寫一個 agent
 - [linux_boot](./systems/linux_boot/README.md)
