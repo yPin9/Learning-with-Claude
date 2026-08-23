@@ -210,3 +210,8 @@
   - 「單機以上」的水平地基，接 kernel_internals/networking；46 章 + 5 練習 + 1 final，Go + 自製確定性模擬器（dsim）全程真跑：時間順序(Lamport/VC)→複製/一致性/CAP→共識(FLP/Paxos/手刻 Raft)→分片交易→BFT+分散式安全(PBFT/Nakamoto/攻擊面)→Spanner/Kafka/etcd 剖析，final = 容錯分片 KV + Jepsen 風格驗證
 - [build_systems](./systems/build_systems/README.md)
   - 從 GNU Make 徹底精通到現代建構生態；36 章 + 4 練習 + 1 final，C/C++ 原生視角。Make 深挖主軸(兩階段展開/自動依賴/遞迴 harmful/job server/原始碼/Kbuild)→現代生態(autotools/Ninja/CMake target-based/Meson/Bazel)→通用理論(Build Systems à la Carte/增量正確性/可重現/ccache/供應鏈安全)→選型，final = 多平台 C/C++ 完整建構系統(CMake + 交叉編譯 + ccache + 可重現)。全程 WSL 真跑(Make/CMake/Ninja/Meson/ccache/交叉編譯 aarch64)，Bazel 標未實測
+
+### web/
+
+- [firebase](./web/firebase/README.md)
+  - Firebase 核心後端 Web+JS 全套(補 repo 缺的「BaaS/雲端後端」)：理論(BaaS 取捨/前端直連的安全模型/認證 vs 授權) → Auth(email/Google/匿名/狀態管理) → Firestore(CRUD/onSnapshot 即時同步底層/NoSQL 建模/索引/交易) → Security Rules(唯一防線/欄位驗證/角色，本課靈魂) → Storage/Hosting/Emulator/計費，全程 v9+ modular、Firebase JS SDK v12.18.0，Auth/Firestore/Rules/Storage 皆用 emulator(portable JDK) 真跑驗證(規則測試多組全綠)，23 章 + 3 練習 + 即時筆記板 final
