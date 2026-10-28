@@ -1,0 +1,17 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: README 索引 + 內部連結
+        run: python3 tools/check_repo.py
+      - name: markdownlint (README)
+        uses: DavidAnson/markdownlint-cli2-action@v20
+        with:
+          globs: README.md

@@ -1,0 +1,5 @@
+#!/bin/sh
+# commit 前跑 repo 健檢；有問題就擋下 commit。
+# 啟用：git config core.hooksPath .githooks
+# 緊急跳過：git commit --no-verify
+exec python3 "$(git rev-parse --show-toplevel)/tools/check_repo.py"
