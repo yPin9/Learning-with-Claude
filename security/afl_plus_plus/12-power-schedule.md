@@ -505,4 +505,4 @@ afl-fuzz -S mopt_1  -p mmopt   -i seeds/ -o out/ -- ./target @@
   - **讀哪裡**："Power schedules" 一節，以及 "Parallel fuzzing" 一節中關於不同 instance 用不同 schedule 的建議
   - **和本章的關聯**：本章「schedule 選擇指南」和「multi-instance 策略」的建議來源
 
-→ [Ch 13 — Dictionary 與 Token-Level Mutation](./13-dictionary-tokens.md)
+→ [Ch 13 — Dictionary 與 Token-Level Mutation](./13-dictionary.md)

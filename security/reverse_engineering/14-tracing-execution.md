@@ -281,7 +281,7 @@ syscall #17      ← pread64
   - **讀哪裡**：strace 的 `-e trace=` 表達式語法、`-c`/`-f`/`-s`；ltrace 的 `-e`/`-l`（只看某 library）/`-S`（連 syscall 一起）
 - **[ptrace(2) man page](https://man7.org/linux/man-pages/man2/ptrace.2.html)**
   - **讀哪裡**：`PTRACE_SYSCALL` 與 `PTRACE_GETREGS` 段落——本章 minitrace 的一手依據
-- **你自己的 [`gdb`](../gdb/README.md) 課 Ch 2、[`bpf`](../bpf/README.md) 課**
+- **你自己的 [`gdb`](../gdb/README.md) 課 Ch 2、[`bpf`](../../systems/bpf/README.md) 課**
   - **這是什麼**：gdb Ch 2 深講 ptrace（minitrace 的完整版）；bpf 課講 eBPF 系的低開銷 tracer（strace 的現代替代）
 
 ### 書籍

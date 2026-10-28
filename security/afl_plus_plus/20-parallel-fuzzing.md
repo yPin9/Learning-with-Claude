@@ -387,4 +387,4 @@ CmpLog 的速度約是普通 instance 的 40-60%（因為要記錄所有比較�
 
 - **"Evaluating Fuzz Testing"（Klees et al., CCS 2018）**：核心貢獻：提出 fuzzer 評估的方法論，包括統計顯著性問題、如何正確量化多 instance 的 coverage gain；讀第 4 節（evaluation pitfalls）；提醒你在解讀 `afl-whatsup` 的數字時要避免的常見錯誤。
 
-→ [下一章：Ch 21 — Corpus 管理與 Minimization](21-corpus-management.md)
+→ [下一章：Ch 21 — 困難 Target：Network Service、Closed-Source Binary、Kernel Module](21-difficult-targets.md)

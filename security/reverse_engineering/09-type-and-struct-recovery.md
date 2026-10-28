@@ -260,7 +260,7 @@ $ ./st_O0 5
   - **怎麼用**：`pahole -C account st_O0`——逆完 struct 拿它對答案，完美的 ground-truth 驗證。
 - **[System V AMD64 ABI](https://gitlab.com/x86-psABIs/x86-64-ABI)**
   - **讀哪裡**：aggregate types 的對齊與傳遞規則——理解編譯器為什麼把欄位排在那些 offset。
-  - **前提**：接你的 [`elf_linking`](../elf_linking/README.md) 與 Ch 4 ABI 基礎。
+  - **前提**：接你的 [`elf_linking`](../../compilers/elf_linking/README.md) 與 Ch 4 ABI 基礎。
 
 還原了型別和 struct，你補上了反編譯器最弱的一環。下一章我們攻反編譯器**另一個**弱點、也是逆向者最核心的技能——認出編譯器慣用語（compiler idiom），這是 binary 版的 pattern 辨識。
 

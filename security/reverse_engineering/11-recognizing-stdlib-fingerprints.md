@@ -183,7 +183,7 @@ Ch 18（逆演算法：認出 crypto/hash/壓縮指紋）會把這套展開。�
 ## 進階：再往深一層
 
 - **import 清單即行為畫像**：對 stripped 動態 binary，`nm -D` 的 import 清單就是一份行為摘要——`socket`/`recv` = 網路、`ptrace` = 反調試、`dlopen` = 動態載入、`system`/`execve` = 執行命令。惡意程式分析（→ [`malware_analysis`](../malware_analysis/README.md)）常從這份清單先畫像，再深逆。
-- **PLT/GOT 的延遲綁定機制**：`call strlen@plt` 第一次跳進 PLT 樁、經 GOT 觸發 loader 解析真實位址、之後直接跳——這套 lazy binding 是 Ch 3（ELF 載入）和你的 [`elf_linking`](../elf_linking/README.md) 課的核心。逆向時知道「`@plt` 是外部函式的跳板」就夠用，細節在那兒。
+- **PLT/GOT 的延遲綁定機制**：`call strlen@plt` 第一次跳進 PLT 樁、經 GOT 觸發 loader 解析真實位址、之後直接跳——這套 lazy binding 是 Ch 3（ELF 載入）和你的 [`elf_linking`](../../compilers/elf_linking/README.md) 課的核心。逆向時知道「`@plt` 是外部函式的跳板」就夠用，細節在那兒。
 - **版本指紋縮小範圍**：`nm -D` 顯示的 `GLIBC_2.34`（如本章 `__libc_start_main@GLIBC_2.34`）洩露 binary 需要的最低 glibc 版本 → 反推編譯環境/年代。靜態 binary 則可從 libc 函式的 byte pattern 認出 glibc 版本，幫 FLIRT 選對簽名庫。
 
 ## 本章重點整理

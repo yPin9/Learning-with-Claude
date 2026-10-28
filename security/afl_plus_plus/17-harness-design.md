@@ -653,4 +653,4 @@ int main(int argc, char **argv) {
 - 讀哪裡："Structure-Aware Fuzzing" 節
 - 和本章關聯：本章的「進階」節提到 custom mutator，這份文件給你更完整的 structure-aware fuzzing 背景
 
-→ [下一章：Ch 18 — Sanitizers：讓 Bug 更容易被發現](18-sanitizers.md)
+→ [下一章：Ch 18 — Custom Mutator：寫自己的 mutation 邏輯](18-custom-mutator.md)

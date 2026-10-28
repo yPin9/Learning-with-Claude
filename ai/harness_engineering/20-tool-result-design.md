@@ -2,7 +2,7 @@
 
 > **目標**：學會設計一個工具**回給模型什麼、怎麼回、錯誤怎麼回**。讀完你能說出 `tool_result` 區塊的完整結構（content 可以是字串也可以是多個 block、`is_error` 的真正用途）、為什麼「會讓模型自己修正的錯誤訊息」是工具設計裡最高槓桿的一塊、怎麼回傳「下一步提示」與「可串接的 ID」，並能分辨「工具執行失敗」和「執行成功但結果是空的」這兩種完全不同的狀況。
 
-> **環境**：Python 3.11、`anthropic` Python SDK（最新版）。本章延續 [Ch 5 — Tool calling 協議](./05-tool-calling-protocol.md) 的 `tool_use` / `tool_result` 一來一回，以及 [Ch 4](./04-the-agent-loop.md) 的 `run_tool_uses`。
+> **環境**：Python 3.11、`anthropic` Python SDK（最新版）。本章延續 [Ch 5 — Tool calling 協議](./05-tool-calling-protocol.md) 的 `tool_use` / `tool_result` 一來一回，以及 [Ch 4](./04-minimal-agent-loop.md) 的 `run_tool_uses`。
 
 ## 為什麼需要這個？先和 Ch 16 劃清界線
 

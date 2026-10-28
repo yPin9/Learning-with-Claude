@@ -446,4 +446,4 @@ ChaCha20 的 96-bit nonce 有碰撞風險（birthday bound ≈ 2⁴⁸）。**XC
 
 ---
 
-> **下一章**：[Ch 13 — Hash Functions：SHA-2 與 Length Extension Attack](13-hash-sha2.md) — 離開加密（encryption），進入 hash（one-way function）。SHA-256 怎麼運作？為什麼 SHA-256(secret || message) 不安全？
+> **下一章**：[Ch 13 — Hash Functions：SHA-2 與 Length Extension Attack](13-hash-functions.md) — 離開加密（encryption），進入 hash（one-way function）。SHA-256 怎麼運作？為什麼 SHA-256(secret || message) 不安全？

@@ -152,6 +152,11 @@
 - [codebase_case_studies](./soft_skills/codebase_case_studies/README.md)
   - 讀碼健身房（接 reading_code 的刻意練習續章）：把「有方法」升級成「一眼認出 pattern」。用 SOP 限時攻堅六個釘死版本的傳奇 codebase——Lua 5.4.7（register VM/GC）→ SQLite 3.47.2（VDBE/B-tree/pager）→ nginx 1.26.2（reactor/memory pool）→ git 2.47.1（content-addressed 資料模型）→ CPython 3.13.1（eval loop/object model）→ PostgreSQL 17.2 capstone（火山模型 executor），每 Part 萃取可遷移設計 pattern 成字典，全程真 clone/真讀/真 gdb 追（行號對真 source 核對），32 章 + 5 限時攻堅練習 + 冷啟動攻堅 final
 
+### debate/
+
+- [chinese_debate](./debate/chinese_debate/README.md)
+  - 華語辯論競賽訓練手冊，從零到 2027 新國辯冠軍：認識戰場 → 立論體系 → 攻防技術 → 自由辯論 → 結辯藝術 → 辯題研究方法 → 名局拆解 → 上場準備，30 章 + 3 練習 + 完整備賽手冊 final
+
 ### automation/
 
 - [n8n](./automation/n8n/README.md)
@@ -208,8 +213,10 @@
   - 從 VFS/inode/fd 底層到 shell scripting，31 章 + 4 練習 + SysOps 腳本工具包 final
 - [distributed_systems](./systems/distributed_systems/README.md)
   - 「單機以上」的水平地基，接 kernel_internals/networking；46 章 + 5 練習 + 1 final，Go + 自製確定性模擬器（dsim）全程真跑：時間順序(Lamport/VC)→複製/一致性/CAP→共識(FLP/Paxos/手刻 Raft)→分片交易→BFT+分散式安全(PBFT/Nakamoto/攻擊面)→Spanner/Kafka/etcd 剖析，final = 容錯分片 KV + Jepsen 風格驗證
-- [build_systems](./systems/build_systems/README.md)
-  - 從 GNU Make 徹底精通到現代建構生態；36 章 + 4 練習 + 1 final，C/C++ 原生視角。Make 深挖主軸(兩階段展開/自動依賴/遞迴 harmful/job server/原始碼/Kbuild)→現代生態(autotools/Ninja/CMake target-based/Meson/Bazel)→通用理論(Build Systems à la Carte/增量正確性/可重現/ccache/供應鏈安全)→選型，final = 多平台 C/C++ 完整建構系統(CMake + 交叉編譯 + ccache + 可重現)。全程 WSL 真跑(Make/CMake/Ninja/Meson/ccache/交叉編譯 aarch64)，Bazel 標未實測
+- [kernel_internals](./systems/kernel_internals/README.md)
+  - Linux kernel 子系統設計全景（所有 kernel 課的地基，接 kernel_pwn/bpf/linux_boot）：kernel 基礎設施 → process 與排程 → 記憶體管理 → 同步與並行（鎖/RCU/memory barrier）→ 中斷與時間 → VFS 與 block layer → 驅動/匯流排/電源 → 網路堆疊 → 安全子系統 → 觀測/debug/eBPF host，對照 6.12 源碼讀設計再動手寫模組驗證，全程 QEMU + gdb，x86_64 主線點出 ARM64 差異，54 章 + 6 練習 + kernel module 套件 final
+- [debian_packaging](./systems/debian_packaging/README.md)
+  - 從 apt 使用者到維護自己的 APT infrastructure：dpkg/apt 底層 → source package 與 debian/ 目錄 → debhelper/sbuild/lintian/autopkgtest 品質保證 → 簽署與 repository 分發（reprepro/aptly/PPA）→ 進階打包模式 → CI/CD 生產管線，35 章 + 4 練習 + 私有 APT 基礎設施 final
 
 ### web/
 

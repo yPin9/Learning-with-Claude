@@ -407,6 +407,6 @@ Invoke-AtomicTest T1059.001 -Cleanup
 
 ---
 
-*本章對應的前置知識：[Ch 7 IOC vs IOA 偵測邏輯](./07-ioc-vs-ioa.md)、[Ch 8 Sigma 規則工程](./08-sigma-rules.md)、[Ch 10 ATT&CK 映射](./10-attck-mapping.md)、[Ch 30 偵測規避技術](./30-detecting-evasion.md)*
+*本章對應的前置知識：[Ch 7 IOC vs IOA 偵測邏輯](./07-detection-logic-ioc-ioa.md)、[Ch 8 Sigma 規則工程](./08-sigma-rule-engineering.md)、[Ch 10 ATT&CK 映射](./10-attack-mapping-coverage.md)、[Ch 30 偵測規避技術](./30-detecting-evasion.md)*
 
 → [Ch 35 事件分級與 SOAR](./35-alert-triage-soar.md)

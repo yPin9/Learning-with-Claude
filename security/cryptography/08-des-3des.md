@@ -410,4 +410,4 @@ DESX(K1, K2, K3, P) = K3 ⊕ DES(K2, K1 ⊕ P)
   - **學什麼**：64-bit block 在長 session 下的 birthday 攻擊實務細節
   - **關聯**：本章 Sweet32 段落的原始論文
 
-→ [Ch 9 AES：現代對稱加密的基石](./09-aes.md)
+→ [Ch 9 AES：現代對稱加密的基石](./09-aes-math.md)

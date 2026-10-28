@@ -520,4 +520,4 @@ if mac_invalid or padding_invalid:
 
 ---
 
-> **下一個練習**：[練習 B — Hash 與 Length Extension Attack](practice-b-hash-length-extension.md)
+> **下一個練習**：[練習 B — Hash 與 Length Extension Attack](practice-b-sha256-and-length-extension.md)

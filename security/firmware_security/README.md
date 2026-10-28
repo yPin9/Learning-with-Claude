@@ -15,7 +15,7 @@
 - C 語言與 x86-64 組語（程度：能讀 pwn writeup）
 - 開機流程基礎（程度：知道 UEFI/BIOS 差別、GRUB、bzImage —— [linux_boot](../../systems/linux_boot/README.md) 打過底更好）
 - ARM 基礎（程度：知道 exception level、TrustZone 概念 —— [arm](../../architecture/arm/README.md)）
-- 逆向工具（程度：會用 Ghidra/IDA 看 code —— [ida_pro](../security/ida_pro/README.md)/[reading_code](../../soft_skills/reading_code/README.md)）
+- 逆向工具（程度：會用 Ghidra/IDA 看 code —— [ida_pro](../ida_pro/README.md)/[reading_code](../../soft_skills/reading_code/README.md)）
 - 沒有也沒關係的：真實硬體（本課主力在 QEMU/OVMF/swtpm，硬體章節會標「未實測」）
 
 ## 課程地圖

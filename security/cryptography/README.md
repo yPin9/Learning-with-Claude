@@ -41,11 +41,11 @@
 ### Part 3 — 對稱密碼
 - [Ch 7 區塊密碼基礎：Feistel vs SPN](./07-block-cipher-basics.md)
 - [Ch 8 DES / 3DES](./08-des-3des.md)
-- [Ch 9 AES 數學：GF(2⁸)](./09-aes-math-gf256.md)
+- [Ch 9 AES 數學：GF(2⁸)](./09-aes-math.md)
 - [Ch 10 AES 實作](./10-aes-implementation.md)
 - [Ch 11 區塊模式 + Padding Oracle](./11-block-modes-padding-oracle.md)
 - [Ch 12 Stream cipher：RC4、ChaCha20](./12-stream-ciphers.md)
-- [練習 A：AES + Padding Oracle](./practice-a-aes-padding-oracle.md)
+- [練習 A：AES + Padding Oracle](./practice-a-aes-and-padding-oracle.md)
 
 ### Part 4 — 雜湊、MAC、KDF
 - [Ch 13 Hash 函式基礎](./13-hash-functions.md) / [Ch 14 SHA 家族](./14-sha-family.md) / [Ch 15 Length Extension Attack](./15-length-extension-attack.md)
@@ -71,7 +71,7 @@
 - [練習 D：Kyber-512](./practice-d-kyber512.md)
 
 ### Part 8 — Protocol
-- [Ch 34 TLS 1.3](./34-tls-1.3.md) / [Ch 35 Signal Protocol](./35-signal-protocol.md)
+- [Ch 34 TLS 1.3](./34-tls-1-3.md) / [Ch 35 Signal Protocol](./35-signal-protocol.md)
 - [Ch 36 Noise Framework](./36-noise-framework.md) / [Ch 37 Protocol 出錯精選](./37-protocol-failures.md)
 
 ### Part 9 — 攻擊與密碼分析
