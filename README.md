@@ -15,6 +15,8 @@
   - Claude 深度應用 + 用 Claude 生態做產品 + 通用 LLM 工程（RAG / eval / observability）
 - [harness_engineering](./ai/harness_engineering/README.md)
   - 打造 AI agent 執行框架：agent loop + context 管理 + 工具系統 + subagent + permission + eval + 導入落地，44 章 + 6 練習 + 自刻 mini harness final
+- [pstack](./ai/pstack/README.md)
+  - 拆解 Cursor 官方 pstack / poteto-mode 的 agent 工作流，在 Claude Code 上實作：路由 + 23 playbook + 24 原則 + 多模型 arena/swarm/interrogate + 驗證與決策日誌 + 自主執行 + 批判，32 章 + 4 練習 + 替本 repo 打造 course-mode final
 - [spec_driven_development](./ai/spec_driven_development/README.md)
   - 用 SDD + DDD 和 AI 協作：軟工地基 + 需求工程(EARS/BDD) + 領域驅動設計 + Spec Kit/Kiro 實戰 + 自建 pipeline + 實測批判，45 章 + 6 練習 + 完整 SDD final
 
