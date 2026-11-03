@@ -9,6 +9,11 @@
 - [leetcode_patterns](./algorithms/leetcode_patterns/README.md)
   - 演算法面試完整課程：C++，從遞迴直覺到 DP/Graph/Greedy，41 章 + 6 練習 + 30 題衝刺 final
 
+### math/
+
+- [graph_theory](./math/graph_theory/README.md)
+  - （撰寫中）圖論為主 + 離散數學地基，證明與實作並重、Python 自刻 + NetworkX 對拍：證明/計數 → 圖結構（Menger/dominator）→ 著色/平面（register allocation）→ flow/matching/matroid/LP 對偶 → 譜/機率/極值 → NP/treewidth/WL → 接回 CPG/攻擊圖/binary 相似度，42 章 + 6 練習 + graphlab 分析工具鏈 final
+
 ### ai/
 
 - [ai_applications](./ai/ai_applications/README.md)
