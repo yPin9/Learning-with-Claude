@@ -230,7 +230,7 @@ Claude Code 應該會提示你描述專案的核心原則（用途、技術限�
 
 確認 `.specify/memory/constitution.md` 被寫入後，冒煙測試通過。
 
-如果你看到「Unknown slash command」或類似錯誤，最常見原因是 `.claude/commands/` 目錄沒有正確產生——執行 `specify check` 診斷，或重新跑 `specify init . --integration claude --force` 覆蓋。
+如果你看到「Unknown slash command」或類似錯誤，最常見原因是 `.claude/skills/speckit-*` 沒有正確產生（另一個常見原因：在 Claude Code 裡要打連字號的 `/speckit-specify`，不是點號的 `/speckit.specify`）——執行 `specify check` 診斷，或重新跑 `specify init . --integration claude --force` 覆蓋。
 
 ---
 
@@ -319,7 +319,7 @@ sdd-practice/
 ## 本章重點整理
 
 - uv 是 Spec Kit CLI 的推薦安裝方式；Python 3.11+ 和 Git 是前置需求。
-- `specify init . --integration claude` 會 scaffold `.specify/` 目錄和 `.claude/commands/` 的 prompt 檔案。
+- `specify init . --integration claude` 會 scaffold `.specify/` 目錄，並把指令裝成 `.claude/skills/speckit-*/SKILL.md`（在 Claude Code 裡用 `/speckit-specify` 這種連字號名稱叫用）。
 - 現行 Spec Kit 指令全部帶 `/speckit.*` 命名空間；舊版裸指令已棄用。
 - constitution.md 是整個工具鏈的行為錨點；它越具體，後面 AI 輸出品質越高。
 - Kiro 是選配的 GUI 替代方案；Ch 27–29 深入 Spec Kit，Ch 30 再補 Kiro。

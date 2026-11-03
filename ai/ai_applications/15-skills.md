@@ -129,7 +129,7 @@ description: Prepare a commit message and verify the diff before committing. Use
 2. **什麼情境用它**(「Use when the user asks to commit ...」)
 3. **具體訊號**(「create a commit message, ... finished making changes」)
 
-Description 的上限是 1536 字元,通常用不到。**兩三句話是甜蜜點**。
+Description 的長度有兩個數字:Agent Skills 規格(以及 skill-creator 的 `quick_validate.py`)把 description 上限訂在 1024 字元;Claude Code 的 skill 清單則把 description 加 `when_to_use` 截在 1,536 字元。兩個上限通常都用不到。**兩三句話是甜蜜點**。
 
 ### 寫 description 的 checklist
 

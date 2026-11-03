@@ -37,25 +37,27 @@ GitHub 在 2025-09-02 發布 Spec Kit，由 Principal Product Manager Den Delima
     │   │   ├─ spec-template.md  ← 規格範本（強制 WHAT/WHY，無 HOW）
     │   │   ├─ plan-template.md  ← 計劃範本
     │   │   ├─ tasks-template.md ← 任務範本（含 [P] 標記）
-    │   │   └─ CLAUDE-template.md
-    │   └─ scripts/
-    │       ├─ bash/             ← Linux/macOS 用
-    │       │   ├─ check-prerequisites.sh
-    │       │   ├─ common.sh
-    │       │   ├─ create-new-feature.sh
-    │       │   ├─ setup-plan.sh
-    │       │   └─ setup-tasks.sh
-    │       └─ (PowerShell equivalents for Windows)
+    │   │   ├─ checklist-template.md
+    │   │   └─ constitution-template.md
+    │   ├─ scripts/bash/         ← check-prerequisites、common、create-new-feature、
+    │   │                          setup-plan、setup-tasks 五支 .sh（--script ps 則是 PowerShell 版）
+    │   ├─ workflows/speckit/workflow.yml   ← 內建的 speckit 工作流定義
+    │   └─ extensions/agent-context/        ← 維護 CLAUDE.md 這類 agent context 檔的內建擴充
     │
-    └─ .claude/                   ← Claude Code 的 slash command prompt files
-        └─ commands/
-            ├─ speckit.constitution.md
-            ├─ speckit.specify.md
-            ├─ speckit.plan.md
-            ├─ speckit.tasks.md
-            ├─ speckit.implement.md
-            └─ ... (其餘 commands)
+    ├─ .claude/skills/            ← Claude Code 的 Spec Kit 指令，每個指令一個 skill
+    │   ├─ speckit-constitution/SKILL.md
+    │   ├─ speckit-specify/SKILL.md
+    │   ├─ speckit-plan/SKILL.md
+    │   ├─ speckit-tasks/SKILL.md
+    │   ├─ speckit-implement/SKILL.md
+    │   └─ ...（共 11 個，含 clarify、analyze、checklist、converge、taskstoissues、agent-context-update）
+    │
+    └─ CLAUDE.md                  ← agent context 檔
 ```
+
+這張圖依 2026-11-02 用 v0.11.10 實際執行 `specify init . --integration claude --script sh` 的結果重畫。
+
+> **名稱注意**：Spec Kit 從 0.4.5（2026-04-02）起把 Claude Code 的指令裝成原生 skill，在 Claude Code 裡叫用時寫 `/speckit-specify`（連字號）。README 與本課其他章節寫的 `/speckit.specify`（點號）指的是同一個指令，那是 Copilot 等以 prompt file 安裝的 agent 上的名字。本課沿用點號寫法來指稱指令；你在 Claude Code 裡操作時，請換成連字號。
 
 之後每呼叫一次 `/speckit.specify`，`create-new-feature.sh` 會掃描現有 `specs/` 資料夾自動編號，在 Git 建立語義分支，並從 `spec-template.md` 複製出一個空白規格：
 
@@ -95,7 +97,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 ### 安裝 `specify` CLI
 
-Spec Kit 發布在 GitHub，不在 PyPI，所以要從 git tag 安裝。把 `vX.Y.Z` 換成你想釘死的版本（目前最新是 v0.11.10，查證日期 2026-06-30）：
+v0.11.10 的 README 只寫了從 git tag 安裝這一條路（PyPI 上的 `specify-cli` 從 0.11.5 起有官方發布流程，0.12.16 才把它寫進文件成為第二條安裝路線）。本課照 README 從 git tag 安裝並釘版本，把 `vX.Y.Z` 換成你想釘死的版本（本課用 v0.11.10）：
 
 ```bash
 uv tool install specify-cli \
@@ -106,7 +108,7 @@ uv tool install specify-cli \
 
 ```bash
 specify --version
-# 輸出範例：specify-cli 0.11.10
+# 實際輸出：specify 0.11.10
 ```
 
 > 注意：版本號與 git tag 對應；不釘死 tag 改用 `@main` 的話，每次 `uv tool install` 都可能拉到不同行為。這個 repo 的 release 節奏非常快（v0.11.10 在 2026-06-29 發布，同年八月該 repo 才創立一週年），建議釘版本並訂閱 release feed。
@@ -134,9 +136,9 @@ specify init taskify --integration claude
 
 `--integration` 指定要支援的 AI agent。常用值：
 
-| integration key | 對應 agent | command files 寫到哪 |
+| integration key | 對應 agent | 指令檔寫到哪 |
 |----------------|-----------|-------------------|
-| `claude` | Claude Code | `.claude/commands/` |
+| `claude` | Claude Code | `.claude/skills/speckit-*/SKILL.md`（0.4.5 起預設裝成 skill；本表只有這一列實測過） |
 | `copilot` | GitHub Copilot | `.github/prompts/` |
 | `gemini` | Gemini CLI | `.gemini/commands/` |
 | `cursor-agent` | Cursor | `.cursor/` |
@@ -148,7 +150,7 @@ specify init taskify --integration claude
 
 | flag | 說明 |
 |------|------|
-| `--integration-options="--skills"` | 安裝 agent skills 而非 slash-command prompt files（適合 Claude Code、Codex 的 skills 模式） |
+| `--integration-options="--skills"` | 讓預設安裝 prompt files 的 agent（例如 Copilot）改裝成 skills；Claude Code 從 0.4.5 起預設就是 skills，不需要這個選項 |
 | `--here` / `specify init .` | 在現有目錄原地初始化，不建子目錄 |
 | `--force` | 覆寫已有的 `.specify/` |
 | `--ignore-agent-tools` | 只建 `.specify/` scaffold，不寫 agent command files |
@@ -166,25 +168,41 @@ specify init . --integration claude --script ps
 
 ### 實際輸出
 
-執行成功後會看到類似：
+2026-11-02 在空的 git repo 裡用 v0.11.10 執行 `specify init . --integration claude --script sh --force` 的實際輸出（節錄；去掉了框線字元與開頭的 ASCII logo）：
 
 ```
-✓ Created .specify/memory/constitution.md
-✓ Created .specify/templates/spec-template.md
-✓ Created .specify/templates/plan-template.md
-✓ Created .specify/templates/tasks-template.md
-✓ Created .specify/scripts/bash/create-new-feature.sh
-✓ Created .specify/scripts/bash/check-prerequisites.sh
-✓ Created .specify/scripts/bash/common.sh
-✓ Created .specify/scripts/bash/setup-plan.sh
-✓ Created .specify/scripts/bash/setup-tasks.sh
-✓ Created .claude/commands/speckit.constitution.md
-✓ Created .claude/commands/speckit.specify.md
-... (依 integration 不同而異)
-
-Run /speckit.constitution in your AI coding agent to set up your project's
-governing principles.
+Selected coding agent integration: claude
+Selected script type: sh
+Deprecation: Inline agent-context updates during integration setup will be
+disabled in v0.12.0. Context file management has moved to the bundled
+agent-context extension. Run specify extension disable agent-context to opt out
+early.
+Initialize Specify Project
+  Check required tools (ok)
+  Select coding agent integration (claude)
+  Select script type (sh)
+  Install integration (Claude Code)
+  Install shared infrastructure (scripts (sh) + templates)
+  Ensure scripts executable (5 updated)
+  Constitution setup (copied from template)
+  Install bundled workflow (speckit installed)
+  Install agent-context extension (extension installed)
+  Finalize (project ready)
+Project ready.
+…（略）
+  2. Start Claude in this project directory; spec-kit skills were installed
+  to .claude/skills
+  3. Start using skills with your coding agent:
+     3.1 /speckit-constitution - Establish project principles
+     3.2 /speckit-specify - Create baseline specification
+     3.3 /speckit-plan - Create implementation plan
+     3.4 /speckit-tasks - Generate actionable tasks
+     3.5 /speckit-implement - Execute implementation
+     3.6 /speckit-converge - Assess the codebase and append remaining work
+  as tasks
 ```
+
+注意最後幾行：在 Claude Code 裡，指令名稱是連字號的 `/speckit-constitution`。
 
 ---
 
@@ -226,27 +244,26 @@ governing principles.
 
 > 澄清（來自 corrections.md）：`check-prerequisites.sh` 是 scaffold 裡真實存在的腳本，但 `spec-driven.md` 並未把它描述成一個有文件化的「artifact-existence phase gate 機制」。它的實際行為以實際腳本內容為準，不要過度引申。
 
-### 5. agent command files（以 Claude Code 為例）
+### 5. agent 指令檔（以 Claude Code 為例）
 
-`specify init --integration claude` 會把 prompt files 寫到 `.claude/commands/`。每個 `/speckit.*` 命令對應一個 `.md` 文件：
+`specify init --integration claude` 在 v0.11.10 會把每個指令寫成一個 skill，放在 `.claude/skills/`：
 
 ```
-.claude/commands/
-├─ speckit.constitution.md
-├─ speckit.specify.md
-├─ speckit.clarify.md
-├─ speckit.plan.md
-├─ speckit.checklist.md
-├─ speckit.tasks.md
-├─ speckit.analyze.md
-├─ speckit.implement.md
-├─ speckit.taskstoissues.md
-└─ speckit.converge.md
+.claude/skills/
+├─ speckit-agent-context-update/SKILL.md
+├─ speckit-analyze/SKILL.md
+├─ speckit-checklist/SKILL.md
+├─ speckit-clarify/SKILL.md
+├─ speckit-constitution/SKILL.md
+├─ speckit-converge/SKILL.md
+├─ speckit-implement/SKILL.md
+├─ speckit-plan/SKILL.md
+├─ speckit-specify/SKILL.md
+├─ speckit-tasks/SKILL.md
+└─ speckit-taskstoissues/SKILL.md
 ```
 
-這些 `.md` 文件的內容就是「prompt」—— 當你在 Claude Code 輸入 `/speckit.specify`，Claude Code 把那個 `.md` 的內容連同你的輸入一起送入對話。
-
-**skills 模式**的差異：`--integration-options="--skills"` 時，files 會改寫到 skills 目錄（如 `.claude/skills/`），Codex CLI 則用 `$speckit-<command>` 語法。以實際安裝結果為準，因為 per-agent 路徑 version-dependent。
+每個 `SKILL.md` 的內容就是那個指令的 prompt。當你在 Claude Code 輸入 `/speckit-specify`，Claude Code 把那份 `SKILL.md` 的內容連同你的輸入一起送進對話。以 prompt file 安裝的 agent（例如 Copilot 的預設模式）則是每個指令一個 `.md` 檔，叫用名稱是 `/speckit.specify`；Codex CLI 的 skills 模式用 `$speckit-<command>`。各 agent 的實際路徑以你那一版 `specify init` 的輸出為準。
 
 ---
 
@@ -258,7 +275,8 @@ governing principles.
 |------|--------|-----------|
 | 2025-09-02 發布 | 從 git 安裝（同現在），無版本 tag | `/specify`, `/plan`, `/tasks`, 手動 implement |
 | 2025 後期 | 釘 tag 安裝 | 加入 `/constitution`；命令開始加 `/speckit.` prefix |
-| v0.11.10（2026-06-29）| `@v0.11.10` tag | `/speckit.constitution`, `/speckit.specify`, `/speckit.clarify`, `/speckit.plan`, `/speckit.checklist`, `/speckit.tasks`, `/speckit.analyze`, `/speckit.implement`, `/speckit.taskstoissues`, `/speckit.converge` |
+| v0.4.5（2026-04-02）| 釘 tag 安裝 | Claude Code 改裝成原生 skill，叫用名稱變成 `/speckit-specify` 這種連字號形式 |
+| v0.11.10（2026-06-29）| `@v0.11.10` tag | constitution、specify、clarify、plan、checklist、tasks、analyze、implement、taskstoissues、converge；Claude Code 裡寫 `/speckit-plan`，其他 agent 寫 `/speckit.plan` |
 
 這個演進有一個具體例子：`/speckit.clarify` 的前身叫 `/quizme`。如果你找到一篇教 `/quizme` 的文章，那是舊版行為。
 
@@ -314,7 +332,7 @@ Template 解析優先順序（高到低）：project-local 覆寫 > presets > ex
 ### 5. 以為 `specify init` 會替你 `git init`
 
 **錯誤直覺**：`specify init` 是「全包」的初始化。  
-**正確認識**：`specify init` 假設 Git repository 已存在。在沒有 `.git/` 的資料夾跑 `specify init`，`create-new-feature.sh`（需要 `git checkout -b`）之後會失敗。先 `git init` 再 `specify init`。
+**正確認識**：`specify init` 不會替你 `git init`，但 v0.11.10 預設也不需要 git：在沒有 `.git/` 的資料夾裡，`create-new-feature.sh` 照樣建出 `specs/001-…/` 並寫入 `.specify/feature.json`（2026-11-02 實測，exit 0）。只有裝了選用的 git extension，才會在 specify 之前自動建 branch，那時才需要 git repo。不過 spec 本來就該進版控，所以仍然建議先 `git init` 再 `specify init`。
 
 ---
 
@@ -354,14 +372,14 @@ specify init . --integration copilot --ignore-agent-tools  # 只加 copilot prom
 3. 跑 `specify init sdd-hello --integration claude`（如果是 Windows 加 `--script ps`）。
 4. 列出 `.specify/` 資料夾樹狀結構（`find .specify -type f`，Windows 用 `Get-ChildItem .specify -Recurse`），對照本章的 scaffold 圖，確認每個 section 都在。
 5. 打開 `spec-template.md`，找出 `[NEEDS CLARIFICATION: ...]` 的用法和任何 `[P]` 標記，用自己的話解釋這兩個標記要解決什麼問題。
-6. 用 `git status` 看 init 寫了哪些檔案，選擇要不要把 `.specify/` 加進版控（提示：版控 template 有意義，版控 constitution.md 更有意義，但 `.claude/commands/` 要不要版控取決於團隊是否共用 agent 設定）。
+6. 用 `git status` 看 init 寫了哪些檔案，選擇要不要把 `.specify/` 加進版控（提示：版控 template 有意義，版控 constitution.md 更有意義，但 `.claude/skills/speckit-*` 要不要版控取決於團隊是否共用 agent 設定）。
 
 ---
 
 ## 本章重點整理
 
 - Spec Kit 是一個 Python CLI（`specify`），透過 `uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@<tag>` 安裝，需要 Python 3.11+、Git。
-- `specify init <project> --integration <agent>` 產生兩類產物：`.specify/`（templates + scripts + memory）和 agent-specific command/skill files（如 `.claude/commands/`）。
+- `specify init <project> --integration <agent>` 產生兩類產物：`.specify/`（templates + scripts + memory）和 agent-specific command/skill files（Claude Code 是 `.claude/skills/speckit-*/`）。
 - `.specify/templates/` 裡的 `.md` 範本是**主動的 LLM 約束**，不只是格式指引；`[NEEDS CLARIFICATION]` 讓 agent 標記不確定點，`[P]` 標記可並行任務。
 - 命令集從 2025 啟動時的裸命令（`/specify`, `/plan`）演進成目前的 `/speckit.*` namespace，版本之間有差異，釘 tag 是最安全的做法。
 - 升級用 `specify self upgrade [--dry-run] [--tag vX.Y.Z]`，升後要重跑 `specify init --force` 更新 agent command files。

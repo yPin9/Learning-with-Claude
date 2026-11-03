@@ -149,44 +149,141 @@ BA/Dev 共同討論，寫出
    Green / Red（通過 / 失敗）
 ```
 
-Step definition（以 Python/pytest-bdd 為例）：
+Step definition 以 Python 的 pytest-bdd 為例。下面這組程式在 Python 3.12.15、pytest 9.2.0、pytest-bdd 9.0.1 上實測過，對應的就是上面那份 `atm.feature`（放在 `features/atm.feature`）。先是被測的最小領域物件：
 
 ```python
-# step_definitions/atm_steps.py
-from pytest_bdd import given, when, then, parsers
+# atm.py
+class Account:
+    def __init__(self, balance):
+        self.balance = balance
 
-@given(parsers.parse("帳戶餘額為 {balance:d} 元"))
-def account_balance(balance):
-    return {"balance": balance}
 
-@when(parsers.parse("客戶要求提款 {amount:d} 元"))
-def request_withdrawal(account_balance, amount):
-    account_balance["withdrawal_amount"] = amount
+class ATM:
+    def __init__(self):
+        self.online = False
+        self.dispensed = 0
+        self.card_returned = False
+        self.message = None
+
+    def withdraw(self, account, amount):
+        self.card_returned = True
+        if amount > account.balance:
+            self.message = "餘額不足"
+            return
+        account.balance -= amount
+        self.dispensed = amount
+```
+
+再來是 step definitions：
+
+```python
+# tests/test_atm.py
+from pytest_bdd import given, parsers, scenarios, then, when
+
+from atm import ATM, Account
+
+scenarios("../features/atm.feature")
+
+
+@given("提款機已開機且有網路連線", target_fixture="atm")
+def online_atm():
+    machine = ATM()
+    machine.online = True
+    return machine
+
+
+@given(parsers.parse("帳戶餘額為 {balance:d} 元"), target_fixture="account")
+def account_with_balance(balance):
+    return Account(balance)
+
+
+@given("卡片有效")
+def valid_card():
+    pass
+
+
+@given("提款機有現金")
+def atm_has_cash():
+    pass
+
+
+@when(parsers.parse("客戶要求提款 {amount:d} 元"), target_fixture="balance_before")
+def request_withdrawal(atm, account, amount):
+    before = account.balance
+    atm.withdraw(account, amount)
+    return before
+
 
 @then(parsers.parse("帳戶應被扣款 {amount:d} 元"))
-def check_debit(account_balance, amount):
-    initial = account_balance["balance"]
-    account_balance["balance"] -= amount
-    assert account_balance["balance"] == initial - amount
+def debited(account, balance_before, amount):
+    assert balance_before - account.balance == amount
+
+
+@then("現金應被取出")
+def cash_dispensed(atm):
+    assert atm.dispensed > 0
+
+
+@then("卡片應被歸還")
+def card_returned(atm):
+    assert atm.card_returned
+
+
+@then("應顯示「餘額不足」的訊息")
+def insufficient_funds_message(atm):
+    assert atm.message == "餘額不足"
+
+
+@then(parsers.parse("帳戶餘額應為 {balance:d} 元"))
+@then(parsers.parse("帳戶餘額應仍為 {balance:d} 元"))
+def balance_is(account, balance):
+    assert account.balance == balance
+
+
+@then("提款機不應出鈔")
+def nothing_dispensed(atm):
+    assert atm.dispensed == 0
 ```
 
-執行：
+有三條接線最常被漏掉：
+
+1. **`scenarios("../features/atm.feature")`** 把 feature 檔裡的每個 Scenario 綁成一個 pytest 測試函式（路徑相對於這個測試檔）。少了這行，或少了逐一綁定的 `@scenario`，pytest 一個場景都收集不到。
+2. **`target_fixture`** 把步驟的回傳值登記成 fixture，後面的步驟才拿得到 `atm`、`account`、`balance_before`。
+3. **Then 只觀察，不動手**。Then 步驟檢查的是 When 造成的結果。如果 Then 自己扣款、再斷言「扣款成功」，被測程式就算完全沒扣，測試照樣是綠的，這個測試等於沒測。
+
+執行方式就是一般的 `pytest`，收哪些場景由 `scenarios()` 決定：
 
 ```bash
-pytest --bdd features/atm.feature
+PYTHONPATH=. pytest -v
 ```
 
-輸出（成功時）：
+實際輸出（節錄）：
 
 ```
-PASSED features/atm.feature::ATM現金提款::帳戶有足夠餘額時成功提款
-PASSED features/atm.feature::ATM現金提款::帳戶餘額不足時拒絕提款
-PASSED features/atm.feature::ATM現金提款::不同金額的提款[1000-200-800]
-PASSED features/atm.feature::ATM現金提款::不同金額的提款[500-500-0]
-PASSED features/atm.feature::ATM現金提款::不同金額的提款[300-100-200]
+collecting ... collected 5 items
+
+tests/test_atm.py::test_帳戶有足夠餘額時成功提款 PASSED                  [ 20%]
+tests/test_atm.py::test_帳戶餘額不足時拒絕提款 PASSED                    [ 40%]
+tests/test_atm.py::test_不同金額的提款[1000-200-800] PASSED              [ 60%]
+tests/test_atm.py::test_不同金額的提款[500-500-0] PASSED                 [ 80%]
+tests/test_atm.py::test_不同金額的提款[300-100-200] PASSED               [100%]
+
+============================== 5 passed in 0.01s ===============================
 ```
 
-> 注意：`pytest-bdd` 的 API 在版本間有變化（如 `parsers` 模組的用法），以上範例基於 pytest-bdd 6.x；以官方文件當前版本為準。
+Scenario Outline 的每一列 Examples 會變成一個參數化的測試。接著故意把 `withdraw` 裡扣款的那一行換成 `pass`，確認這組測試真的抓得到 bug：
+
+```
+FAILED tests/test_atm.py::test_帳戶有足夠餘額時成功提款 - assert (1000 - 1000...
+FAILED tests/test_atm.py::test_不同金額的提款[1000-200-800] - assert 1000 == 800
+FAILED tests/test_atm.py::test_不同金額的提款[500-500-0] - assert 500 == 0
+FAILED tests/test_atm.py::test_不同金額的提款[300-100-200] - assert 300 == 200
+4 failed, 1 passed in 0.05s
+```
+
+唯一還綠的是「餘額不足」那個場景，因為它本來就不該扣款。
+
+> 版本注意：pytest-bdd 沒有 `--bdd` 選項。網路上常見的 `pytest --bdd features/atm.feature` 在 pytest-bdd 9.0.1 實際執行只會得到 `pytest: error: unrecognized arguments: --bdd`。pytest-bdd 的 API 在大版本之間有過不相容的變動（官方文件為 3.x、4.x、5.x 各寫了一份遷移指南），照抄舊範例前先對照你安裝的版本。想看這套流程和 coding agent 搭配的完整做法（產生缺少的步驟、紅燈原因檢查、用 hook 保護 feature 檔），見 [ai_bdd Ch 27](../ai_bdd/27-ai-bdd-loop.md)。
 
 ## BDD 的歷史脈絡：JBehave → RSpec → Cucumber
 

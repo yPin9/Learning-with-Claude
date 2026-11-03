@@ -239,16 +239,53 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-執行（此時會全部紅，因為 `login.py` 還不存在）：
+先在 `login.py` 還不存在時執行。下面是 Python 3.12.15、pytest 9.2.0 的實際輸出（節錄）：
+
 ```
 $ python -m pytest tests/test_login.py
-FAILED tests/test_login.py::TestLoginLockout::test_account_locks_after_three_failures
-FAILED tests/test_login.py::TestLoginLockout::test_locked_account_rejects_correct_password
-FAILED tests/test_login.py::TestLoginLockout::test_account_unlocks_after_15_minutes
-3 failed, 0 passed in 0.12s
+tests/test_login.py:3: in <module>
+    from login import UserAccount
+E   ModuleNotFoundError: No module named 'login'
+=========================== short test summary info ============================
+ERROR tests/test_login.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+=============================== 1 error in 0.03s ===============================
 ```
 
-接著實作 `UserAccount`，讓測試通過（綠）。
+這也是紅，但紅錯了原因：pytest 連測試都收集不到，三個測試一個都沒跑。TDD 要的紅是「測試跑了，斷言失敗」。所以先寫一個只有介面、還沒有行為的骨架：
+
+```python
+# login.py：只有介面、還沒有行為的骨架
+class LoginResult:
+    def __init__(self, success, reason=None):
+        self.success = success
+        self.reason = reason
+
+
+class UserAccount:
+    def __init__(self, username):
+        self.username = username
+
+    def attempt_login(self, password):
+        return LoginResult(success=False)
+
+    def is_locked(self):
+        return False
+
+    def advance_time(self, minutes):
+        pass
+```
+
+再跑一次，這次三個測試都因為斷言失敗而變紅（實際輸出，節錄）：
+
+```
+FAILED tests/test_login.py::TestLoginLockout::test_account_locks_after_three_failures
+FAILED tests/test_login.py::TestLoginLockout::test_account_unlocks_after_15_minutes
+FAILED tests/test_login.py::TestLoginLockout::test_locked_account_rejects_correct_password
+============================== 3 failed in 0.01s ===============================
+```
+
+接著實作 `UserAccount` 的行為，讓測試通過（綠）。「紅的原因要對」這件事在 agent 時代更重要，[ai_bdd Ch 25](../ai_bdd/25-tdd-in-sdd-pipeline.md) 會把它寫成一支自動檢查的閘門。
 
 ### BDD（Gherkin，給 Cucumber 跑）
 

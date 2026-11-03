@@ -339,6 +339,14 @@ Spec Registry 是「NPM for knowledge」，
 這個概念成立的前提，就是 spec 是可組合、可版本控制的一等公民——
 和 Grove 的論點直接相連。
 
+### SDD 的產物就是給 coding agent 的上下文工程
+
+提示工程（prompt engineering）關心一句話怎麼問；上下文工程（context engineering）關心模型在每一步的「桌面」上擺了什麼：哪些檔案、規則、工具結果、歷史訊息進了 context window，哪些沒進。
+
+從這個角度看，SDD 的每一份產物都是一個上下文單位：constitution 是幾乎每個指令都會先讀的長期上下文，spec.md 是這個 feature 的需求上下文，plan.md、data-model.md、contracts/ 是實作時的技術上下文，tasks.md 再把上下文切成一次只餵一小塊的工作單位。「spec 是單一真相來源」落到實務上，就是讓 agent 每一步拿到的上下文都來自同一份經過人審的文字，而不是散在聊天紀錄裡。
+
+context window 的容量與注意力稀釋，見 [harness_engineering Ch 10](../harness_engineering/10-context-window-budget.md)；CONTEXT 在 agent 四個元件裡的角色，見 [harness_engineering Ch 3](../harness_engineering/03-mental-model.md)。
+
 ## 動手練習
 
 挑你最近一個月寫過的功能（或者一個你熟悉的功能），

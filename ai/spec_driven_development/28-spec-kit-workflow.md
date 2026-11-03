@@ -78,7 +78,7 @@ Spec Kit 的整個工作流，就是把你對功能的模糊想法逐步轉換�
 
 在 Spec Kit 出現之前，開發者通常用 README、CONTRIBUTING.md、或零散的 `.cursorrules` 把規範傳給 AI agent。這些文件的問題是：它們沒有被 agent 工作流主動讀取，每次對話都要靠 context window 的碰運氣。
 
-constitution.md 存在 `.specify/memory/` 底下，每道 `/speckit.*` 指令被 agent 執行前，對應的 prompt file 會把憲法自動注入。規範從被動文字變成主動約束。
+constitution.md 存在 `.specify/memory/` 底下。v0.11.10 除了 constitution 本身，其餘九個指令的模板都寫了一步「存在就先讀 constitution」，plan 還拿它填 Constitution Check 閘門。這不是 harness 自動注入，是指令要求 agent 自己去讀；但只要指令照做，規範就從被動文字變成主動約束。
 
 ### 實際跑一遍
 
@@ -114,40 +114,52 @@ I want to add a feature that lets users assign tasks to team members
 and receive email notifications when tasks are assigned to them.
 ```
 
-指令在幕後做三件事（查證自 spec-driven.md，查證日期 2026-06-30）：
+指令在幕後做三件事（依 v0.11.10 的實際腳本，2026-11-02 對照）：
 
 1. 呼叫 `create-new-feature.sh`，掃描 `specs/` 目錄下所有現存功能，找出最大號碼，產出下一個編號（例：`002`）
-2. 建立語意化分支：`git checkout -b 002-task-assignment-notifications`
-3. 把 spec-template.md 複製到 `specs/002-task-assignment-notifications/spec.md`，然後呼叫 LLM 填入內容
+2. 算出語意化的名稱 `002-task-assignment-notifications`，建立 `specs/002-task-assignment-notifications/`，並把「目前的 feature」記進 `.specify/feature.json`。腳本本身不建 git branch；要自動建 branch，得另外裝選用的 git extension（0.10.0 起不再預設）
+3. 把（經過 preset／overrides 解析後的）spec-template.md 複製成 `spec.md`，然後呼叫 LLM 填入內容
 
-產出的 `spec.md` 骨架：
+產出的 `spec.md` 會沿用 v0.11.10 `spec-template.md` 的段落結構。下面是依那個結構寫的**示意**（內容是本例自編的，段落標題照模板原文，篇幅有刪節）：
 
 ```markdown
-# Feature: Task Assignment & Email Notifications
+# Feature Specification: Task Assignment & Email Notifications
 
-## Overview
-Allow users to assign tasks to team members and trigger
-email notifications upon assignment.
+**Feature Branch**: `002-task-assignment-notifications`
+**Status**: Draft
 
-## User Journeys
+## User Scenarios & Testing *(mandatory)*
 
-### Journey 1: Assigning a Task
-1. User opens a task
-2. User selects "Assign to" and searches by name
-3. System saves assignment and triggers notification
+### User Story 1 - Assign a task (Priority: P1)
+A user opens a task and assigns it to one team member.
 
-### Journey 2: Receiving Notification
-1. Assignee receives email within 5 minutes of assignment
-2. Email contains task title, description, and a deep link
+**Why this priority**: Without assignment, nobody owns the work.
+**Independent Test**: Assign a task and check the assignee field.
 
-## Acceptance Criteria
-- [ ] A task can be assigned to exactly one team member
-- [ ] Assignment triggers an email within 5 minutes [NEEDS CLARIFICATION: SLA under load?]
-- [ ] Unassigning also sends a notification [NEEDS CLARIFICATION: confirm scope]
+**Acceptance Scenarios**:
+1. **Given** an unassigned task, **When** Alice assigns it to Bob, **Then** Bob is the assignee
+2. **Given** a task assigned to Bob, **When** Alice assigns it to Carol, **Then** Carol is the only assignee
 
-## Out of Scope
-- Push notifications (mobile)
-- Assignment history / audit log (separate feature)
+### User Story 2 - Get notified (Priority: P2)
+The assignee receives an email with the task title and a link.
+
+### Edge Cases
+- What happens when the assignee has no email address?
+
+## Requirements *(mandatory)*
+
+### Functional Requirements
+- **FR-001**: System MUST allow exactly one assignee per task
+- **FR-002**: System MUST email the assignee within [NEEDS CLARIFICATION: delivery SLA under load not specified]
+- **FR-003**: System MUST notify on unassignment [NEEDS CLARIFICATION: confirm unassignment is in scope]
+
+## Success Criteria *(mandatory)*
+
+### Measurable Outcomes
+- **SC-001**: 95% of assignment emails arrive within 5 minutes
+
+## Assumptions
+- Push notifications (mobile) are out of scope.
 ```
 
 注意兩個 `[NEEDS CLARIFICATION]`。這些標記是 spec-driven.md 明確設計的機制：模板強迫 LLM 把它自己不確定的地方明確標出來，而不是默默猜測。
@@ -162,7 +174,7 @@ email notifications upon assignment.
 
 > 如果你對需求模糊度的系統性成因有興趣，先回看 [Ch 8 為什麼需求這麼難：自然語言的八種病](./08-why-requirements-hard.md)。
 
-`/speckit.clarify` 是 `/speckit.plan` 之前的選用步驟（README 明確標注：`recommended before /speckit.plan`）。它以覆蓋率為基礎，依序對 spec.md 裡的每個歧義點提問。
+`/speckit.clarify` 是 `/speckit.plan` 之前的選用步驟（README 明確標注：`recommended before /speckit.plan`）。它以覆蓋率為基礎掃描整份 spec，挑出影響最大的模糊處，一次一題、整個 session 最多 5 題。
 
 ### 實際對話
 
@@ -170,32 +182,31 @@ email notifications upon assignment.
 /speckit.clarify
 ```
 
-Agent 讀取 spec.md，針對 `[NEEDS CLARIFICATION]` 標記產出問題：
+下面的對話是**示意**，但流程照 v0.11.10 clarify 模板的規定（2026-11-02 對照原文）：agent 先按類別清單（功能範圍、資料模型、互動流程、非功能需求、整合、邊界情況……）掃描整份 spec，挑出影響最大的模糊處，**一次只問一題**，整個 session 最多 5 題；每題附一個推薦選項和選項表：
 
 ```
-Q1: The spec says notification within 5 minutes. Is this a hard SLA 
-    (we page on-call if breached) or a soft target (best-effort)?
+Question 1 of up to 5 — Non-functional: notification latency
 
-Q2: Should unassigning a task (removing an assignee) also trigger 
-    an email to the former assignee?
+**Recommended:** Option A - a soft target keeps the feature simple; you can tighten it later.
 
-Q3: If the assignee's email is invalid, should we fail silently, 
-    retry, or surface an error to the assigning user?
+| Option | Description |
+|--------|-------------|
+| A | Soft target: log breaches, never page anyone |
+| B | Hard SLA: page on-call when an email takes longer than 5 minutes |
+
+You can reply with the option letter (e.g., "A"), accept the recommendation by saying "yes" or "recommended", or provide your own short answer.
 ```
 
-你逐一回答，agent 把答案折回 spec.md 的 **Clarifications** 節：
+你回答一題，agent 就把它寫回 spec.md：在 `## Clarifications` 底下的當天 `### Session` 加一行 `- Q: … → A: …`，同時把答案落到 spec 對應的段落（例如把「5 分鐘」改寫成 Success Criteria 裡可量測的目標），每寫一次就存檔，再問下一題：
 
 ```markdown
 ## Clarifications
 
-**Q: 5-minute SLA hard or soft?**
-A: Soft target. Log breaches but do not page.
+### Session 2026-06-30
 
-**Q: Unassign notification?**
-A: Yes. Notify former assignee with reason "task reassigned".
-
-**Q: Invalid email?**
-A: Retry 3 times, then mark delivery failed in DB; no UI error.
+- Q: Is the 5-minute notification a hard SLA or a soft target? → A: Soft target; log breaches, no paging
+- Q: Should unassigning a task notify the former assignee? → A: Yes, with reason "task reassigned"
+- Q: What happens when the assignee's email is invalid? → A: Retry 3 times, then mark delivery failed; no UI error
 ```
 
 spec.md 現在已經沒有未解決的歧義。下一步的 plan.md 可以把這些決策當作輸入。
@@ -397,7 +408,7 @@ agent 會自行詮釋「正確」的定義，結果很可能偏離你的預期�
 
 `/speckit.converge` 是給「功能實作到一半，規格又更新了」的場景設計的。它把 spec/plan/tasks 的文字描述與現有程式碼做對比，把尚未完成的差距追加為新的 tasks.md 條目，讓迭代能繼續而不是從頭重來。
 
-這個指令也適用 brownfield 場景：已有大量既存代碼，想逐步引入規格驅動開發時，先跑 `/speckit.converge` 讓規格追上現況，再用 `/speckit.implement` 向前推進。
+方向要看清楚：converge 把 spec、plan、tasks 當成唯一的意圖來源，去檢查**程式碼**還缺什麼，而且它唯一的寫入動作是在 tasks.md 末尾追加一個 `## Phase N: Convergence` 段落；模板明文禁止它修改 spec.md、plan.md 或任何程式碼（v0.11.10 與 1.2.5 皆同，2026-11-02 對照模板原文）。所以在 brownfield 場景，它是讓**程式碼追上規格**，不是讓規格追上現況：你得先把既有行為寫進 spec（例如從既有測試反推），converge 才有對照的基準。
 
 ---
 
@@ -441,7 +452,7 @@ specs/
 使用者輸入 /speckit.specify
         │
         ▼
-1. Prompt file（放在 .github/prompts/ 或 .claude/commands/ 等 agent 目錄）
+1. Prompt file 或 skill（Copilot 是 .github/prompts/；Claude Code 是 .claude/skills/speckit-*/SKILL.md）
         │  內含：注入 constitution.md 的指令 + shell script 呼叫 + 模板引用 + LLM 約束
         ▼
 2. create-new-feature.sh
@@ -455,7 +466,7 @@ Prompt file 是純 Markdown 文字，你可以打開 `.github/prompts/speckit-sp
 
 `check-prerequisites.sh` 是真實存在的腳本（查證日期 2026-06-30），設計意圖是在執行某個階段前驗證前置產物是否存在，但 live spec-driven.md 並未將其描述為嚴格的相位閘（phase gate）；確切行為依版本而異。
 
-`[NEEDS CLARIFICATION: ...]` 是語義標記：告訴所有後續的 LLM 呼叫「這個問題仍未解決」。`/speckit.clarify` 的作用就是把這些標記一一消滅，答案折回 Clarifications 節。spec-driven.md 明確描述模板作為「active constraints」，強迫 LLM 聚焦在 WHAT/WHY 而非 HOW。
+`[NEEDS CLARIFICATION: ...]` 是語義標記：告訴所有後續的 LLM 呼叫「這個問題仍未解決」。這些標記由 `/speckit.specify` 在起草後自己拿來問你（v0.11.10 最多 3 個）；`/speckit.clarify` 則另外掃描整份 spec 找模糊處，一次問一題、最多 5 題，答案折回 Clarifications 節。spec-driven.md 明確描述模板作為「active constraints」，強迫 LLM 聚焦在 WHAT/WHY 而非 HOW。
 
 > Ch 29 會更深挖模板的 prompt 設計和 shell script 細節。
 
@@ -497,7 +508,7 @@ Prompt file 是純 Markdown 文字，你可以打開 `.github/prompts/speckit-sp
 
 ### 錯誤直覺 5：「spec.md 一旦寫完就不再修改」
 
-**正確認識**：`/speckit.clarify` 的作用就是回頭修改 spec.md 的 Clarifications 節。`/speckit.converge` 在迭代時也可能要求你更新 spec 以反映需求演化。spec.md 是活文件，它應該和代碼一起受版本控制，並且在每次功能迭代時被審閱。
+**正確認識**：`/speckit.clarify` 的作用就是回頭修改 spec.md 的 Clarifications 節。`/speckit.converge` 不會改 spec，它只把「程式碼還沒做到 spec 說的」追加成新任務；需求演化時，更新 spec 是你的工作。spec.md 是活文件，它應該和代碼一起受版本控制，並且在每次功能迭代時被審閱。
 
 ---
 
@@ -521,9 +532,9 @@ Spec Kit 沒有強制規定——但後者（分開建立）讓每個 spec 的 t
 
 `specify init` 時有兩種安裝方式：
 
-- **指令模式**（預設）：把 `/speckit.*` 安裝成 prompt 檔案，例如 `.github/prompts/speckit-specify.prompt.md`（Copilot）或 `.claude/commands/speckit-specify.md`（Claude Code）。在 agent 對話框輸入 `/speckit.specify` 觸發。
+- **指令模式**：把 `/speckit.*` 安裝成 prompt 檔案，例如 Copilot 的 `.github/prompts/speckit-specify.prompt.md`。在 agent 對話框輸入 `/speckit.specify` 觸發。
 
-- **Skills 模式**（`--integration-options="--skills"`）：安裝成 agent skill，例如 `speckit-specify`，在支援 skills 的 agent（Claude Code、Codex CLI 等）裡用不同方式觸發。Codex CLI 的 skills 模式下，呼叫語法是 `$speckit-specify` 而非 `/speckit.specify`。
+- **Skills 模式**：安裝成 agent skill，例如 `speckit-specify`。Claude Code 從 0.4.5 起**預設**就是這個模式，檔案在 `.claude/skills/speckit-specify/SKILL.md`，用 `/speckit-specify`（連字號）觸發；其他 agent 要加 `--integration-options="--skills"`。Codex CLI 的 skills 模式下，呼叫語法是 `$speckit-specify`。
 
 兩種模式產出相同的 Markdown 產物，差別只在觸發語法和 agent 整合方式。
 
@@ -576,7 +587,7 @@ Make the app faster and more secure.
 
 ## 本章重點整理
 
-- `/speckit.constitution` 設定全專案準則，以 constitution.md 形式被所有後續指令注入。每個專案跑一次。
+- `/speckit.constitution` 設定全專案準則，寫成 `.specify/memory/constitution.md`。v0.11.10 的其他九個指令模板都寫了「存在就先讀 constitution」這一步，plan 另外拿它當 Constitution Check 閘門。每個專案跑一次。
 - `/speckit.specify` 產出 spec.md，強制聚焦 WHAT/WHY，自動完成功能編號和分支建立。模板以 `[NEEDS CLARIFICATION]` 標記歧義。
 - `/speckit.clarify` 是選用步驟，以覆蓋率為基礎提問，把答案折回 spec.md 的 Clarifications 節。README 明確建議在 plan 之前跑。
 - `/speckit.plan` 接收技術棧選擇，產出 plan.md + data-model.md + research.md + quickstart.md + contracts/，對照 constitution.md 做對齊驗證。

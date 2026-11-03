@@ -101,8 +101,8 @@ Claude Code 有四種權限模式,控制它能不能擅自執行工具:
 
 ```json
 {
-  "permissionMode": "default",
   "permissions": {
+    "defaultMode": "default",
     "allow": [
       "Bash(npm run test:*)",
       "Bash(git status)",

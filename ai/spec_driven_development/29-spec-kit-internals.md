@@ -65,7 +65,7 @@ Den Delimarsky 在 2025-09-02 的 GitHub Blog 公告裡把這個核心問題描�
 2. **讀取 per-agent 的整合設定**（`_agent_config.py`）——這是 CLI 的核心設定檔，存放所有 agent 對應的安裝目錄、指令格式、是否支援 skills 模式等資訊
 3. 把每個 `/speckit.*` 指令對應的 prompt 文字寫進 agent 的指令目錄
 
-對 Claude Code 來說，這些 prompt 檔被寫進 `.claude/commands/` 或 `.claude/skills/`（取決於是否加了 `--integration-options="--skills"`）。對 GitHub Copilot 來說是 `.github/prompts/`。對 Gemini CLI 是 `.gemini/commands/`。
+對 Claude Code 來說，這些 prompt 從 0.4.5 起預設寫成 skill：`.claude/skills/speckit-<指令>/SKILL.md`，叫用名稱是 `/speckit-specify`（連字號）。對 GitHub Copilot 來說預設是 `.github/prompts/`，對 Gemini CLI 是 `.gemini/commands/`（這兩個路徑本書未實測，以你那一版 `specify init` 的輸出為準）。
 
 **每個 `/speckit.<command>` 指令，本質上就是一個 Markdown 格式的 prompt 文字檔**，裡面寫著這個「動作」的目標、前置條件、步驟，以及要呼叫哪些腳本。
 
@@ -116,60 +116,52 @@ Spec Kit 支援兩種模式，在安裝時決定：
 .specify/scripts/bash/
 ├── check-prerequisites.sh   # 確認所需 artifact 存在
 ├── common.sh                # 共用函式（顏色輸出、錯誤處理）
-├── create-new-feature.sh    # 掃描現有 specs/，取下一個號碼，建分支，複製 template
+├── create-new-feature.sh    # 掃描現有 specs/，取下一個號碼，建 feature 目錄，複製 template
 ├── setup-plan.sh            # 確保 plan.md 的相依文件目錄存在
 └── setup-tasks.sh           # 確保 tasks.md 的相依文件目錄存在
 ```
 
 ### `create-new-feature.sh` 的邏輯
 
-這是整個腳本層最核心的一支。它做三件事：
+這是整個腳本層最核心的一支。以下依 v0.11.10 的實際腳本說明（2026-11-02 對照 `specify init` 產生的 `.specify/scripts/bash/create-new-feature.sh`）。它做三件事：
 
 **第一：自動找下一個 feature 編號**
 
 ```bash
-# 偽碼示意（實際腳本為 Bash）
+# 偽碼示意（實際腳本用 get_highest_from_specs 函式做同一件事）
 existing=$(ls specs/ 2>/dev/null | grep -E '^[0-9]{3}-' | sed 's/-.*//' | sort -n | tail -1)
 next=$(printf "%03d" $((10#${existing:-0} + 1)))
 ```
 
-它掃描 `specs/` 目錄下所有子目錄，找到形如 `NNN-name` 的資料夾，取最大的編號加一。所以如果你已經有 `specs/001-user-auth/` 和 `specs/002-payment/`，下一個就是 `003-`，不需要人工管理編號。
+它掃描 `specs/` 目錄下所有子目錄，找到形如 `NNN-name` 的資料夾，取最大的編號加一。所以如果你已經有 `specs/001-user-auth/` 和 `specs/002-payment/`，下一個就是 `003-`，不需要人工管理編號。也可以用 `--number N` 指定，或用 `--timestamp` 改成時間戳記編號。
 
-**第二：建立語意性的 git branch**
+**第二：算出 branch 名稱，但預設不建 branch**
 
-腳本把 feature 名稱轉換成 git branch 名稱（空格換底線或連字號、轉小寫），然後執行：
+腳本把功能描述轉成短名稱（濾掉停用詞、轉小寫、連字號連接），組成 `003-payment-refund` 這樣的名稱，超過 GitHub 的 244 bytes 上限就截斷。它把這個名稱印成 `BRANCH_NAME`，但**腳本本身不執行 `git checkout -b`**。自動建 branch 是 Spec Kit 內建的 git extension 用 hook 做的，而這個 extension 從 0.10.0 起改成選用，預設不裝。
 
-```bash
-git checkout -b "${next}-${feature_slug}"
-```
-
-branch 名稱與 specs 子目錄名稱一致，讓 `specs/003-payment-refund/` 對應 `git branch 003-payment-refund`。追蹤工作項目時，branch 就是索引。
-
-**第三：把 template 複製進去**
+**第三：建目錄、複製 template、記下目前的 feature**
 
 ```bash
-mkdir -p "specs/${next}-${feature_slug}"
-cp .specify/templates/spec-template.md "specs/${next}-${feature_slug}/spec.md"
+# 依實際腳本簡化
+mkdir -p "$FEATURE_DIR"                                  # specs/003-payment-refund
+TEMPLATE=$(resolve_template "spec-template" "$REPO_ROOT")  # 會先找 overrides 與 preset
+cp "$TEMPLATE" "$FEATURE_DIR/spec.md"
+_persist_feature_json "$REPO_ROOT" "$FEATURE_DIR"         # 寫進 .specify/feature.json
 ```
 
-這個 `spec.md` 剛複製時是空白骨架（內有 `[NEEDS CLARIFICATION]` 標記），LLM 讀到 prompt 後會把它填寫完整。
+注意兩點。第一，template 不是直接從 `.specify/templates/` 複製，而是先經過 `resolve_template` 的解析堆疊，所以本章後面講的 preset 與 overrides 在這一步生效。第二，「目前在做哪個 feature」記在 `.specify/feature.json`（或環境變數 `SPECIFY_FEATURE`），不是靠 git branch。後面的 `/speckit.plan`、`/speckit.tasks` 就是從這裡找到 feature 目錄的。這個 `spec.md` 剛複製時是空白骨架，LLM 讀到 prompt 後會把它填寫完整。
 
 ### `check-prerequisites.sh` 的邏輯
 
-這個腳本在幾個指令的 prompt 裡被引用，目的是確認「上一個 artifact 已存在」再繼續。
+這個腳本在幾個指令的 prompt 裡被引用，目的是確認「上一個 artifact 已存在」再繼續。它先用和上面相同的方式（`SPECIFY_FEATURE` 或 `.specify/feature.json`）找到目前的 feature 目錄，再檢查需要的檔案。v0.11.10 的實際錯誤訊息包括：
 
-> **注意（查證 2026-06-30）**：根據 `spec-driven.md`，`check-prerequisites.sh` 是腳手架中真實存在的腳本，但 `spec-driven.md` 並未將其描述為正式的「phase-gate」機制；它的確切行為以具體 release 版本的原始碼為準，此處描述的是其文件化的意圖，而非逐行驗證的行為。
-
-概念上，這個腳本會做類似：
-
-```bash
-if [ ! -f "specs/${BRANCH}/spec.md" ]; then
-  echo "ERROR: spec.md 不存在，請先執行 /speckit.specify"
-  exit 1
-fi
+```
+ERROR: Feature directory not found: <目錄>
+ERROR: plan.md not found in <目錄>
+ERROR: tasks.md not found in <目錄>
 ```
 
-阻止 LLM 在 spec 還沒寫的情況下就衝去執行 `/speckit.plan`。
+找不到就 `exit 1`，擋住 LLM 在前一步產物還沒出來時就往下跑。
 
 ### 跨平台設計：sh vs ps
 
@@ -193,33 +185,44 @@ SCRIPT_TYPE_CHOICES = {"sh", "ps"}
 
 ### `spec-template.md`：只許寫 WHAT 和 WHY
 
-spec 模板強制執行一條核心原則：**規格描述需求，不描述解法**。模板的結構大致如下（基於文件描述，非直接引用模板全文）：
+spec 模板強制執行一條核心原則：**規格描述需求，不描述解法**。下面是 v0.11.10 `spec-template.md` 的段落骨架，標題與佔位文字照原文節錄（2026-11-02 對照 `specify init` 產生的實際檔案，中間有刪節）：
 
 ```markdown
-# Feature: [FEATURE_NAME]
+# Feature Specification: [FEATURE NAME]
 
-## Overview
-[描述這個功能解決什麼問題，以及為什麼重要]
+**Feature Branch**: `[###-feature-name]`
+**Status**: Draft
 
-## User Journeys
-### Journey 1: [角色] 想要 [目的]
-- 前置條件：...
-- 步驟：...
-- 預期結果：...
+## User Scenarios & Testing *(mandatory)*
 
-## Acceptance Criteria
-- [ ] [驗收條件 1]
-- [ ] [驗收條件 2]
+### User Story 1 - [Brief Title] (Priority: P1)
+[Describe this user journey in plain language]
+**Why this priority**: [Explain the value and why it has this priority level]
+**Independent Test**: [Describe how this can be tested independently ...]
+**Acceptance Scenarios**:
+1. **Given** [initial state], **When** [action], **Then** [expected outcome]
 
-## Out of Scope
-- [明確排除的功能]
+### Edge Cases
+- What happens when [boundary condition]?
 
-## Open Questions
-- [NEEDS CLARIFICATION: 這個功能需要支援多語系嗎？]
-- [NEEDS CLARIFICATION: 離線模式下的行為是什麼？]
+## Requirements *(mandatory)*
+
+### Functional Requirements
+- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
+*Example of marking unclear requirements:*
+- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
+
+### Key Entities *(include if feature involves data)*
+
+## Success Criteria *(mandatory)*
+
+### Measurable Outcomes
+- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
+
+## Assumptions
 ```
 
-關鍵是那個 **`[NEEDS CLARIFICATION: ...]`** 標記。
+關鍵是那個 **`[NEEDS CLARIFICATION: ...]`** 標記，模板自己就在 FR-006 示範了它的用法。另外注意驗收情境已經是 Given/When/Then 的形狀，而且每個使用者故事都要求「可以獨立測試」。
 
 ### `[NEEDS CLARIFICATION]` 的工作原理
 
@@ -230,7 +233,7 @@ spec 模板強制執行一條核心原則：**規格描述需求，不描述解�
 
 這是一個精巧的「注意力鉤子（attention hook）」。因為 `[NEEDS CLARIFICATION]` 是特殊格式（方括號 + 全大寫關鍵字），LLM 在生成時更容易把它當成「這裡是待填項目」而非正文，從而避免了「自動填空」的問題。
 
-`/speckit.clarify` 指令存在的目的就是系統性地把這些標記轉換成問答過程——它會逐一問你每個 `[NEEDS CLARIFICATION]` 的問題，把你的答案寫回 spec.md 的 Clarifications 段落。
+要注意分工：處理這些標記的是 `/speckit.specify` 自己。v0.11.10 的 specify 模板限制最多插 3 個標記，起草完就把它們整理成選擇題問你，再用你的答案把標記換掉。`/speckit.clarify` 是另一件事：它用一份涵蓋功能範圍、資料模型、非功能需求等類別的清單掃描整份 spec，挑出最多 5 個影響最大的模糊處，一次問一題，把答案寫回 spec.md 的 `## Clarifications` 段落。它的模板裡沒有提到這個標記。
 
 **實際效果對比：**
 
@@ -248,14 +251,14 @@ spec 模板強制執行一條核心原則：**規格描述需求，不描述解�
 用 spec-template.md 的 LLM 會產出：
 
 ```markdown
-## User Journeys
-### Journey 1: 已有帳號的使用者想要進入系統
-
-## Open Questions
-- [NEEDS CLARIFICATION: 需要支援 Social Login（如 Google、GitHub）嗎？]
-- [NEEDS CLARIFICATION: 多次失敗後的鎖定策略由產品決定，還是工程自行決定？]
-- [NEEDS CLARIFICATION: 是否需要 MFA？]
+### Functional Requirements
+- **FR-001**: System MUST let a registered user sign in with their own credentials
+- **FR-002**: System MUST support [NEEDS CLARIFICATION: 需要 Social Login（如 Google、GitHub）嗎？]
+- **FR-003**: System MUST lock an account after [NEEDS CLARIFICATION: 鎖定策略由產品決定，還是工程自行決定？]
+- **FR-004**: System MUST [NEEDS CLARIFICATION: 是否需要 MFA？]
 ```
+
+（示意：段落結構照模板，內容是本例自編的。v0.11.10 的 specify 模板最多允許 3 個標記，所以第四個疑問應該由 LLM 用合理預設處理，或留到 `/speckit.clarify` 再問。）
 
 後者把不確定的地方攤開來，讓人類決定，而不是讓 LLM 猜。
 
@@ -263,17 +266,26 @@ spec 模板強制執行一條核心原則：**規格描述需求，不描述解�
 
 tasks 模板裡有另一個關鍵標記：**`[P]`**，代表 Parallel（可並行執行）。
 
-tasks.md 的結構大致如下：
+v0.11.10 `tasks-template.md` 的結構如下（照原文節錄，中間有刪節）：
 
 ```markdown
-## Phase 1: Setup
-- [P] Task 1.1: 建立資料庫 schema
-- [P] Task 1.2: 初始化 API 路由結構
-- Task 1.3: 整合測試（依賴 1.1 和 1.2）
+## Format: `[ID] [P?] [Story] Description`
 
-## Phase 2: Core Implementation
-- Task 2.1: 實作登入邏輯（依賴 Phase 1）
+## Phase 1: Setup (Shared Infrastructure)
+- [ ] T001 Create project structure per implementation plan
+- [ ] T003 [P] Configure linting and formatting tools
+
+## Phase 2: Foundational (Blocking Prerequisites)
+- [ ] T004 Setup database schema and migrations framework
+
+## Phase 3: User Story 1 - [Title] (Priority: P1) 🎯 MVP
+### Tests for User Story 1 (OPTIONAL - only if tests requested) ⚠️
+- [ ] T010 [P] [US1] Contract test for [endpoint] in tests/contract/test_[name].py
+### Implementation for User Story 1
+- [ ] T012 [P] [US1] Create [Entity1] model in src/models/[entity1].py
 ```
+
+兩件事值得注意：Phase 3 起是**依使用者故事切 phase**，第一個故事標成 MVP；每個故事底下的測試那一節標著「OPTIONAL - only if tests requested」，也就是說預設流程不保證先寫測試。
 
 `[P]` 標記的語意是：這些 task 沒有互相依賴，可以讓多個 AI agent（或人類）同時處理，不用等前一個完成。沒有 `[P]` 的 task 表示有依賴關係，必須按順序執行。
 
@@ -293,7 +305,7 @@ extensions（由 specify extension add 安裝）
 core 預設模板
 ```
 
-這讓團隊可以在 presets 裡定義自己的規格格式（例如加入公司特有的安全檢核欄位），同時還能 `specify self upgrade` 更新 core 部分而不覆蓋自訂。
+這讓團隊可以在 presets 裡定義自己的規格格式（例如加入公司特有的安全檢核欄位），core 模板則留給 Spec Kit 維護。注意 `specify self upgrade` 只升級 CLI 本身，不會動專案裡的任何檔案；專案裡的 core 模板要重新執行 `specify init --here --force` 才會換新，而 preset 與 overrides 放在各自的目錄，解析時疊在 core 之上（重新 init 會不會碰到它們，請以你的版本實測為準）。
 
 ---
 
@@ -303,10 +315,10 @@ core 預設模板
 
 ```
 使用者在 Claude Code 輸入：
-/speckit.specify 建立一個任務管理功能，讓使用者可以新增、完成、刪除任務
+/speckit-specify 建立一個任務管理功能，讓使用者可以新增、完成、刪除任務
          │
          ▼
-[Layer 1] Claude 讀取 .claude/commands/speckit.specify.md
+[Layer 1] Claude 讀取 .claude/skills/speckit-specify/SKILL.md
   → prompt 告訴 Claude：
     1. 先呼叫 create-new-feature.sh "task-management"
     2. 讀取產生的 specs/<branch>/spec.md（已含模板骨架）
@@ -317,13 +329,13 @@ core 預設模板
 [Layer 2] Claude 執行 Bash: create-new-feature.sh "task-management"
   → 掃描 specs/，發現已有 001-auth，002-profile
   → next = "003"
-  → git checkout -b 003-task-management
   → mkdir specs/003-task-management/
-  → cp .specify/templates/spec-template.md specs/003-task-management/spec.md
+  → cp（解析後的）spec-template.md specs/003-task-management/spec.md
+  → 寫入 .specify/feature.json（預設不建 git branch）
          │
          ▼
 [Layer 3] Claude 讀取 specs/003-task-management/spec.md（模板骨架）
-  → 填寫 Overview、User Journeys、Acceptance Criteria
+  → 填寫 User Scenarios & Testing、Requirements（FR-001…）、Success Criteria
   → 遇到「刪除後是否可以還原？」不確定
   → 寫入 [NEEDS CLARIFICATION: 刪除任務後是否需要支援復原（undo）功能？]
          │
@@ -356,7 +368,7 @@ spec.md 被 git add（或 Claude 提示你 commit）
 
 **錯誤認識**：以為輸入 `/speckit.specify` 時是 Claude Code 或 Copilot 自帶的功能在運作，跟 Spec Kit 無關。
 
-**正確認識**：`/speckit.*` 是 `specify init` 寫進 `.claude/commands/` 或 `.github/prompts/` 的 prompt 文字檔，agent 讀的是這些檔案。如果你沒有執行過 `specify init`，或者刪掉了 `.claude/` 目錄，這些指令就不存在了。這也是為什麼不同 agent 的指令前置符不同（Codex CLI 用 `$speckit-*`）——各 agent 的指令格式由 `_agent_config.py` 配置，不是 Spec Kit hardcode 進去的。
+**正確認識**：`/speckit.*` 是 `specify init` 寫進 agent 目錄的 prompt 文字檔（Claude Code 是 `.claude/skills/speckit-*/SKILL.md`，Copilot 是 `.github/prompts/`），agent 讀的是這些檔案。如果你沒有執行過 `specify init`，或者刪掉了 `.claude/` 目錄，這些指令就不存在了。這也是為什麼不同 agent 的指令前置符不同（Codex CLI 用 `$speckit-*`）——各 agent 的指令格式由 `_agent_config.py` 配置，不是 Spec Kit hardcode 進去的。
 
 ### 錯誤直覺二：「模板只是格式，LLM 可以不理它」
 
@@ -388,24 +400,30 @@ spec.md 被 git add（或 Claude 提示你 commit）
 
 ### 自訂 template：把公司規範寫進規格約束
 
-Spec Kit 的 preset 機制讓你可以覆蓋 `spec-template.md`，加入公司特有的欄位：
+想讓 `spec-template.md` 多出公司特有的欄位，v0.11.10 有兩條路。只有一個 repo 要改，用專案層覆蓋（project-local override）就夠，它在解析堆疊的最上層：
 
 ```bash
-# 建立一個 preset 目錄
-mkdir -p .specify/presets/my-company/templates
-
-# 複製並修改 spec 模板
-cp .specify/templates/spec-template.md .specify/presets/my-company/templates/spec-template.md
-# 加入公司欄位，例如：
+# 做法一：專案層覆蓋，不用包成 preset
+mkdir -p .specify/templates/overrides
+cp .specify/templates/spec-template.md .specify/templates/overrides/spec-template.md
+# 在副本裡加公司欄位，例如：
 # ## Compliance Requirements
 # - [NEEDS CLARIFICATION: 這個功能是否涉及個資（GDPR/CCPA）？]
 # - [NEEDS CLARIFICATION: 需要 SOC 2 稽核日誌嗎？]
-
-# 啟用 preset
-specify preset add ./my-company-preset
 ```
 
-這樣每次 `/speckit.specify` 產出的 spec.md 都會自動包含公司的合規檢核欄位，不用靠工程師記得填。
+要讓很多 repo 共用同一套欄位，就包成 preset。preset 是一個帶 `preset.yml` 清單的目錄，清單裡寫 id、版本，以及它提供哪些 template（`provides.templates`，每項有 `name`、`file`，可選 `strategy: append` 只在核心模板後面加一段）：
+
+```bash
+# 做法二：包成 preset
+# my-company-preset/
+# ├── preset.yml                    # preset.id: "my-company"，provides.templates 列出 spec-template
+# └── templates/spec-template.md
+specify preset add --dev ./my-company-preset   # 從本機目錄安裝，裝進 .specify/presets/my-company/
+specify preset resolve spec-template           # 追一遍解析堆疊，確認最後用的是哪一份
+```
+
+`preset.yml` 的完整欄位以官方 `presets/scaffold/preset.yml` 為準（本段依 v0.11.10 的 `docs/reference/presets.md` 改寫，查證日期 2026-11-02）。這樣每次 `/speckit.specify` 產出的 spec.md 都會帶著公司的合規檢核欄位，不用靠工程師記得填。Spec Kit 1.x 的 preset 實際操作見 [ai_bdd Ch 17](../ai_bdd/17-constitution-and-presets.md)。
 
 ### 擴充指令：寫一個 `/speckit.security-review`
 
@@ -439,7 +457,7 @@ specify self check  # 確認目前版本
 
 **練習一：解剖你的 prompt 檔**
 
-如果你已經完成 Ch 27 的安裝，找到你的 agent 對應的指令目錄，用文字編輯器打開其中一個 prompt 檔（例如 `.claude/commands/speckit.specify.md`）。
+如果你已經完成 Ch 27 的安裝，找到你的 agent 對應的指令目錄，用文字編輯器打開其中一個 prompt 檔（Claude Code 是 `.claude/skills/speckit-specify/SKILL.md`）。
 
 問自己：
 - 這個 prompt 如何告訴 LLM 呼叫哪個腳本？
@@ -465,11 +483,11 @@ cat specs/XXX-my-test-feature/spec.md  # 應該是 spec-template.md 的內容
 
 **練習三：在 spec-template.md 加入一個強制欄位**
 
-找到 `.specify/templates/spec-template.md`，在 `## Open Questions` 區塊前加入：
+不要直接改 `.specify/templates/spec-template.md`（重新 init 會被覆蓋）。把它複製到 `.specify/templates/overrides/spec-template.md`，在 `## Assumptions` 之前加入：
 
 ```markdown
 ## Definition of Done
-- [ ] 所有 Acceptance Criteria 有對應的自動化測試
+- [ ] 所有 Acceptance Scenarios 有對應的自動化測試
 - [ ] [NEEDS CLARIFICATION: 這個功能的 rollback 計畫是什麼？]
 ```
 
@@ -517,7 +535,7 @@ cat specs/XXX-my-test-feature/spec.md  # 應該是 spec-template.md 的內容
   完整的 Core / Optional 指令表格、`specify init` 的 flag 定義、scaffolded 目錄結構。每次 Spec Kit 發版後，從這裡確認指令名稱有沒有再改。與本章的關聯：Layer 1 的指令清單與 Layer 2 的腳本目錄結構以此為準。
 
 - **Supported Integrations — Spec Kit Docs**：https://github.github.io/spec-kit/reference/integrations.html
-  各 agent 的安裝目錄（`.claude/commands/` vs `.github/prompts/` vs `.gemini/commands/`）與 skills 模式說明。你想弄清楚「我用的 agent 的 prompt 檔在哪裡」，這頁是最快的答案。與本章的關聯：Layer 1 的 per-agent 安裝對應。
+  各 agent 的安裝目錄（例如 Claude Code 的 `.claude/skills/`、Copilot 的 `.github/prompts/`）與 skills 模式說明。你想弄清楚「我用的 agent 的 prompt 檔在哪裡」，這頁是最快的答案。與本章的關聯：Layer 1 的 per-agent 安裝對應。
 
 - **GitHub Blog — Spec-driven development with AI（原始 launch 公告）**：https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/
   Den Delimarsky，2025-09-02。看原始 launch 的設計動機（「literal-minded pair programmers」），以及當時只有四個未加前置的指令（`/specify`、`/plan`、`/tasks` + 手動 implement）。對比現在的 v0.11.10，能感受到整個工具怎麼演進出來的。與本章的關聯：歷史脈絡與「為什麼這樣設計」的第一手資料。

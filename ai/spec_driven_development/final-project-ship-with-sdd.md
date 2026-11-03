@@ -316,8 +316,8 @@ specify init my-project --integration claude
 /speckit.specify        # 從你的 spec.md 生成完整功能說明
 /speckit.clarify        # （推薦在 plan 前跑）解決模糊點
 /speckit.plan           # 生成技術計劃（含 data model、contracts/）
-/speckit.analyze        # 跑 spec/plan/tasks 一致性檢查
 /speckit.tasks          # 拆成可執行 task list
+/speckit.analyze        # 跑 spec/plan/tasks 一致性檢查（要有 tasks.md 才能跑）
 /speckit.implement      # 驅動 agent 實作
 /speckit.converge       # 對照 spec 確認還缺什麼
 ```

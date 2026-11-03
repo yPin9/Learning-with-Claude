@@ -250,7 +250,7 @@ AGENTS.md 的優勢是**可攜性**：同一份 spec 檔，換工具不需要重
 
 ### CLAUDE.md 與 AGENTS.md 的關係
 
-Claude Code 讀 CLAUDE.md；它也讀 AGENTS.md（透過 Cursor 等 IDE 的互通規範）。兩者格式相近，都是 Markdown，差別在 agent 的載入優先順序。如果你只想維護一份，AGENTS.md 的跨工具覆蓋面更廣；如果你需要 Claude Code 特定的 hooks 或 skills 設定，CLAUDE.md 是主場。
+Claude Code 讀 CLAUDE.md。從 2.1.277 起它也會直接讀 AGENTS.md，但預設**只在沒有 CLAUDE.md（或 CLAUDE.local.md）時才讀**；兩個都在，它只讀 CLAUDE.md。想讓兩份同時生效，最穩的做法是在 CLAUDE.md 裡用 `@AGENTS.md` 匯入，或把 Project instructions 設定改成 `claude-md-and-agents-md`（查證日期 2026-11-02，以 Claude Code 官方 memory 文件為準；更早的版本不會直接讀 AGENTS.md，只能靠匯入）。兩者格式相近，都是 Markdown。如果你只想維護一份，AGENTS.md 的跨工具覆蓋面更廣；如果你需要 Claude Code 特定的 hooks 或 skills 設定，CLAUDE.md 是主場。
 
 ### Aider 的 CONVENTIONS.md
 
@@ -331,7 +331,7 @@ Devin 是 Cognition 的「autonomous AI software engineer」。官方一句話�
 
 **錯誤直覺 2：AGENTS.md 和 CLAUDE.md 只能選一個**
 
-正確認識：Claude Code 同時讀兩者。AGENTS.md 負責跨工具的基礎指引；CLAUDE.md 負責 Claude Code 特定的擴充（skills、subagent、hooks）。兩者互補，不衝突。
+正確認識：兩者可以並存，但 Claude Code 預設不會同時讀：有 CLAUDE.md 時它就不讀 AGENTS.md。要讓 AGENTS.md 負責跨工具的基礎指引、CLAUDE.md 負責 Claude Code 特定的擴充（skills、subagent、hooks），就在 CLAUDE.md 開頭寫一行 `@AGENTS.md` 把它匯入。這樣兩者互補，而且只維護一份共同基線。
 
 **錯誤直覺 3：自主 agent（Devin/Codex）不需要寫規格，直接下任務就好**
 

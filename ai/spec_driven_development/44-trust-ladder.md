@@ -57,15 +57,15 @@ SDD 面對的是同一道牆，只是現在翻譯者換成了 LLM，轉譯能力
 **典型工具用法**（以 GitHub Spec Kit 為例，查證日期 2026-06-30）：
 
 ```bash
-# 已有 .specify/specs/01-payment-flow.md
-# 用 /speckit.clarify 讓 AI 標出需要澄清的地方
+# 已有 specs/001-payment-flow/spec.md（你自己寫的）
+# 用 /speckit.clarify 讓 AI 針對模糊處提問
 ```
 
-AI 會在 spec 裡插入 `[NEEDS CLARIFICATION: ...]` 標記——這不是它的決定，是它的疑問。你負責回答。
+在 v0.11.10，`/speckit.clarify` 一次問一題、整個 session 最多 5 題，每題附建議選項；你答完，它會把答案寫回 spec 的 `## Clarifications` 段落。`[NEEDS CLARIFICATION: ...]` 標記則是 `/speckit.specify` 起草時插的（最多 3 個）。不論哪一種，問題是它的，決定是你的。
 
 **護欄**：
-- AI 產出只能是批注；任何批注都要人確認才能進入下一步。
-- 每次 clarify 之後，你要親自更新 spec，不要讓 AI 直接改原文。
+- AI 產出只能是提問與批注；任何答案都要人確認才能進入下一步。
+- clarify 會直接改寫 spec 檔。要守住「AI 只評論」，就先在副本上跑，或每次跑完用 `git diff` 檢查它寫回了什麼，不認同的部分還原。
 
 **升級訊號**：你已經看過三個以上 AI 的 clarify 輸出，大部分疑問都是你自己沒想到的真實問題（不是噪音）。
 

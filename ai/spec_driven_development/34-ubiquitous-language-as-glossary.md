@@ -151,7 +151,7 @@ terms:
 
 > 如果你還不熟 Spec Kit 的 constitution 機制，先回看 [Ch 27 GitHub Spec Kit（一）：安裝與 bootstrap](./27-spec-kit-install.md)。
 
-在 `.specify/constitution.md` 裡加一個 Glossary 段落：
+在 `.specify/memory/constitution.md` 裡加一個 Glossary 段落：
 
 ```markdown
 # Constitution
@@ -180,7 +180,7 @@ A physical seat identified by (section, row, number).
 <!-- ... 其他 terms ... -->
 ```
 
-這樣每次跑 `/speckit.specify` 或 `/speckit.plan` 時，constitution 都在 context window 的最前面——LLM 看到 Ticket 時，已經讀過「不是客服工單」了。
+這樣每次跑 `/speckit.specify` 或 `/speckit.plan` 時，agent 都會先讀到這段：v0.11.10 的 specify 模板寫明「存在就載入 constitution」，plan 模板更拿它填 Constitution Check。LLM 看到 Ticket 之前，已經讀過「不是客服工單」了。
 
 ### 機制二：AWS Kiro — steering files
 

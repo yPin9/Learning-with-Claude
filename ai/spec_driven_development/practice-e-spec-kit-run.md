@@ -40,7 +40,7 @@ Spec Kit 要解決的正是這個問題：把「spec 是第一公民」這件事
 
 每層只有在上層的產物存在時才能執行。`check-prerequisites.sh` 是腳本層的守門員；它不是 README 正式記錄的「相位門」，而是被 scaffolded 進去的防呆邏輯，可能隨版本調整——這是你需要親眼看 `.specify/scripts/bash/` 目錄的原因。
 
-`/speckit.*` 指令不是「真的指令」，而是 agent 的 prompt 檔案（slash command prompt files）被注入進去的。`specify init` 做的事，是把 `.specify/templates/` 裡的 spec-template.md、plan-template.md、tasks-template.md 複製進去，再把對應的 prompt 檔案寫進 agent 目錄（例如 Claude Code 的 `.claude/commands/`）。當你在 agent 對話框輸入 `/speckit.specify`，agent 讀的其實是那個 prompt 檔案，然後以 template 作為輸出格式的約束。
+`/speckit.*` 指令不是「真的指令」，而是 agent 的 prompt 檔案（slash command prompt files）被注入進去的。`specify init` 做的事，是把 `.specify/templates/` 裡的 spec-template.md、plan-template.md、tasks-template.md 複製進去，再把對應的 prompt 檔案寫進 agent 目錄（Claude Code 是 `.claude/skills/speckit-*/SKILL.md`，在 Claude Code 裡叫用時寫 `/speckit-specify`）。當你在 agent 對話框輸入指令，agent 讀的其實是那個 prompt 檔案，然後以 template 作為輸出格式的約束。
 
 這個架構解釋了一個重要的限制：**工具能約束輸出格式，但不能約束輸出品質**。如果你給 `/speckit.specify` 的輸入本來就模糊，它會產出格式正確但內容模糊的 spec.md。垃圾進，格式正確的垃圾出。
 
@@ -227,7 +227,8 @@ Windows 用戶加 `--script ps` 讓腳本產出 PowerShell 版本。`specify int
     spec-template.md
     plan-template.md
     tasks-template.md
-    CLAUDE-template.md    ← Claude Code 專用
+    checklist-template.md
+    constitution-template.md
 specs/                    ← 每個 feature 一個子目錄，由工具建立
   001-your-feature/
     spec.md

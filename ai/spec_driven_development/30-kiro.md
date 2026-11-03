@@ -429,11 +429,11 @@ workspace hooks（.kiro/hooks/）是專案層級，通常納入 git；user hooks
 
 | 維度 | AWS Kiro | GitHub Spec Kit |
 |------|---------|----------------|
-| 形式 | 獨立桌面 IDE（Code OSS fork） | Copilot 插件（需要 VS Code + GitHub Copilot） |
-| 規格檔位置 | .kiro/specs/<feature>/ | .specify/<number>-<feature>/ |
-| 規格產物 | requirements.md + design.md + tasks.md | spec.md + design.md + plan.md + tasks.md（四檔） |
+| 形式 | 獨立桌面 IDE（Code OSS fork） | 命令列工具 `specify`，把指令裝進你用的 coding agent（v0.11.10 README 稱支援 30+ 種，含 Claude Code、Copilot、Gemini CLI、Cursor） |
+| 規格檔位置 | .kiro/specs/<feature>/ | specs/<number>-<feature>/（在 repo 根目錄） |
+| 規格產物 | requirements.md + design.md + tasks.md | spec.md + plan.md + tasks.md，plan 階段另產出 research.md、data-model.md、contracts/、quickstart.md |
 | 需求記法 | EARS 明確推薦 | 模板強制「WHAT + WHY，不含 HOW」，不指定 EARS |
-| 持久 context | .kiro/steering/ | .specify/constitution.md（project constitution） |
+| 持久 context | .kiro/steering/ | .specify/memory/constitution.md（project constitution） |
 | 事件驅動自動化 | .kiro/hooks/ JSON | 無對應機制（靠 CI 或手動） |
 | 執行模式 | Autopilot / Supervised | 無切換，靠 agent 逐步執行 /speckit.implement |
 | 並行執行 | waves（依賴圖驅動） | [P] 標記的 parallel group |

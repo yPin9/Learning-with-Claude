@@ -54,7 +54,7 @@
 
 | 工具 | 核心主張 | Spec 在哪裡 |
 |------|----------|------------|
-| **GitHub Spec Kit** | 規格是 agent 的作業說明 | `.specify/specs/<feature>/` 下的 spec.md / plan.md / tasks.md |
+| **GitHub Spec Kit** | 規格是 agent 的作業說明 | repo 根目錄 `specs/<feature>/` 下的 spec.md / plan.md / tasks.md |
 | **AWS Kiro** | IDE 原生的三文件 SDD | `.kiro/specs/<feature>/` 下的 requirements.md / design.md / tasks.md |
 | **Tessl Framework** | Spec 是唯一真相，程式碼是衍生物 | 用 Component spec / Usage spec（closed beta，格式以官方最新為準） |
 | **BMAD-METHOD** | 文件（PRD、架構、user story）是源頭，程式碼在下游 | 無固定目錄；產出 PRD、架構文件、user story，供 IDE agent 使用 |
@@ -146,7 +146,7 @@ Addy Osmani（Google）總結了一個跨工具的核心問題：「指令詛咒
 /speckit.implement      # 讓 agent 逐條執行任務
 ```
 
-產出：`.specify/specs/007-merge-shipping/` 下會有 spec.md（用戶故事 + 業務規則）、plan.md（含 API spec JSON 和 data-model.md）、tasks.md（66 步左右）。整個流程耗時取決於你投入多少 review，但要有心理準備：plan 本身可能超過 1,000 行 Markdown（Eberhardt 的實測資料；查證日期 2026-06-30）。
+產出：`specs/007-merge-shipping/` 下會有 spec.md（用戶故事 + 業務規則）、plan.md（含 API spec JSON 和 data-model.md）、tasks.md（66 步左右）。整個流程耗時取決於你投入多少 review，但要有心理準備：plan 本身可能超過 1,000 行 Markdown（Eberhardt 的實測資料；查證日期 2026-06-30）。
 
 ### Kiro 的路徑
 
