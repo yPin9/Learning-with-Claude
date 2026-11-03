@@ -13,6 +13,8 @@
 
 - [ai_applications](./ai/ai_applications/README.md)
   - Claude 深度應用 + 用 Claude 生態做產品 + 通用 LLM 工程（RAG / eval / observability）
+- [ai_bdd](./ai/ai_bdd/README.md)
+  - 照「AI x BDD」五段課綱重排本 repo 的 agent 與規格教材並補齊動手缺口：agent 迴圈 + 模組化 skill + Spec Kit 1.x 客製化 + TDD/Playwright E2E + BDD（pytest-bdd、example mapping、雙 driver 驗收），含 55 單元對照表，34 章 + 4 練習 + 會議室預約流水線 final
 - [harness_engineering](./ai/harness_engineering/README.md)
   - 打造 AI agent 執行框架：agent loop + context 管理 + 工具系統 + subagent + permission + eval + 導入落地，44 章 + 6 練習 + 自刻 mini harness final
 - [pstack](./ai/pstack/README.md)
