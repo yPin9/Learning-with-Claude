@@ -12,7 +12,7 @@
 ### math/
 
 - [graph_theory](./math/graph_theory/README.md)
-  - （撰寫中）圖論為主 + 離散數學地基，證明與實作並重、Python 自刻 + NetworkX 對拍：證明/計數 → 圖結構（Menger/dominator）→ 著色/平面（register allocation）→ flow/matching/matroid/LP 對偶 → 譜/機率/極值 → NP/treewidth/WL → 接回 CPG/攻擊圖/binary 相似度，42 章 + 6 練習 + graphlab 分析工具鏈 final
+  - 圖論為主 + 離散數學地基（CS 數學主幹第一塊，接 ssa_optimizations/compiler_backend/sat_smt/code_auditing/reverse_engineering），證明與實作並重、Python 3.13 自刻 + NetworkX 3.7 對拍 + n ≤ 7 全圖窮舉驗定理，全程實跑：證明/計數 → 圖結構（Menger/dominator）→ 著色/平面（register allocation）→ flow/matching/matroid/LP 對偶 → 譜/機率/極值 → NP/treewidth/WL → 接回 CPG/攻擊圖/binary 相似度，42 章 + 6 練習 + graphlab 分析工具鏈 final
 
 ### ai/
 
