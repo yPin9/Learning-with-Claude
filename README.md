@@ -1,233 +1,411 @@
-# Project 200
+<p align="center">
+  <img src="assets/logo.svg" width="112" alt="Project 200 logo">
+</p>
 
-我跟 Claude 一起亂學東西的地方
+<h1 align="center">Project 200</h1>
 
-## 教材索引
+<p align="center">我跟 Claude 一起亂學東西的地方。</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/courses-82-2ea44f?style=flat-square" alt="82 courses">
+  <img src="https://img.shields.io/badge/lang-繁體中文-d73a49?style=flat-square" alt="繁體中文">
+  <img src="https://img.shields.io/badge/written_with-Claude_Code-d97757?style=flat-square" alt="Written with Claude Code">
+</p>
+
+---
+
+以 Claude 為協作夥伴撰寫的繁體中文技術教材，涵蓋系統、資安、編譯器、計算機架構與 AI 等領域。每門課程包含循序漸進的章節、階段練習與一個總結專案，內容盡可能經過實際執行驗證。
+
+## 索引
 
 ### algorithms/
 
 - [leetcode_patterns](./algorithms/leetcode_patterns/README.md)
-  - 演算法面試完整課程：C++，從遞迴直覺到 DP/Graph/Greedy，41 章 + 6 練習 + 30 題衝刺 final
+  - 演算法面試，用 C++ 寫
+  - 從遞迴的直覺開始，一路到 DP、圖、貪婪
+  - 最後 30 題限時衝刺
 
 ### math/
 
 - [graph_theory](./math/graph_theory/README.md)
-  - 圖論為主 + 離散數學地基（CS 數學主幹第一塊，接 ssa_optimizations/compiler_backend/sat_smt/code_auditing/reverse_engineering），證明與實作並重、Python 3.13 自刻 + NetworkX 3.7 對拍 + n ≤ 7 全圖窮舉驗定理，全程實跑：證明/計數 → 圖結構（Menger/dominator）→ 著色/平面（register allocation）→ flow/matching/matroid/LP 對偶 → 譜/機率/極值 → NP/treewidth/WL → 接回 CPG/攻擊圖/binary 相似度，42 章 + 6 練習 + graphlab 分析工具鏈 final
+  - 圖論加一點離散數學，證明跟 Python 實作一起來
+  - 自己刻演算法，再拿 NetworkX 對答案
+  - 後面接到 register allocation、攻擊圖、binary 相似度，最後做一套圖分析工具 graphlab
 
 ### ai/
 
 - [ai_applications](./ai/ai_applications/README.md)
-  - Claude 深度應用 + 用 Claude 生態做產品 + 通用 LLM 工程（RAG / eval / observability）
+  - 用 Claude 做東西：prompting、MCP server、agent
+  - RAG、eval、observability 這些 LLM 工程
+  - 最後把一個產品真的做出來上線
 - [ai_bdd](./ai/ai_bdd/README.md)
-  - 照「AI x BDD」五段課綱重排本 repo 的 agent 與規格教材並補齊動手缺口：agent 迴圈 + 模組化 skill + Spec Kit 1.x 客製化 + TDD/Playwright E2E + BDD（pytest-bdd、example mapping、雙 driver 驗收），含 55 單元對照表，34 章 + 4 練習 + 會議室預約流水線 final
+  - 照「AI x BDD」課綱重新整理 agent 和規格相關的東西
+  - agent 迴圈、skill、Spec Kit、TDD、Playwright、pytest-bdd
+  - 最後做一條會議室預約的流水線
 - [harness_engineering](./ai/harness_engineering/README.md)
-  - 打造 AI agent 執行框架：agent loop + context 管理 + 工具系統 + subagent + permission + eval + 導入落地，44 章 + 6 練習 + 自刻 mini harness final
+  - AI agent 的執行框架是怎麼組起來的
+  - agent loop、context 管理、工具、subagent、權限、eval
+  - 最後自己刻一個 mini harness
 - [pstack](./ai/pstack/README.md)
-  - 拆解 Cursor 官方 pstack / poteto-mode 的 agent 工作流，在 Claude Code 上實作：路由 + 23 playbook + 24 原則 + 多模型 arena/swarm/interrogate + 驗證與決策日誌 + 自主執行 + 批判，32 章 + 4 練習 + 替本 repo 打造 course-mode final
+  - 拆 Cursor 的 pstack 工作流，搬到 Claude Code 上實作
+  - playbook、多模型交叉檢查、驗證跟決策紀錄
+  - 最後替這個 repo 做一個 course-mode
 - [spec_driven_development](./ai/spec_driven_development/README.md)
-  - 用 SDD + DDD 和 AI 協作：軟工地基 + 需求工程(EARS/BDD) + 領域驅動設計 + Spec Kit/Kiro 實戰 + 自建 pipeline + 實測批判，45 章 + 6 練習 + 完整 SDD final
+  - 規格驅動開發加 DDD，跟 AI 協作時規格怎麼寫
+  - 需求工程（EARS、BDD）、Spec Kit 和 Kiro 實際用過一輪
+  - 最後走完一次完整的 SDD 流程
 
 ### architecture/
 
 - [riscv](./architecture/riscv/README.md)
-  - 從 RV32I 到 V/B 擴充、custom extension，自寫 RV32I emulator
+  - RV32I 到 V/B 擴充，還有 custom extension
+  - 手動解碼、在 spike 上跑 bare-metal、Sv48 分頁
+  - 最後自己寫 RV32I 和 RV64I 模擬器
 - [arm](./architecture/arm/README.md)
-  - Cortex-A/M 雙線，從 ISA 到 JTAG，自刻 STM32 韌體與 Cortex-M3 mini RTOS-lite
+  - Cortex-A 和 Cortex-M 兩條線，從 ISA 看到 JTAG
+  - 最後寫 STM32 韌體和一個 Cortex-M3 的小 RTOS
 - [cpu_design](./architecture/cpu_design/README.md)
-  - 用 SystemVerilog 從零打造 pipelined RISC-V core（補 riscv ISA 層與 compiler_backend 之間的 RTL/微架構斷層）：數位邏輯地基 → 單週期 RV32I → 五級 pipeline/hazard/forwarding → 分支預測 → cache/Sv32 VM/AXI → CSR/trap/中斷，verilator + spike 逐指令對拍，40 章 + 5 練習 + pipelined core final
+  - 用 SystemVerilog 從單週期寫到五級 pipeline
+  - 分支預測、cache、虛擬記憶體、中斷都做
+  - verilator 跑模擬，跟 spike 逐指令對答案
 
 ### parallel/
 
 - [gpu_cuda](./parallel/gpu_cuda/README.md)
-  - GPU/CUDA/平行運算大課：CPU 平行地基（SIMD/OpenMP/patterns）→ GPU 架構（SM/記憶體階層/warp/occupancy）→ CUDA 程式設計 → 優化重頭戲（coalescing/bank conflict/ILP/divergence/reduction 七版/profiling）→ 深挖 PTX/SASS/Tensor Core → 生態（cuBLAS/Thrust/Triton）→ AI kernel（GEMM/卷積/FlashAttention/量化/PyTorch ext），44 章 + 6 練習 + 手刻優化 GEMM/mini-FlashAttention final，接 cpu_design/ssa_optimizations/ml，Colab T4 為基準
+  - 先看 CPU 的 SIMD 和 OpenMP，再進 GPU 架構和 CUDA
+  - 優化是重點：coalescing、bank conflict、reduction，往下看到 PTX/SASS
+  - 最後手刻 GEMM 和 mini FlashAttention，用 Colab T4 跑
 
 ### compilers/
 
 - [compiler_frontend](./compilers/compiler_frontend/README.md)
-  - flex + bison 寫 MiniC frontend
+  - flex + bison 寫 MiniC 的前端
+  - tokenizer、parser、AST、符號表、型別檢查
+  - 這門課是其他課的格式範本
 - [compiler_backend](./compilers/compiler_backend/README.md)
-  - LLVM RISC-V backend：SelectionDAG / TableGen / Scheduler / MC
+  - LLVM 的 RISC-V backend：SelectionDAG、TableGen、scheduler、MC
+  - 練習讀 pass、加 pseudo instruction
+  - 最後幫 backend 加一個擴充指令
 - [elf_linking](./compilers/elf_linking/README.md)
-  - relocation / linker script / RISC-V relaxation
+  - relocation、linker script、RISC-V relaxation
+  - 最後寫一個 mini linker
 - [ssa_optimizations](./compilers/ssa_optimizations/README.md)
-  - SSA 理論到 LLVM Pass 實作：Dominator Tree / SCCP / GVN / SCEV / 過程間分析，32 章 + 3 練習 + mini optimizer + CSmith 驗證 final
+  - SSA 理論：dominator tree、SCCP、GVN、SCEV
+  - 在 LLVM 上寫 pass，包含過程間分析
+  - 最後寫一個小 optimizer，用 CSmith 驗證
 
 ### dev_tools/
 
 - [git](./dev_tools/git/README.md)
-  - 給已經會 add/commit/push、想真正熟練的人，hooks + worktree + 真實踩坑
+  - 給已經會 add/commit/push、想真的用熟的人
+  - hooks、worktree、救災、整理 commit
+  - 最後用 bisect 抓一個 regression
 - [open_source](./dev_tools/open_source/README.md)
-  - 從會 commit 到能跟全世界一起寫程式：中階 git（rebase/衝突/reflog）+ fork/PR/review/CI + 貢獻開源（含真實 PR）+ 團隊協作 + 維護者視角，38 章 + 6 練習 + 真實貢獻 final
+  - rebase、衝突、reflog 這些中階 git
+  - fork、PR、review、CI，還有維護者的角度
+  - 最後真的去開源專案送 PR
 - [cicd](./dev_tools/cicd/README.md)
-  - Docker + GitHub Actions，把 FastAPI + Postgres 服務做成可交付 pipeline
+  - Docker + GitHub Actions
+  - 練習救爛 Dockerfile、PR 上跑 CI、加安全檢查
+  - 最後把一個 FastAPI + Postgres 服務做到可以上線
 - [docker](./dev_tools/docker/README.md)
-  - 從 `docker run` 到生產部署：namespace/cgroup/OverlayFS 底層 + Dockerfile 進階 + Compose + 資安 hardening + Swarm，28 章 + 3 練習 + CI Pipeline final
+  - 從 `docker run` 到上線
+  - 底層的 namespace、cgroup、OverlayFS，加上 Compose、hardening、Swarm
+  - 最後做一條 CI pipeline
 - [neovim](./dev_tools/neovim/README.md)
-  - 把 Neovim 打造成讀大型 C codebase 的機器（reading_code/codebase_case_studies 的「手」）：精通操作、自建 config（kickstart 精神非 LazyVim 黑箱），六工具流水線 motion→telescope/fzf→treesitter→clangd/LSP→gtags/cscope→marks/quickfix。心智模型/架構 → motion 地基（text object/jumplist/搜尋/buffer-window） → 模糊搜尋+全文（telescope/ripgrep/quickfix）→ treesitter（依結構移動/query）→ 語意（clangd/compile_commands/gd-gr-call hierarchy/macro-ifdef 坑）→ tags 後備（ctags/GNU Global 不 build 索引，含 nvim 0.12 移除內建 cscope 的坑）→ 整合（harpoon/session/完整讀碼流程），全程 WSL nvim 0.12.4 headless 真跑驗證 + 完整可用 config，31 章 + 5 練習 + 冷啟動攻堅 final
+  - 把 Neovim 調成讀大型 C 專案的工具，config 自己寫
+  - motion → telescope → treesitter → clangd → gtags 一路串起來
+  - 全部在 WSL 的 nvim 0.12 上實際跑過
 
 ### databases/
 
 - [database_internals](./databases/database_internals/README.md)
-  - 用 Rust 從零手刻單機關聯式資料庫（補 CS 系統地基最後一塊，接 kernel_internals/compiler_frontend/perf_bench）：儲存地基（page/slotted page/buffer pool/fsync）→ B-tree 引擎（B+tree insert/split/delete/merge/latch crabbing/索引）→ LSM 引擎（skip list memtable/SSTable/bloom filter/leveled compaction）→ LSM vs B-tree RUM 取捨 → WAL + ARIES crash recovery + ACID + 隔離級別 + 2PL/MVCC/SSI 交易 → 查詢層（SQL parser/catalog/logical+physical plan/Volcano+vectorized executor/join 演算法/external sort+aggregation/RBO+CBO 優化器）→ 進階（histogram+HLL 統計/hash+bitmap+inverted 索引/欄式儲存+向量化/mmap 爭議）→ 分散式銜接，全程 WSL rustc 1.97 真跑（B+tree/MVCC/bloom/Volcano executor 跑真 SQL 實測綠燈），40 章 + 4 練習 + mini relational DB final
+  - 用 Rust 從零寫一個關聯式資料庫
+  - B+tree 和 LSM 兩種引擎都做，加上 WAL、crash recovery、MVCC
+  - SQL parser、執行器、優化器也自己寫，可以跑真的 SQL
 
 ### programming/
 
 - [algorithms](./programming/algorithms/README.md)
-  - 面試導向，從 pattern 記憶轉到原理理解，Python
+  - 面試用，從背 pattern 改成懂原理，Python
+  - 線性結構、樹和圖、DP 分段練
+  - 最後整理一張自己的 pattern 地圖
 - [modern_cpp](./programming/modern_cpp/README.md)
-  - 給有 C 基礎的人速成 C++20，目標讀 + 寫現代風格
+  - 會 C 的人速成 C++20，看得懂也寫得出現代寫法
+  - RAII、自己實作 unique_ptr、ranges
+  - 最後用 coroutine 寫一個 TCP echo server
 - [sat_smt](./programming/sat_smt/README.md)
-  - 從命題邏輯到自刻 mini-SMT solver，C++20，全程不靠 Z3 當黑盒
+  - 從命題邏輯開始，用 C++20 寫
+  - Tseitin 轉換、DPLL、CDCL、EUF 一步步做
+  - 最後寫一個 mini SMT solver，不把 Z3 當黑盒子
 - [c_interview](./programming/c_interview/README.md)
-  - C 語言面試深度準備：記憶體/UB/ABI/嵌入式/效能/lock-free，30 章 + 3 練習 + mini libc final
+  - C 面試：記憶體、UB、ABI、嵌入式、效能、lock-free
+  - 最後寫一個 mini libc
 - [rust](./programming/rust/README.md)
-  - 給懂 C/C++20 的系統/資安工程師的 Rust：ownership/borrow/lifetime 底層 → 記憶體佈局/unsafe/FFI/Miri → async 手刻 executor → 資安研究向（逆 Rust binary/audit unsafe/RUSTSEC/fuzzing）→ Rust-for-Linux，全程 C/C++ 對照、WSL rustc 1.97+nightly+Miri 真跑，43 章 + 5 練習 + Rust-for-Linux 字元裝置 kernel module final
+  - 給會 C/C++ 的人學 Rust，全程跟 C/C++ 對照
+  - ownership 底層、unsafe、FFI、自己寫 async executor，也看怎麼逆 Rust binary
+  - 最後寫一個 Rust-for-Linux 的字元裝置 kernel module
 
 ### security/
 
 - [gdb](./security/gdb/README.md)
-  - 從會用到能改：精通 GDB 全功能 + ptrace/DWARF 底層 + Python API，自寫 mini debugger 與 gef 風格插件，43 章 + 7 練習 + 插件套件 final
+  - GDB 全部功能用到熟
+  - 往下看 ptrace 和 DWARF，再學 Python API
+  - 最後自己寫 mini debugger 和 gef 風格的插件
 - [ida_pro](./security/ida_pro/README.md)
-  - IDA 9.x，從只敢按 F5 到寫 IDAPython 自動化
+  - IDA 9.x，從只會按 F5 到寫 IDAPython
+  - 練習只用鍵盤解 crackme、自動加註解
+  - 最後寫一個脫殼輔助工具
 - [reverse_engineering](./security/reverse_engineering/README.md)
-  - 逆向即讀碼（reading_code/codebase_case_studies 的鏡像：沒有 source 時怎麼讀懂 binary）：通用逆向理解方法論、工具無關、x86-64 Linux ELF 主線。核心=辨識 compiler idiom（binary 版 pattern 辨識）。靈魂訓練法 ground-truth 迴圈（寫→編→strip→逆→對答案）。心智模型/編譯器做了什麼/ELF → 靜態逆向（asm 認控制流+資料+函式/讀反編譯器/型別還原/compiler idioms/標準庫指紋）→ 動態逆向（gdb/strace-ltrace/DBI Frida/資料流/靜動結合）→ 目標識別（演算法+格式協定+C++/Rust/Go/靜態strip/混淆反調試/PE-ARM64）→ 工程化（外化/腳本化angr/patch-diff/相似度/lifting/pattern字典）→ capstone，全程 WSL objdump/gdb/radare2/Frida 真跑（crackme 密碼、patch jne→nop、除法魔數、vtable、等價實作對拍都真驗），34 章 + 4 練習 + 冷啟動逆向 final
+  - 沒有 source 的時候怎麼讀 binary，主力 x86-64 ELF
+  - 重點是認出編譯器產生的固定寫法，靜態和動態都練
+  - 自己寫、自己編、strip 掉再逆回來對答案
 - [afl_plus_plus](./security/afl_plus_plus/README.md)
-  - AFL++ 內部機制，從 bitmap 到 CmpLog
+  - AFL++ 內部怎麼運作，從 bitmap 看到 CmpLog
+  - 比較不同插樁方式、整理 corpus 和 crash
+  - 最後對一個真的目標跑一輪
 - [advanced_fuzzing](./security/advanced_fuzzing/README.md)
-  - 接 afl_plus_plus 之後的進階 fuzzing 大課，目標導向工具不拘：LibAFL 造 fuzzer + 文法/stateful + kernel(syzkaller) + snapshot(Nyx) + 韌體 rehosting + JS 引擎(Fuzzilli) + hybrid(SymCC/AFLGo) + OSS-Fuzz/評測科學，CTF+CVE hunting 導向，48 章 + 6 練習 + 真實開源 campaign final
+  - AFL++ 之後的 fuzzing，工具看目標選
+  - LibAFL、文法和有狀態 fuzzing、syzkaller、Nyx、Fuzzilli、hybrid
+  - 最後對真的開源專案跑一個 campaign
 - [symex_taint](./security/symex_taint/README.md)
-  - symbolic execution + dynamic taint analysis，自寫 concolic executor
+  - 符號執行和 dynamic taint analysis
+  - 用 KLEE 找 bug、angr 解 CTF、Triton 做 taint
+  - 最後自己寫一個 concolic executor
 - [code_auditing](./security/code_auditing/README.md)
-  - 原始碼審計 / 靜態分析變體獵殺（接 reading_code，把手讀找洞工業化）：四工具並用 CodeQL/Semgrep/Joern/weggli，多語言（C/C++ 記憶體安全 + Java/JS/Python web sink），完整理論地基（dataflow/IFDS/points-to/CPG）→ CVE 抽 pattern 跨生態掃變體 → PoC 驗證 + 報告，44 章 + 6 練習 + variant analysis campaign final
+  - 原始碼審計，CodeQL、Semgrep、Joern、weggli 一起用
+  - C/C++ 的記憶體問題，加上 Java、JS、Python 的 web sink
+  - 最後從一個 CVE 抽出 pattern，去找同類型的洞
 - [pentest](./security/pentest/README.md)
-  - 滲透測試的工具、心法、白帽思維
+  - 滲透測試的工具、思路，跟白帽該有的觀念
+  - 從偵察走到後滲透，最後寫報告、複測結案
 - [kernel_pwn](./security/kernel_pwn/README.md)
-  - Linux kernel pwn，目標 Google kernelCTF（含現代 heap / 隨機 kmalloc cache）
+  - Linux kernel pwn，目標是 Google kernelCTF
+  - stack overflow、UAF、cross-cache、nftables 一路練上去
+  - 最後重現一題 kernelCTF
 - [owasp](./security/owasp/README.md)
-  - OWASP Top 10 2025 + Web 安全完整課程（含 2021→2025 對照），含 API Top 10、CVE 案例、WAF/RASP、紅藍隊演習
+  - OWASP Top 10 2025，附 2021 的對照
+  - API Top 10、CVE 案例、WAF 和 RASP
+  - 紅藍隊演練
 - [web_exploitation](./security/web_exploitation/README.md)
-  - 現代 Web 攻擊深課（接 owasp 廣度、與 browser_pwn 平行的 pwn 天梯 Web 支線）：primitive→gadget chain 思維，SSRF chain/多語言反序列化(Java/PHP/Python/.NET)/request smuggling+cache poisoning/JWT-OAuth-OIDC-SAML/prototype pollution/GraphQL/CSPT/SSTI，CTF+bug bounty 導向、PortSwigger Academy+Docker 靶場真跑，39 章 + 6 練習 + full-chain 報告 final
+  - 比 owasp 深，重點是把小漏洞串成完整攻擊鏈
+  - SSRF、反序列化、request smuggling、OAuth/SAML、prototype pollution、SSTI
+  - 在 PortSwigger 和 Docker 靶場練，最後寫一份完整報告
 - [malware_analysis](./security/malware_analysis/README.md)
-  - 讀懂並分析惡意程式碼：PE/ELF → anti-analysis 對抗 → injection/C2/ransomware → Linux rootkit → .NET/CS beacon → Volatility memory forensics → Yara/Sigma 偵測規則
+  - PE/ELF 開始，學會對付反分析手法
+  - 注入、C2、勒索軟體、Linux rootkit、.NET 和 Cobalt Strike beacon
+  - Volatility 記憶體鑑識，寫 YARA 和 Sigma 規則
 - [cryptography](./security/cryptography/README.md)
-  - 從 GF(2⁸) 到 mini-TLS：對稱/公鑰/AEAD/post-quantum 全套+攻擊（Bleichenbacher、Logjam、Heartbleed），手刻 AES/RSA/Kyber/TLS 1.3
+  - 從 GF(2⁸) 開始，對稱、公鑰、AEAD、後量子
+  - 手刻 AES、RSA、Kyber，順便打 Bleichenbacher、Logjam、Heartbleed
+  - 最後做一個 mini TLS 1.3
 - [ai_security](./security/ai_security/README.md)
-  - AI 資安工程師面試衝刺：LLM 攻擊面（Prompt Injection/Jailbreak/RAG 投毒/Agent 劫持）+ 防護工具（NeMo Guardrails/Lakera Guard）+ NIST AI RMF/ISO 42001，27 章 + 3 練習 + Red Team 評測 final
+  - AI 資安工程師面試準備
+  - prompt injection、jailbreak、RAG 投毒、agent 劫持，還有 NeMo Guardrails 這類防護
+  - 最後做一次紅隊評測
 - [oscp_prep](./security/oscp_prep/README.md)
-  - OSCP 備考全攻略：從完全新手到拿證，含 Buffer Overflow + AD 三機鏈 + HTB/THM 機器推薦，42 章 + 4 練習 + 24hr PG 模擬 final
+  - OSCP 備考，從新手到拿證
+  - buffer overflow、AD 三台機器的攻擊鏈、HTB/THM 機器推薦
+  - 最後 24 小時模擬考
 - [windows_kernel_driver](./security/windows_kernel_driver/README.md)
-  - Windows 核心驅動開發 + 核心安全研究雙線：WDM/KMDF/Minifilter/WFP + BYOVD/Token 竊取/Pool 利用/Anti-EDR/VBS-HVCI，40 章 + 3 練習 + NanoEDR final
+  - Windows 驅動開發：WDM、KMDF、Minifilter、WFP
+  - 核心安全：BYOVD、token 竊取、反 EDR、VBS/HVCI
+  - 最後做一個小 EDR
 - [binary_exploitation](./security/binary_exploitation/README.md)
-  - Userland pwn 地基（接 kernel_pwn）：stack smashing → ROP 全譜 → format string → glibc heap 深挖（tcache/House of X）→ 現代無 hook 世界（FSOP/exit handler）+ seccomp 沙箱逃逸/反調試，全程 WSL glibc 2.39 實測，41 章 + 7 練習 + 復刻 pwnable.tw 題鏈 final
+  - userland pwn，kernel_pwn 的前一站
+  - stack、ROP、format string、glibc heap、沒有 hook 之後的 FSOP
+  - 全部在 glibc 2.39 上實測，最後重現 pwnable.tw 的題目
 - [browser_pwn](./security/browser_pwn/README.md)
-  - V8 一條到底的瀏覽器 pwn（pwn 天梯頂端，接 binary_exploitation/kernel_pwn）：物件模型（Map/elements kind/pointer compression）→ Ignition/TurboFan/Maglev 管線 → addrof/fakeobj/任意讀寫原語 → TurboFan type confusion 五大家族（CVE-2018-17463/Math.expm1/JSON hole）→ 找洞（patch-diff + Fuzzilli）→ 任意 R/W 繞 V8 Sandbox/CET（data-only）→ CTF+full chain 全景，自編 V8 15.3 真跑驗證，41 章 + 6 練習 + 真實 CVE 到 exploit final
+  - V8 從物件模型和 JIT 管線看起
+  - addrof/fakeobj、TurboFan 型別混淆、繞過 V8 sandbox
+  - 自己編 V8 15.3 實際跑，最後把一個真的 CVE 寫成 exploit
 - [windows_pwn](./security/windows_pwn/README.md)
-  - Windows 使用者態漏洞利用（補 Linux pwn 天梯缺的 Windows 大陸，接 binary_exploitation）：internals 與利用五五不妥協——PE/PEB-TEB/loader/Native API/syscall/handle 內部 → NT Heap/LFH/Segment Heap → SEH overwrite/SEHOP/DEP-ROP/ASLR/shellcode → heap UAF/vtable 劫持/info leak → 現代緩解重頭戲（CFG/XFG/CET/ACG/CIG/data-only）→ WinAFL/patch diffing 找洞 → token/UAC/EoP 提權銜接 windows_kernel_driver，CTF 導向、全程 Win11 x64（mingw/Python 真跑、MSVC/CET 段落標未實測），47 章 + 5 練習 + 全緩解 exploit chain final
+  - Windows 使用者態的漏洞利用，內部機制和攻擊各佔一半
+  - PEB/TEB、NT heap、SEH、ROP，重點是 CFG、CET 這些現代緩解怎麼繞
+  - 最後寫一條繞過所有緩解的 exploit chain
 - [android_reversing](./security/android_reversing/README.md)
-  - 安卓逆向從 APK 到 ART 底層：App 層還原（DEX/smali/Java）→ Frida 動態插樁 → Native 逆向（.so/ARM64/JNI）→ 加固對抗（脫殼/反調試/混淆）→ ART 系統底層，安全研究/App 破解導向，AVD 實測，42 章 + 5 練習 + 綜合防護 App 拆解 final
+  - APK、DEX、smali 還原 App 邏輯
+  - Frida、native .so、ARM64、脫殼和反調試
+  - 往下看到 ART，最後拆一個有完整防護的 App
 - [android_app_vuln](./security/android_app_vuln/README.md)
-  - 安卓 App 漏洞分析（接 android_reversing）：以 OWASP MASVS/MASTG 為骨架、bug bounty 導向，元件/IPC 濫用 → Intent redirection/PendingIntent 劫持 → Provider SQLi/path traversal → deeplink/WebView RCE/task hijacking → 儲存/crypto 誤用/secret 洩漏 → 權限/zip slip → 自動化(MobSF/semgrep)+報告，drozer/靶場實戰，16 章 + 3 練習 + MASTG 評估報告 final
+  - Android App 漏洞，照 OWASP MASVS/MASTG 走，bug bounty 導向
+  - 元件和 IPC 濫用、Intent 重導、WebView、儲存和加密誤用
+  - 最後寫一份 MASTG 評估報告
 - [android_exploitation](./security/android_exploitation/README.md)
-  - 安卓系統漏洞利用（接 binary_exploitation/kernel_pwn）：把 glibc/x86 pwn 技能移植到 Android — bionic + scudo/jemalloc heap 破壞 → ARM64 PAC/BTI/MTE 緩解對抗 → Binder/Parcel LPE → SELinux/Zygote 沙箱 → Android kernel 驅動利用 → patch diff 到穩定 exploit，32 章 + 4 練習 + CVE 到 exploit final
+  - 把 Linux pwn 的技能搬到 Android
+  - scudo heap、PAC/BTI/MTE、Binder、SELinux、kernel 驅動
+  - 最後從 patch diff 寫出穩定的 exploit
 - [ios_macos_exploitation](./security/ios_macos_exploitation/README.md)
-  - Apple 生態全棧逆向 + exploitation（行動安全的另一半，接 android_reversing/android_exploitation）：iOS/macOS 五五、一門到底 — Mach-O/dyld/dyld shared cache/Obj-C runtime/Swift 逆向 → lldb/Frida/dtrace 工具鏈 → App 沙箱/Keychain/SSL pinning/越獄偵測繞過 → Mach port/XPC/launchd/TCC 的 IPC 與 macOS LPE → libmalloc 內部/heap 利用/PAC 深挖/沙箱逃逸 → XNU kernel/IOKit/zone allocator/PPL → 越獄內部（checkm8/KTRR/SEP/KFD-PUAF）/full chain → fuzzing/patch diffing/防禦演進，使用者有 Mac+iPhone 動手（作者 Windows 環境故工具輸出標未實測+附驗證步驟），43 章 + 5 練習 + CVE 鏈研究報告 final
+  - Mach-O、Obj-C、Swift 逆向，lldb 和 Frida
+  - App 沙箱、XPC、TCC，往下到 XNU、IOKit、越獄原理
+  - 教材是在 Windows 上寫的，工具輸出沒在 Mac 上實測過的都有標，最後寫一份 CVE 鏈的研究報告
 - [cloud_container_security](./security/cloud_container_security/README.md)
-  - 把 pwn 攻擊直覺搬進雲端，紅隊視角、AWS 主線 + Azure/GCP 對照：IAM 提權 → 服務攻擊面（S3/metadata SSRF/Lambda）→ 容器逃逸 → Kubernetes 淪陷（從零教 K8s）→ 供應鏈/CI-CD → 補回防禦偵測（CSPM/Falco/CloudTrail），39 章 + 4 練習 + 紅隊 engagement final
+  - 雲端紅隊，以 AWS 為主，對照 Azure 和 GCP
+  - IAM 提權、metadata SSRF、容器逃逸、K8s（從零教）、CI/CD 供應鏈
+  - 最後補防守端的偵測，做一次完整的紅隊演練
 - [vm_escape](./security/vm_escape/README.md)
-  - VM escape pwn，pwn 天梯上 browser_pwn 旁的另一座山：從 guest 內部打穿 hypervisor 拿 host code exec，QEMU/KVM 主線 + VirtualBox + VMware，含 VT-x/EPT/KVM 原理補強 → device emulation/MMIO/DMA 當原語 → heap overflow/UAF/劫 callback/ROP → VENOM/virtio CVE 復刻 → seccomp 繞過/Firecracker/full-chain，41 章 + 5 練習 + CVE 到完整逃逸 final
+  - 從 VM 裡面打穿 hypervisor，QEMU/KVM 為主，也看 VirtualBox 和 VMware
+  - VT-x 和 EPT 原理，把模擬裝置當成攻擊入口
+  - 復刻 VENOM 和 virtio 的 CVE，最後做一次完整逃逸
 - [microarch_attacks](./security/microarch_attacks/README.md)
-  - 微架構攻擊：把 CPU 效能優化反過來當洩密通道，攻擊為主 + 完整防禦 Part。cache 側信道原語（Flush+Reload/Prime+Probe/eviction set）→ 瞬態執行（Spectre v1/v2/RSB、Meltdown/MDS/L1TF、Downfall/Zenbleed 分類學）→ Rowhammer → Hertzbleed/port contention/TLB/KASLR break → 防禦（KPTI/retpoline/constant-time+dudect/HPC 偵測）→ 找新洞方法論，x86-64 主線 i7-10700 真跑（F+R/Spectre-v1 親手做、HW 已修的誠實標），37 章 + 4 練習 + 微架構洩漏實驗室 final
+  - 把 CPU 的效能優化反過來當洩密管道
+  - Flush+Reload、Spectre、Meltdown、Rowhammer，再補一個防禦 Part
+  - 能跑的都在 i7-10700 上跑過，硬體已經修掉的會標出來
 - [firmware_security](./security/firmware_security/README.md)
-  - UEFI / Secure Boot 漏洞研究（把 pwn 從 Ring 0 往下打到 Ring -2/-3，接 linux_boot/arm/mtk_firmware）：以「信任鏈 / secure boot」貫穿全課、x86 UEFI 與 ARM 嵌入式雙線，攻擊為主 + 四支柱（韌體逆向 / 防守偵測 / 硬體故障注入 / TPM 密鑰）。UEFI PI 攻擊面/DXE/NVRAM variable → SMM 聖杯 + ME/BootGuard/PSP → ARM TF-A/U-Boot/AVB/MTK BootROM → 韌體 RE（UEFITool/Ghidra/efiXplorer）→ Secure Boot 繞過鏈（BootHole/BlackLotus/LogoFAIL）→ 硬體 glitch/SPI/JTAG → TPM 2.0/measured boot/bus sniffing → 防守偵測（CHIPSEC/attestation/廠商緩解），WSL qemu+OVMF(secboot)+aarch64+AAVMF+swtpm+tpm2-tools+uefi_firmware 真跑（chipsec/真硬體/glitch 誠實標未實測），46 章 + 6 練習 + 端到端攻防研究報告 final
+  - UEFI 和 Secure Boot 的漏洞研究，x86 和 ARM 都看
+  - SMM、BootGuard、BlackLotus 這類繞過鏈、TPM 2.0
+  - 用 QEMU + OVMF 練，最後寫一份攻防研究報告
 - [blue_team_dfir](./security/blue_team_dfir/README.md)
-  - 藍隊與 DFIR（補全 repo 唯一缺的防守視角，purple team 框架把既有 22 門攻擊課全變成靶）：ATT&CK/PICERL/證據可信度地基 → Detection Engineering（Sysmon/ETW、Sigma/YARA、涵蓋度、SIEM、Detection-as-Code）→ Windows endpoint DFIR 重頭戲（Volatility3 記憶體/注入、$MFT/$UsnJrnl、Prefetch/AMCache/ShimCache/SRUM、Registry、Event Log、持久化、憑證橫移）→ Linux/網路/雲/K8s IR（auditd/eBPF、Zeek/Suricata beaconing+JA3、CloudTrail/GuardDuty、Falco）→ Threat Hunting（hypothesis-driven、stacking、LOLBins、偵測 AMSI/ETW/unhooking 規避）→ 惡意程式鑑識/fileless/反鑑識對抗/偵測盲點 → 營運（alert triage/SOAR、TI/MISP、報告+MTTD/MTTR、purple team 演練閉環），跨 Windows/Linux/雲/網路四平台、概念為主關鍵處示範，39 章 + 4 練習 + 完整入侵事件調查 final
+  - 換到防守方，拿前面的攻擊課當靶
+  - 偵測規則（Sysmon、Sigma）、Windows 鑑識、Linux 和雲端事件處理、威脅獵捕
+  - 最後調查一整起入侵事件
 - [sbom](./security/sbom/README.md)
-  - SBOM（軟體物料清單）為核心 + 軟體供應鏈安全全景（接 cloud_container_security/blue_team_dfir），概念與動手工具並重、WSL 真跑：為什麼要 SBOM（Log4Shell/SolarWinds）→ SBOM 是什麼（最小要素/六型生命週期/元件識別 naming-PURL-CPE-SWID）→ 格式深挖（SPDX/CycloneDX 選型/license）→ 生成（策略/syft 內部 catalogers/build-time 各語言/品質完整度）→ 消費與漏洞管理（NVD-CPE 的痛+OSV/grype-trivy-osv-scanner/VEX 降噪/Dependency-Track 營運）→ 信任鏈（供應鏈攻擊面/in-toto/sigstore keyless/簽 SBOM attestation/SLSA provenance）→ 治理法規（EO 14028/EU CRA/FDA/企業導入/xBOM/DFIR 接口/局限批評），30 章 + 3 練習 + 端到端供應鏈 pipeline final
+  - SBOM 是什麼、為什麼需要（Log4Shell、SolarWinds）
+  - SPDX、CycloneDX、syft、grype、VEX，再到 sigstore 和 SLSA
+  - 最後做一條端到端的供應鏈 pipeline
 
 ### soft_skills/
 
 - [how_to_learn](./soft_skills/how_to_learn/README.md)
-  - meta-learning，所有系列的前置課程
+  - 怎麼學東西，其他課之前可以先看
+  - 刻意練習、卡關怎麼辦、怎麼知道自己真的學會
 - [chinese_writing](./soft_skills/chinese_writing/README.md)
-  - 敘事散文與小說
+  - 敘事散文和小說
+  - 該讀誰、從模仿到原創、怎麼修改
 - [industry_analysis](./soft_skills/industry_analysis/README.md)
-  - 從零拆解陌生產業到投資判斷
+  - 怎麼拆解一個不熟的產業，到能做投資判斷
+  - 拿半導體、SaaS、消費品當案例
 - [chess](./soft_skills/chess/README.md)
-  - 戰術 + 殘局 + 中局，最後 5 盤 Rapid 自我復盤
+  - 戰術、殘局、中局判斷
+  - 練習各 50 題
+  - 最後下 5 盤 rapid 自己復盤
 - [go](./soft_skills/go/README.md)
-  - 圍棋從零到業餘高段，死活/手筋/形 重，AI 復盤(KataGo) 整 Part，50 盤升段 final
+  - 圍棋從零到業餘高段
+  - 死活、手筋、棋形是重點
+  - 用 KataGo 復盤，最後 50 盤升段
 - [reading_code](./soft_skills/reading_code/README.md)
-  - 讀碼即逆向：把 binary RE 攻堅直覺移植到讀陌生大型 source，40 ch + 4 練習 + 冷啟動攻堅 final，工具與方法並重（rg/ctags/cscope/clangd/tree-sitter/gdb/trace），全程 WSL redis 真跑
+  - 怎麼讀大型、陌生的 codebase，借用逆向的思路
+  - rg、ctags、clangd、tree-sitter、gdb 一起用
+  - 全程拿 redis 練
 - [codebase_case_studies](./soft_skills/codebase_case_studies/README.md)
-  - 讀碼健身房（接 reading_code 的刻意練習續章）：把「有方法」升級成「一眼認出 pattern」。用 SOP 限時攻堅六個釘死版本的傳奇 codebase——Lua 5.4.7（register VM/GC）→ SQLite 3.47.2（VDBE/B-tree/pager）→ nginx 1.26.2（reactor/memory pool）→ git 2.47.1（content-addressed 資料模型）→ CPython 3.13.1（eval loop/object model）→ PostgreSQL 17.2 capstone（火山模型 executor），每 Part 萃取可遷移設計 pattern 成字典，全程真 clone/真讀/真 gdb 追（行號對真 source 核對），32 章 + 5 限時攻堅練習 + 冷啟動攻堅 final
+  - reading_code 的實戰篇，限時讀六個專案
+  - Lua、SQLite、nginx、git、CPython、PostgreSQL
+  - 每個專案整理出可以帶走的設計 pattern
 
 ### debate/
 
 - [chinese_debate](./debate/chinese_debate/README.md)
-  - 華語辯論競賽訓練手冊，從零到 2027 新國辯冠軍：認識戰場 → 立論體系 → 攻防技術 → 自由辯論 → 結辯藝術 → 辯題研究方法 → 名局拆解 → 上場準備，30 章 + 3 練習 + 完整備賽手冊 final
+  - 華語辯論，從零開始，目標 2027 新國辯
+  - 立論、攻防、自由辯、結辯、怎麼研究辯題
+  - 最後整理一份完整的備賽手冊
 
 ### automation/
 
 - [n8n](./automation/n8n/README.md)
-  - 從零建立個人自動化中樞：視覺化 workflow + Code Node + REST/Webhook + self-host + AI Agent，25 章 + 3 練習 + 個人自動化中樞 final
+  - 視覺化 workflow、Code Node、REST 和 Webhook、self-host
+  - 接 AI Agent
+  - 最後架一個自己的自動化中樞
 
 ### embedded/
 
 - [protocols](./embedded/protocols/README.md)
-  - ESP32 嵌入式通訊協議：SPI/I2C/UART/RS-485/Modbus/CAN/BLE/LoRa/Zigbee/USB/Ethernet，全程 register-level，不靠 HAL，26 章 + 3 練習 + 工業閘道器 final
+  - ESP32 上的 SPI、I2C、UART、RS-485、Modbus、CAN、BLE、LoRa、Zigbee、USB、Ethernet
+  - 直接操作暫存器，不用 HAL
+  - 最後做一個工業閘道器
 
 ### interview/
 
 - [mtk_firmware](./interview/mtk_firmware/README.md)
-  - MTK（聯發科）韌體工程師面試衝刺：C/嵌入式/OS/計組/資料結構考古題詳解 + 概念複習，44 章 + 5 練習 + 模擬面試 final
+  - 聯發科韌體工程師面試準備
+  - C、嵌入式、OS、計組、資料結構的考古題詳解
+  - 最後模擬面試
 
 ### scripting/
 
 - [powershell](./scripting/powershell/README.md)
-  - 從零到系統維運自動化：語法核心 + 系統管理 + AD + PSRemoting + 自訂模組，final = SysOpsToolkit
+  - PowerShell 從零開始
+  - 系統管理、AD、PSRemoting、自己寫 module
+  - 最後做一套維運工具 SysOpsToolkit
 
 ### ml/
 
 - [local_llm](./ml/local_llm/README.md)
-  - 地端 LLM 全端工程：pre-training 原理 + QLoRA fine-tuning + Ollama 部署，CPU 跑得動，34 章 + 4 練習 + 地端繁中小模型 final
+  - 預訓練的原理
+  - QLoRA 微調、Ollama 部署，CPU 也跑得動
+  - 最後做一個地端的繁中小模型
 
 ### passive_income_with_ai/
 
+這兩個不是課，是實際在用的做法和腳本。老實說也沒有真的很被動。
+
 - [threads_shopee_affiliate](./passive_income_with_ai/threads_shopee_affiliate/README.md)
-  - ⭐主力：Threads × 蝦皮分潤可操作 playbook + 腳本，含「拆解別人爆文」判讀框架（post_teardown）與自產貼文 pipeline（鉤子產生器/留言連結/QA 閘/追蹤）
+  - Threads 加蝦皮分潤，目前的主力
+  - 拆解別人的爆文，判斷為什麼會紅
+  - 自己發文的流程：產鉤子、留言放連結、發前檢查、追蹤成效
 - [seo_shopee_affiliate](./passive_income_with_ai/seo_shopee_affiliate/README.md)
-  - 長線輔助：SEO 內容站 × 蝦皮分潤，關鍵字選題打分 + AI 產文 + 上線品質閘 + 成效追蹤
-- 註：此分類是「可操作 playbook + 腳本」，不是教學課程；誠實面對「不是真被動」與平台合規
+  - SEO 內容站加蝦皮分潤，長期慢慢經營
+  - 關鍵字選題打分、AI 產文、上線前的品質檢查、成效追蹤
 
 ### languages/
 
 - [english_reading](./languages/english_reading/README.md)
-  - 英文閱讀流暢度：從「靠領域知識硬啃技術文」到「輕鬆讀懂 BBC 與技術原文」，刻意做薄的手冊 + 每日練習系統，詞彙引擎（NGSL/AWL 覆蓋率）+ 為讀而學的拆句文法 + extensive/intensive 方法論 + 到 BBC 的閱讀階梯 + 實戰精讀，20 章 + 4 練習 + 8–12 週個人閱讀計畫 final
+  - 目標是能輕鬆讀 BBC 和技術原文
+  - 單字靠高頻詞表，文法只學拆句需要的
+  - 手冊刻意寫得薄，重點是每天固定練，最後排一份 8–12 週的閱讀計畫
 
 ### systems/
 
 - [bpf](./systems/bpf/README.md)
-  - classic BPF 到 eBPF（verifier / CO-RE / libbpf），最後寫一個 agent
+  - classic BPF 到 eBPF：verifier、CO-RE、libbpf
+  - 練習 execve tracer、PostgreSQL 慢查詢、XDP 防火牆
+  - 最後寫一個可以上線的 eBPF agent
 - [linux_boot](./systems/linux_boot/README.md)
-  - x86_64 開機流程，BIOS + UEFI 雙線，自製 bootloader / initramfs / minimal Linux
+  - x86_64 開機流程，BIOS 和 UEFI 都看
+  - 自己做 bootloader、initramfs、最小 Linux
 - [observability_tools](./systems/observability_tools/README.md)
-  - strace/perf/valgrind 全套，自寫 mini-strace + LD_PRELOAD interceptor，5-bug 偵探破案 final
+  - strace、perf、valgrind 全套
+  - 自己寫 mini strace 和 LD_PRELOAD 攔截器
+  - 最後當偵探抓 5 個 bug
 - [perf_bench](./systems/perf_bench/README.md)
-  - perf + benchmark + compiler optimization 連動
+  - perf、benchmark 和編譯器最佳化怎麼互相影響
+  - 練習寫 CoreMark 報告、用 llvm-mca 分析
+  - 最後做一份效能案例分析
 - [yocto](./systems/yocto/README.md)
-  - toolchain 工程師速通：把 patched GCC 進 BSP
+  - toolchain 工程師速通 Yocto
+  - 練習幫套件上 CVE patch
+  - 最後把改過的 GCC 放進 BSP
 - [networking](./systems/networking/README.md)
-  - TCP/IP + VPN + Proxy + VPS 全套，含 GFW 對抗演進史 + 完整 production 部署 final
+  - TCP/IP、VPN、proxy、VPS
+  - 順便看 GFW 和翻牆工具一路怎麼演變
+  - 最後自己部署一整套
 - [linux_commands](./systems/linux_commands/README.md)
-  - 從 VFS/inode/fd 底層到 shell scripting，31 章 + 4 練習 + SysOps 腳本工具包 final
+  - 先看 VFS、inode、fd 這些底層
+  - 再學 shell scripting
+  - 最後寫一包維運腳本
 - [distributed_systems](./systems/distributed_systems/README.md)
-  - 「單機以上」的水平地基，接 kernel_internals/networking；46 章 + 5 練習 + 1 final，Go + 自製確定性模擬器（dsim）全程真跑：時間順序(Lamport/VC)→複製/一致性/CAP→共識(FLP/Paxos/手刻 Raft)→分片交易→BFT+分散式安全(PBFT/Nakamoto/攻擊面)→Spanner/Kafka/etcd 剖析，final = 容錯分片 KV + Jepsen 風格驗證
+  - 用 Go 和自己寫的確定性模擬器學分散式
+  - 時鐘、複製、一致性、手刻 Raft、PBFT，再拆 Spanner、Kafka、etcd
+  - 最後做一個容錯的分片 KV，用 Jepsen 的方式驗證
 - [kernel_internals](./systems/kernel_internals/README.md)
-  - Linux kernel 子系統設計全景（所有 kernel 課的地基，接 kernel_pwn/bpf/linux_boot）：kernel 基礎設施 → process 與排程 → 記憶體管理 → 同步與並行（鎖/RCU/memory barrier）→ 中斷與時間 → VFS 與 block layer → 驅動/匯流排/電源 → 網路堆疊 → 安全子系統 → 觀測/debug/eBPF host，對照 6.12 源碼讀設計再動手寫模組驗證，全程 QEMU + gdb，x86_64 主線點出 ARM64 差異，54 章 + 6 練習 + kernel module 套件 final
+  - Linux kernel 各子系統怎麼設計：排程、記憶體、同步、VFS、網路
+  - 對照 6.12 原始碼，用 QEMU + gdb 跟
+  - 最後寫一套 kernel module
 - [debian_packaging](./systems/debian_packaging/README.md)
-  - 從 apt 使用者到維護自己的 APT infrastructure：dpkg/apt 底層 → source package 與 debian/ 目錄 → debhelper/sbuild/lintian/autopkgtest 品質保證 → 簽署與 repository 分發（reprepro/aptly/PPA）→ 進階打包模式 → CI/CD 生產管線，35 章 + 4 練習 + 私有 APT 基礎設施 final
+  - dpkg 和 apt 的底層，source package 和 debian/ 目錄
+  - debhelper、sbuild、lintian，簽章和 repository
+  - 最後自己架一套私有 APT 基礎設施
 
 ### web/
 
 - [firebase](./web/firebase/README.md)
-  - Firebase 核心後端 Web+JS 全套(補 repo 缺的「BaaS/雲端後端」)：理論(BaaS 取捨/前端直連的安全模型/認證 vs 授權) → Auth(email/Google/匿名/狀態管理) → Firestore(CRUD/onSnapshot 即時同步底層/NoSQL 建模/索引/交易) → Security Rules(唯一防線/欄位驗證/角色，本課靈魂) → Storage/Hosting/Emulator/計費，全程 v9+ modular、Firebase JS SDK v12.18.0，Auth/Firestore/Rules/Storage 皆用 emulator(portable JDK) 真跑驗證(規則測試多組全綠)，23 章 + 3 練習 + 即時筆記板 final
+  - Auth、Firestore、Storage、Hosting，用 v9 的 modular SDK
+  - 重點是 Security Rules，它是前端直連時唯一的防線
+  - 全部在 emulator 上跑，最後做一個即時筆記板
+
+## 健檢
+
+[`tools/check_repo.py`](tools/check_repo.py) 會檢查索引有沒有漏列課程、Markdown 連結有沒有壞掉，CI 每次 push 都會跑。想在 commit 前就擋下來：
+
+```sh
+git config core.hooksPath .githooks
+```

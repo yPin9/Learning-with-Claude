@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Project 200 logo">
+  <rect width="256" height="256" rx="56" fill="#0f172a"/>
+  <!-- 人 -->
+  <circle cx="98" cy="104" r="26" fill="#93c5fd"/>
+  <path d="M52 192 Q52 140 98 136 Q144 140 144 192 Z" fill="#3b82f6"/>
+  <!-- Claude -->
+  <path d="M176 92 Q183 131 216 138 Q183 145 176 184 Q169 145 136 138 Q169 131 176 92 Z" fill="#d97757"/>
+</svg>

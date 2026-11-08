@@ -1,2 +1,6 @@
 # 中文描述動輒上百字，行長限制不適用
 MD013: false
+
+# 頁首用 HTML 置中標題與徽章（同 Norn README 風格）
+MD033: false
+MD041: false
