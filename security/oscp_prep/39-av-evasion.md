@@ -149,4 +149,6 @@ foreach($e in $d){
 - [ ] 知道 PowerShell IEX + DownloadString 是 Fileless 執行
 - [ ] 知道 `Set-MpPreference -DisableRealtimeMonitoring $true` 停用 Defender
 
+> 延伸：把 payload 交到「人」手上觸發（巨集 / HTA / LNK 等 client-side 手法）見 [Ch 43 Client-Side Attacks](./43-client-side-attacks.md)。
+
 → [Ch 40 OSCP 24 小時考試策略：時間分配與心態](./40-exam-strategy.md)

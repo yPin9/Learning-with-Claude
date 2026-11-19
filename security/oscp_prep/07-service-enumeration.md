@@ -252,7 +252,7 @@ pip3 install autorecon
 autorecon 10.10.10.x
 ```
 
-AutoRecon 背景跑 nmap、gobuster、enum4linux、snmpwalk 等，適合考試時同時枚舉多台機器。不過要理解工具在做什麼，不能只會看輸出。
+AutoRecon 背景跑 nmap、gobuster、enum4linux、snmpwalk 等，適合考試時同時枚舉多台機器。不過要理解工具在做什麼，不能只會看輸出。完整的自動化流程、結果判讀與「自動化的邊界」見 [Ch 44 枚舉自動化](./44-enum-automation.md)。
 
 ## 常見卡關排錯
 
