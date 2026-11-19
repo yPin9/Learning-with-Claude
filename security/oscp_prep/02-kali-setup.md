@@ -74,7 +74,19 @@ nc -h 2>&1 | head -3   # netcat
 
 # 提權輔助
 find / -name linpeas.sh 2>/dev/null   # 若沒有就下載
+
+# Active Directory（Part 7 會用，先確認／安裝）
+nxc --version          # NetExec：CrackMapExec 的現役替代（舊指令 crackmapexec 已停維護）
+impacket-GetUserSPNs 2>&1 | head -1    # impacket 範例腳本
+bloodhound-python -h 2>&1 | head -1    # BloodHound 資料蒐集
+
+# 若 nxc 不存在：
+#   sudo apt install netexec   # Kali 2024+
+#   或 pipx install git+https://github.com/Pennyw0rth/NetExec
 ```
+
+> **Ligolo-ng**（Part 8 pivoting 主力工具，Kali 未內建）之後再裝：
+> `go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest`，或從 GitHub releases 下載對應平台的 agent/proxy 二進位。
 
 ### 下載常用腳本
 

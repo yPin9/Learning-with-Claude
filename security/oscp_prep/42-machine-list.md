@@ -99,7 +99,7 @@ TryHackMe 有引導式的 OSCP 準備路徑，適合打 HTB 前先建概念。
 ```
 1. Offensive Pentesting Path（整條路徑跟下來）
 
-2. Buffer Overflow Prep
+2. Buffer Overflow Prep（選做 — BOF 已非考試計分項，有興趣或想補底層觀念再練）
    - OVERFLOW1 到 OVERFLOW10
    - 每個練到 20 分鐘內完成
 
@@ -125,8 +125,8 @@ Week 3–4：HTB Easy Windows × 4（Legacy, Blue, Devel, Optimum）
 
 ```
 Week 5–6：HTB Medium Linux × 3（Cronos, Valentine, Blocky）
-Week 7–8：Buffer Overflow Prep（完成 OVERFLOW1–5）
-          + HTB Medium Windows × 2
+Week 7–8：HTB Medium Windows × 3（加強 Windows 提權手感）
+          + Buffer Overflow Prep OVERFLOW1–3（選做，非考試計分項）
 同時：Proving Grounds Easy × 3（Bratarina, Gaara, Shakabrah）
 ```
 
@@ -175,7 +175,6 @@ Week 11–12：Proving Grounds Medium × 4（Pelican, Sybaris, Shenzi, Hutch）
 ## 自我檢核
 
 - [ ] 打完至少 5 台 HTB Easy 機器（Linux + Windows 各有）
-- [ ] 完成 Buffer Overflow Prep OVERFLOW1–5
 - [ ] 打完 HTB Forest（AD 必練）
 - [ ] 打完至少 3 台 Proving Grounds Practice 機器
 - [ ] 每台機器都有完整筆記（入侵路徑 + 關鍵指令）

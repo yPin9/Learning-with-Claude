@@ -87,7 +87,7 @@ python3 -m bloodhound \
 
 ```bash
 # 用拿到的憑證確認橫向移動目標
-crackmapexec smb 10.10.10.0/24 -u alice -p 'Password123'
+nxc smb 10.10.10.0/24 -u alice -p 'Password123'
 
 # 找有 [+] 的機器（有效認證）
 # 找有 Pwn3d! 的（有 Admin 權限）

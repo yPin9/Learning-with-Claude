@@ -10,7 +10,7 @@
 - **考試逼你真的學會**：24 小時實機考試，沒有選擇題，不能靠背答案。
 - **完整的攻擊思維**：不只是工具操作，而是從零建立「看到一台機器，如何系統性地打下它」的方法論。
 
-## OSCP 考試結構（2023 PEN-200）
+## OSCP 考試結構（PEN-200，2024-11 後）
 
 ```
 總分：100 分，及格線：70 分
@@ -19,6 +19,8 @@
 
 時間：24 小時滲透 + 24 小時報告撰寫
 ```
+
+> **2026 考生注意**：新考生拿的是 **OSCP+**（三年效期、需續證；舊 OSCP 終身制）；**獎勵分已取消**、**Buffer Overflow 已非計分項**、**考試禁用 AI/LLM**；**2026-12-01 起**及格判定改為 100–500 分級分（400 及格）。細節見 [Ch 1](./01-oscp-overview.md)，一律以 OffSec 官方為準。
 
 ## 課程地圖
 
@@ -77,8 +79,8 @@
 - [Ch 36 OSCP AD 三機器鏈實戰模擬](./36-ad-chain-simulation.md)
 
 ### Part 8 — 進階技術
-- [Ch 37 Buffer Overflow（x86 Windows）：EIP 控制到 shellcode](./37-buffer-overflow.md)
-- [Ch 38 Pivoting + Port Forwarding：Chisel / SSH tunnel](./38-pivoting.md)
+- [Ch 37 Buffer Overflow（x86 Windows）：EIP 控制到 shellcode](./37-buffer-overflow.md) — ⚠️ 已非考試計分項（2023 起），選讀
+- [Ch 38 Pivoting + Port Forwarding：Ligolo-ng / Chisel / SSH tunnel](./38-pivoting.md)
 - [Ch 39 AV 規避基礎：混淆、msfvenom payload 修改](./39-av-evasion.md)
 
 ### Part 9 — 考試策略與報告
@@ -86,6 +88,16 @@
 - [Ch 41 報告撰寫：OffSec 要求格式 + Markdown 模板](./41-report-writing.md)
 - [Ch 42 必練機器清單：HTB / Proving Grounds 優先順序](./42-machine-list.md)
 - [Final Project：模擬 OSCP 考試](./final-project-oscp-simulation.md)
+
+### Part 10 — 補充主題（2026 新增）
+- [Ch 43 Client-Side Attacks：釣魚、惡意 macro / HTA / LNK](./43-client-side-attacks.md)
+- [Ch 44 枚舉自動化與方法論強化：AutoRecon / nmap 腳本化](./44-enum-automation.md)
+
+### 速查與演練（Cheat Sheets & Drills）
+考試時可直接 Ctrl-F 的單頁速查，與自我演練素材：
+- [枚舉速查](./cheatsheets/enumeration.md) ｜ [Web 速查](./cheatsheets/web.md) ｜ [Linux 提權速查](./cheatsheets/linux-privesc.md) ｜ [Windows 提權速查](./cheatsheets/windows-privesc.md)
+- [Active Directory 速查](./cheatsheets/active-directory.md) ｜ [Shell 與檔案傳輸速查](./cheatsheets/shells-and-transfer.md) ｜ [Pivoting 速查](./cheatsheets/pivoting.md)
+- [考試當天流程（一頁）](./cheatsheets/exam-day-flow.md) ｜ [間隔複習題庫](./cheatsheets/spaced-review-questions.md)
 
 ## 學習方式建議
 
@@ -96,7 +108,11 @@
 ## 參考資源
 
 - OffSec PEN-200 課程 — 官方教材，報名後可用
+- OffSec 官方考試說明 — help.offsec.com「Changes to the OSCP」/「OSCP Exam Guide」（考試規則、計分以此為準）
 - HackTheBox / Proving Grounds — 主要練習平台
 - GTFOBins — gtfobins.github.io（SUID/SUDO 提權速查）
+- LOLBAS — lolbas-project.github.io（Windows 內建二進位濫用速查）
 - PayloadsAllTheThings — GitHub，各種攻擊 payload 大全
 - RevShells — revshells.com（反彈 shell 生成器）
+- NetExec（nxc）— netexec.wiki（CrackMapExec 的現役替代，AD/SMB 枚舉與橫移）
+- Ligolo-ng — github.com/nicocha30/ligolo-ng（2024+ 主流 pivoting 工具）

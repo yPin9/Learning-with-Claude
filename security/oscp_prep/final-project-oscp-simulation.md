@@ -246,7 +246,7 @@ AD 鏈
 | Web 漏洞看不出來 | 重打 Beep, Cronos，搭配 HackTricks Web 章節 |
 | Windows 提權沒思路 | 重看 Ch 25–28，打 Optimum + Bounty |
 | AD 完全沒進展 | 先做 TryHackMe Attacktive Directory，再打 HTB Forest |
-| BoF 超過 1 小時 | THM Buffer Overflow Prep 再練 5 個 |
+| Pivoting 卡住 | 重看 Ch 38，用 Ligolo-ng 打 THM Wreath 三機鏈 |
 | 截圖習慣差 | 重打一台機器，強制要求每步驟截圖後才繼續 |
 | 報告寫不完 | 模擬期間就開著報告模板，邊打邊填 |
 
@@ -274,7 +274,7 @@ AD 鏈
 
 **課程完成。**
 
-從枚舉到 AD 完整鏈，從 BoF 到報告撰寫，這 42 章是你通過 OSCP 的系統性準備。
+從枚舉到 AD 完整鏈，從 Web 攻擊到報告撰寫，這套課程是你通過 OSCP 的系統性準備。
 
 技術會忘，但方法論會留下：**枚舉 → 找漏洞 → 利用 → 提權 → 記錄**。
 

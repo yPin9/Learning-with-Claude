@@ -147,11 +147,14 @@ git clone https://github.com/fortra/impacket.git
 # BloodHound（攻擊路徑視覺化）
 sudo apt install bloodhound
 
-# CrackMapExec（橫向移動）
-pip3 install crackmapexec
-# 或
-sudo apt install crackmapexec
+# NetExec（nxc）— SMB/LDAP/WinRM 枚舉與橫向移動
+# ⚠️ CrackMapExec（cme）自 2023 起已停止維護，現役社群分支是 NetExec，指令 nxc
+pipx install git+https://github.com/Pennyw0rth/NetExec
+# 或（Kali 2024+ 已內建套件）
+sudo apt install netexec
 ```
+
+> 本課 AD 章節的指令一律用 `nxc`。你在舊 writeup 看到的 `crackmapexec`/`cme` 指令，幾乎可逐字換成 `nxc`（參數相容），例如 `crackmapexec smb ...` → `nxc smb ...`。
 
 ## 本章對應靶機
 
