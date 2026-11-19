@@ -141,6 +141,10 @@
 - [c_interview](./programming/c_interview/README.md)
   - C 面試：記憶體、UB、ABI、嵌入式、效能、lock-free
   - 最後寫一個 mini libc
+- [c_sysprog](./programming/c_sysprog/README.md)
+  - jserv《你所不知道的 C 語言》21 篇拆成 44 章 + 5 練習，講得更細、補更多原理
+  - 指標與 ABI、記憶體與 malloc、數值/浮點/bitwise、前置處理器與 OOP、編譯連結與 runtime，每段對照規格書、組語和 Linux 核心
+  - 最後寫一個 computed goto 分派的 stack VM 直譯器
 - [rust](./programming/rust/README.md)
   - 給會 C/C++ 的人學 Rust，全程跟 C/C++ 對照
   - ownership 底層、unsafe、FFI、自己寫 async executor，也看怎麼逆 Rust binary
@@ -223,6 +227,10 @@
   - Windows 使用者態的漏洞利用，內部機制和攻擊各佔一半
   - PEB/TEB、NT heap、SEH、ROP，重點是 CFG、CET 這些現代緩解怎麼繞
   - 最後寫一條繞過所有緩解的 exploit chain
+- [osed_prep](./security/osed_prep/README.md)
+  - OSED（OffSec Exploit Developer / EXP-301）備考，全程 x86 32-bit、考試方法論為主軸
+  - WinDbg + IDA 逆向找洞、手寫 shellcode/egghunter/encoder、三大題型（stack/SEH/format string）+ DEP/ROP + ASLR 繞過 + PE 後門
+  - 42 章 + 6 練習，最後一個 48 小時模擬考 final（Part 11 再加深 x64 差異與 CFG/CET 衝擊）
 - [android_reversing](./security/android_reversing/README.md)
   - APK、DEX、smali 還原 App 邏輯
   - Frida、native .so、ARM64、脫殼和反調試
