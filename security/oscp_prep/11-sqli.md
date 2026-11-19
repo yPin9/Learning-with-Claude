@@ -213,6 +213,19 @@ Oracle:  all_tables
 PostgreSQL: information_schema.tables
 ```
 
+## 常見卡關排錯
+
+| 症狀 | 原因 / 解法 |
+|------|-------------|
+| `'` 沒報錯也沒變化 | 不一定沒漏洞。試 boolean（`' AND 1=1-- -` vs `' AND 1=2-- -`）看回應差異，或 time-based（`' AND SLEEP(5)-- -`）看延遲 |
+| UNION 一直錯 | 欄位數不對。用 `ORDER BY N` 逐步加到報錯，確定欄位數；再找哪一欄會回顯（`UNION SELECT 1,2,3`） |
+| 注入點在數字參數 | 不用加引號：`id=1 UNION SELECT...`、`id=1 AND SLEEP(5)` |
+| sqlmap 說 not injectable 但你覺得有 | 加 `--level 5 --risk 3`、指定 `-p 參數`、補 `--cookie`/`--headers`、試 `--technique=T`（time-based）。WAF 擋就加 `--tamper` |
+| 拿到資料庫但沒 web 入口 | SQLi 不只拿資料：MySQL `INTO OUTFILE` 寫 webshell、MSSQL `xp_cmdshell` 直接執行命令、讀 `load_file()` 看設定檔找憑證 |
+| hash 破不出來 | 先確認 hash 類型（`hashid`），MySQL 可能是 `*XXXX`（-m 300）；破不出就拿去其他服務 spray，密碼重用很常見 |
+
+> **考試提醒**：sqlmap 不受 Metasploit「一台」限制，但考試仍建議先手動確認注入點、理解 payload，再用 sqlmap 加速。手動測得出來的注入，報告才寫得清楚。
+
 ## 本章對應靶機
 
 | 機器 | SQLi 類型 |

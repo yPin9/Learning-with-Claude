@@ -168,6 +168,18 @@ python3 dacledit.py -action 'write' -rights 'DCSync' -principal alice -target-dn
 python3 secretsdump.py corp.local/alice:'Password123'@10.10.10.x -just-dc
 ```
 
+## 常見卡關排錯
+
+| 症狀 | 原因 / 解法 |
+|------|-------------|
+| `bloodhound-python` 收集失敗 | 多半是 DNS/時間問題。`/etc/hosts` 加 DC、`-ns DC_IP` 指定 DNS、時間對到 DC。指令範例：`bloodhound-python -u u -p p -d corp.local -ns DC_IP -c all` |
+| 資料匯入了但圖是空的 | 版本不匹配。BloodHound CE（2023+）要搭 SharpHound CE 的 JSON；舊版 BloodHound 搭舊 SharpHound。混用會匯入失敗或看不到邊 |
+| 找不到到 DA 的路徑 | 別只看「Shortest Path to Domain Admins」。改從**你現有的帳號**出發（Mark as Owned → 右鍵 Shortest Paths from Owned）。也看 ACL 邊：GenericAll/WriteDACL/ForceChangePassword |
+| 看到攻擊邊但不會打 | 右鍵該邊 → Help → Abuse Info，裡面有確切指令。常見：GenericWrite→targeted Kerberoast（Ch 32）、ForceChangePassword→改密碼、GenericAll on group→把自己加進去 |
+| 不想在靶機落地 SharpHound.exe | 用 `bloodhound-python`（從 Kali 遠端收集，不碰靶機硬碟），或 `nxc ldap IP -u u -p p --bloodhound` |
+
+> **BloodHound 是地圖不是鑰匙**：它告訴你「A 對 B 有什麼權限」，怎麼濫用那條邊要回去對應章節（ACL→Ch 32/35、憑證→Ch 34）。先 Mark Owned 你控制的所有帳號，路徑才會準。
+
 ## 本章對應靶機
 
 | 機器 | BloodHound 分析 |

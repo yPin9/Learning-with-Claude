@@ -223,6 +223,19 @@ linPEAS 用顏色標記嚴重程度：
 
 Ch 24 專門講如何解讀 linPEAS 輸出。
 
+## 常見卡關排錯
+
+| 症狀 | 原因 / 解法 |
+|------|-------------|
+| linPEAS 跑完一堆紅字還是沒思路 | 紅/黃 highlight 只是提示，不是答案。按優先序看：`sudo -l` → SUID → cron → 可寫的 service/檔案 → 內核版本（最後才考慮 kernel exploit） |
+| `sudo -l` 要密碼但沒有密碼 | 跳過這條，走 SUID/cron/capabilities。別卡在這。很多機器根本不靠 sudo 提權 |
+| 找到 SUID binary 但不知能不能用 | 立刻查 GTFOBins（Ch 21）。不在清單上的自訂 binary，用 `strings`/`ltrace` 看它呼叫了什麼（常見：用相對路徑呼叫其他程式 → PATH 劫持，Ch 23） |
+| shell 很破（沒 tab 補全、Ctrl-C 會斷） | 先升級 TTY：`python3 -c 'import pty;pty.spawn("/bin/bash")'` → `Ctrl-Z` → `stty raw -echo; fg` → `export TERM=xterm`。破 shell 會讓你誤判很多東西 |
+| 什麼都試過還是卡 | 檢查是否漏枚舉：`/home/*` 下的設定檔/history/`.ssh`、資料庫憑證、`/var/www` 原始碼、`cron` 裡呼叫的腳本你有沒有寫權限、`getcap -r / 2>/dev/null` |
+| 想用 kernel exploit（如 DirtyCow/PwnKit） | 當**最後手段**。先確認版本精確匹配，exploit 可能讓機器當掉——考試環境重開要排隊，影響分數 |
+
+> **方法論 > 運氣**：Linux 提權不是「猜」，是把清單跑完。`sudo -l`、SUID、cron、可寫檔、capabilities、NFS 這六類枚舉完，九成機器的路徑就浮出來了。
+
 ## 本章對應靶機
 
 所有 Part 5 的靶機都從這章的收集清單開始：

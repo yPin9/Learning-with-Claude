@@ -254,6 +254,18 @@ autorecon 10.10.10.x
 
 AutoRecon 背景跑 nmap、gobuster、enum4linux、snmpwalk 等，適合考試時同時枚舉多台機器。不過要理解工具在做什麼，不能只會看輸出。
 
+## 常見卡關排錯
+
+| 症狀 | 原因 / 解法 |
+|------|-------------|
+| SMB `NT_STATUS_ACCESS_DENIED` | 先試匿名/null session：`smbclient -L //IP/ -N`、`nxc smb IP -u '' -p ''`。拿到任一憑證後務必再掃一次（權限不同看到的分享不同） |
+| 有憑證卻列不出分享 | 換協定/工具：`nxc smb IP -u u -p p --shares`、`smbmap -H IP -u u -p p`。SMBv1 關閉時舊工具會失敗，用 nxc |
+| FTP 能連不知道幹嘛 | 試 `anonymous`/空密碼；能上傳就想「這目錄是不是某 web 根目錄」；`ls -la` 看隱藏檔 |
+| SNMP 掃不出東西 | community string 不只 `public`，用 `onesixtyone -c wordlist IP` 爆；`snmpwalk -v2c -c public IP` 跑完整 OID 常露出程序/使用者/軟體版本 |
+| 枚舉做完還是沒入口 | 回頭檢查：每個開放埠都真的枚舉過了嗎？HTTP 有做目錄爆破+vhost 嗎（Ch 8）？憑證有拿去 spray 其他服務嗎？**「沒入口」幾乎都是「還沒枚舉完」** |
+
+> **換憑證就重枚舉**：OSCP 最常見的卡關是「拿到一組低權憑證後沒有拿它重掃 SMB/LDAP/web」。每拿到新憑證，就把 SMB 分享、LDAP、各服務登入全部重跑一遍。
+
 ## 本章對應靶機
 
 | 機器 | 重點服務 |

@@ -200,6 +200,19 @@ sudo nmap -sU 10.10.10.x
 nmap -T2 10.10.10.x
 ```
 
+## 常見卡關排錯
+
+| 症狀 | 原因 / 解法 |
+|------|-------------|
+| 掃描幾分鐘沒動靜 | `-p-` 全埠本來就慢。拆兩段：先 `nmap -p- --min-rate 2000 -T4 IP` 找開放埠，再對開放埠 `-sCV`。別一開始就對 65535 埠跑 `-sCV` |
+| 結果全是 `filtered` 或主機「沒回應」 | 主機擋 ICMP。加 `-Pn` 跳過存活偵測。考試機器一定是活的，別被 ping 不到騙了 |
+| 明明有服務卻沒掃到 | 只掃了 top 1000 埠。**OSCP 一律 `-p-`**。關鍵服務常藏在高位埠（如 8080、8443、也可能 非標準 port 的 SMB/SSH） |
+| 完全忘了 UDP | 很多入口在 UDP（SNMP 161、TFTP 69、DNS 53）。`sudo nmap -sU --top-ports 100 IP` 至少掃一輪 |
+| `-sV` 測不出版本 | 加 `--version-intensity 9`；仍不行就手動 `nc IP PORT` 抓 banner、瀏覽器看 HTTP header |
+| 版本像對但 searchsploit 沒結果 | 版本號可能被改過或是 backport。別只信版本號，接著做服務層枚舉（Ch 7） |
+
+> **判讀原則**：nmap 只告訴你「哪些門開著」，不告訴你「哪扇門能進」。掃完別急著 searchsploit，先把每個開放服務逐一枚舉完（Ch 7–8）。
+
 ## 本章對應靶機
 
 - **HTB Lame**（Easy）：練習全流程，看看 vsftpd 2.3.4 和 Samba 版本

@@ -198,6 +198,19 @@ C:\Windows\Temp\winpeas.bat
 
 winPEAS 也用顏色標記高危項目，關注紅色部分。
 
+## 常見卡關排錯
+
+| 症狀 | 原因 / 解法 |
+|------|-------------|
+| 有 shell 但 winPEAS 跑不動 | 可能缺 .NET 或被 AV 砍。改用 PowerUp (`Invoke-AllChecks`)、Seatbelt，或手動跑本章的清單指令 |
+| `whoami /priv` 看到一堆權限不知哪個有用 | 鎖定這兩個金礦：**SeImpersonatePrivilege**（→ Potato，Ch 27）、**SeBackupPrivilege**（→ 抄 SAM/SYSTEM）。服務帳號（iis/mssql）幾乎一定有 SeImpersonate |
+| 服務路徑有漏洞但改不動 | 分清三種：unquoted service path、可寫的服務執行檔、可改的服務設定（`sc config`）。用 `accesschk.exe`（或 PowerUp）確認你對哪個有寫權限 |
+| 上傳工具就被 Defender 砍 | 從記憶體執行（`IEX(New-Object Net.WebClient).DownloadString(...)`）、換未簽名版本、或改用內建 LOLBAS 手法。考試不必追求 bypass，優先找不需落地檔案的路徑 |
+| 反彈 shell 是 32-bit 看不到某些路徑 | WOW64 重導向。用 `C:\Windows\Sysnative\` 存取真正的 System32，或換 64-bit payload |
+| 找不到任何提權點 | 回頭翻憑證：`C:\` 與使用者目錄的設定檔、`cmdkey /list`、Registry 的 autologon/VNC/PuTTY、`unattend.xml`、PowerShell history (`ConsoleHost_history.txt`)。Windows 提權常靠「撿到的密碼」而非漏洞 |
+
+> **Potato 是高頻考點**：看到 `SeImpersonatePrivilege` 就往 PrintSpoofer / GodPotato 想（Ch 27），這是服務帳號提權到 SYSTEM 最穩的路。
+
 ## 本章對應靶機
 
 所有 Part 6 靶機都從這章的收集清單開始：

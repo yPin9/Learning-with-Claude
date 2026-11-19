@@ -188,6 +188,19 @@ python3 bloodhound.py -u alice -p 'Password123' -d corp.local -dc dc.corp.local 
 python3 GetUserSPNs.py corp.local/alice:'Password123' -dc-ip 10.10.10.x -request
 ```
 
+## 常見卡關排錯
+
+| 症狀 | 原因 / 解法 |
+|------|-------------|
+| Kerberos 操作全報 `KRB_AP_ERR_SKEW` | 時間不同步。`sudo ntpdate DC_IP` 或 `sudo rdate -n DC_IP` 把 Kali 時間對到 DC，再重試 |
+| Password spray 不知道從哪來的使用者清單 | 來源：null session (`nxc smb IP -u '' -p '' --users`)、RID brute (`--rid-brute`)、LDAP、Kerbrute userenum、網站/OSINT。拿到清單先去重 |
+| 怕 spray 把帳號鎖掉 | 先查鎖定策略：`nxc smb IP -u u -p p --pass-pol`。每輪只試 1 個密碼、輪與輪之間等觀察窗口（通常 30 分）。`--continue-on-success` 別漏掉多個命中 |
+| AS-REP / Kerberoast 一個 hash 都拿不到 | AS-REP 需要帳號設了「不要求預先驗證」；Kerberoast 需要帳號有 SPN。沒有就是沒有，別硬試——換 spray 或其他入口 |
+| 有帳號但 DNS 解析不了 domain 名稱 | 把 DC 設成 DNS：`echo "IP dc01.corp.local corp.local" | sudo tee -a /etc/hosts`，或 `--dns-server`。很多 impacket/nxc 失敗是 DNS 而非權限 |
+| Responder 抓到 hash 破不出來 | 抓到的是 NetNTLMv2，**不能 pass-the-hash**，只能離線破（`-m 5600`）。破不出就考慮 relay（`ntlmrelayx`，若目標未簽章） |
+
+> **拿到第一組憑證 = 重新開始枚舉**：AD 的推進幾乎都是「低權憑證 → 枚舉出更多 → BloodHound 找路（Ch 33）→ 橫移」。每拿到一組帳號就重跑 `nxc`、BloodHound 收集。
+
 ## 本章對應靶機
 
 | 機器 | AD 初始技術 |

