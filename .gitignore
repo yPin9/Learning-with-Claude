@@ -2,3 +2,7 @@
 !.claude/skills/
 
 .scratch/
+
+# Python 快取（tools/ 腳本執行產生）
+__pycache__/
+*.pyc
