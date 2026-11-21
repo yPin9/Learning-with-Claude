@@ -6,6 +6,7 @@
 只用標準函式庫，不需要安裝任何東西。
 """
 import re
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import unquote
@@ -41,8 +42,31 @@ def check_index():
     return errors
 
 
+def git_ignored(paths):
+    """回傳 paths 中被 .gitignore 規則排除的（repo 相對、posix）路徑集合。
+
+    刻意忽略「指向 git-ignored 檔案」的連結：例如 c_sysprog/sources/ 的
+    著作權快照，依設計 README 進版控、快照本身不進（見該目錄 .gitignore），
+    這種連結在本機有效、在 repo 內「失效」是預期的，不算問題。
+    git 不可用時退回空集合（維持原本行為）。
+    """
+    if not paths:
+        return set()
+    try:
+        # 用 bytes 餵 stdin：text 模式在 Windows 會把 \n 轉成 \r\n，
+        # 讓 git 看到結尾帶 \r 的路徑而比對不到 *.md。
+        proc = subprocess.run(
+            ["git", "-C", str(ROOT), "check-ignore", "--stdin"],
+            input="\n".join(paths).encode("utf-8"), capture_output=True,
+        )
+    except (FileNotFoundError, OSError):
+        return set()
+    out = proc.stdout.decode("utf-8", "replace")
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
 def check_links():
-    errors = []
+    candidates = []  # (rel, target, repo_relative_posix_path)
     for md in sorted(ROOT.rglob("*.md")):
         rel = md.relative_to(ROOT)
         if rel.parts[0].startswith("."):  # .git / .claude / .scratch
@@ -56,8 +80,20 @@ def check_links():
             if not path:
                 continue
             resolved = (ROOT / path.lstrip("/")) if path.startswith("/") else (md.parent / path)
-            if not resolved.exists():
-                errors.append(f"失效連結：{rel} → {target}")
+            if resolved.exists():
+                continue
+            try:
+                repo_rel = resolved.resolve().relative_to(ROOT).as_posix()
+            except ValueError:
+                repo_rel = None
+            candidates.append((rel, target, repo_rel))
+
+    ignored = git_ignored([c[2] for c in candidates if c[2]])
+    errors = []
+    for rel, target, repo_rel in candidates:
+        if repo_rel and repo_rel in ignored:
+            continue  # 連到 git-ignored 的檔案是預期的，略過
+        errors.append(f"失效連結：{rel} → {target}")
     return errors
 
 
