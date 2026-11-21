@@ -116,6 +116,10 @@
   - 把 Neovim 調成讀大型 C 專案的工具，config 自己寫
   - motion → telescope → treesitter → clangd → gtags 一路串起來
   - 全部在 WSL 的 nvim 0.12 上實際跑過
+- [code_reading](./dev_tools/code_reading/README.md)
+  - 讀碼心法：以 Spinellis《Code Reading》為骨架，主要語料是 Linux kernel v6.18，用 FreeBSD wc、Lua、Redis 暖身
+  - 用「五道鴻溝」（慣用法、間接、領域、脈絡、目標）診斷自己卡在哪，再逐道拆解：kernel C 方言、資料結構、ops table 間接呼叫、git/lore 考古、clangd、ftrace、QEMU + gdb
+  - 59 章 + 7 練習，最後完整導讀 fs/pipe.c 與 eventfd
 
 ### databases/
 
