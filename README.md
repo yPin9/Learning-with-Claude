@@ -402,6 +402,10 @@
   - Linux kernel 各子系統怎麼設計：排程、記憶體、同步、VFS、網路
   - 對照 6.12 原始碼，用 QEMU + gdb 跟
   - 最後寫一套 kernel module
+- [io_uring](./systems/io_uring/README.md)
+  - io_uring 三面均衡：應用（liburing、multishot、zero-copy）、kernel 內部實作（對照 6.18 原始碼）、安全面
+  - 45 章 + 5 練習，含四個真實 CVE 拆解（loop_rw_iter type confusion、timeout race、PROVIDE_BUFFERS OOB、PBUF_RING UAF）
+  - 最後做 io_uring CVE 重現分析 final，接 kernel_pwn
 - [debian_packaging](./systems/debian_packaging/README.md)
   - dpkg 和 apt 的底層，source package 和 debian/ 目錄
   - debhelper、sbuild、lintian，簽章和 repository
